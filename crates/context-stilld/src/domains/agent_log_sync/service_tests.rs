@@ -24,13 +24,16 @@ fn rust_agent_log_sync_imports_codex_jsonl_into_sqlite() {
     let sqlite_path = app_dir.join("core.sqlite");
     let session_path = codex_dir.join("session.jsonl");
     let long_text = "x".repeat(2100);
+    let assistant_line = format!(
+        r#"{{"type":"response_item","timestamp":"2026-06-22T00:00:02.000Z","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"{long_text}"}}]}}}}"#
+    );
     std::fs::write(
         &session_path,
         format!(
             "{}\n{}\n{}\n",
             r#"{"type":"session_meta","payload":{"id":"session-1","cwd":"/tmp/project","timestamp":"2026-06-22T00:00:00.000Z"}}"#,
             r#"{"type":"response_item","timestamp":"2026-06-22T00:00:01.000Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Please review this code."}]}}"#,
-            format!(r#"{{"type":"response_item","timestamp":"2026-06-22T00:00:02.000Z","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"{long_text}"}}]}}}}"#)
+            assistant_line
         ),
     )
     .unwrap();

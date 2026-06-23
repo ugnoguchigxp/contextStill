@@ -1,6 +1,11 @@
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use serde_json::Value;
 
 use crate::domains::{bootstrap::service::resolve_paths, daemon::repository};
 use crate::shared::{
@@ -11,8 +16,8 @@ use crate::shared::{
 
 use super::service::status_report;
 use super::types::{
-    ActiveProviderLease, QueueInspectReport, QueueStatusCount, QueueTableInspect, QUEUE_SUPERVISOR,
-    QUEUE_TABLES,
+    ActiveProviderLease, EpisodeDistillerProgressInspect, QueueInspectReport, QueueStatusCount,
+    QueueTableInspect, QUEUE_SUPERVISOR, QUEUE_TABLES,
 };
 
 pub fn inspect_report<E: EnvProvider, S: ProcessSupervisor>(
@@ -59,13 +64,12 @@ pub fn inspect_report<E: EnvProvider, S: ProcessSupervisor>(
         .into_iter()
         .collect::<Vec<_>>();
     let runnable_pending_count = queues.iter().map(|queue| queue.runnable_pending).sum();
-    let rust_executor_running = active_leases
-        .iter()
-        .any(ActiveProviderLease::is_rust_executor);
     let rust_executor_pid = active_leases
         .iter()
-        .find_map(ActiveProviderLease::rust_executor_pid);
-    let external_worker_running = !active_leases.is_empty() && !rust_executor_running;
+        .filter_map(ActiveProviderLease::rust_executor_pid)
+        .find(|pid| supervisor.is_alive(*pid));
+    let rust_executor_running = rust_executor_pid.is_some();
+    let external_worker_running = active_leases.iter().any(|lease| !lease.is_rust_executor());
     let executor_running =
         lifecycle.pid.is_some() || rust_executor_running || external_worker_running;
     let executor_mode = if lifecycle.pid.is_some() {
@@ -147,6 +151,7 @@ fn inspect_queue_tables(connection: &Connection) -> Result<Vec<QueueTableInspect
                 runnable_pending: 0,
                 running: 0,
                 last_heartbeat_at: None,
+                episode_distiller_progress: None,
             });
             continue;
         }
@@ -175,9 +180,86 @@ fn inspect_queue_tables(connection: &Connection) -> Result<Vec<QueueTableInspect
             )?,
             status_counts,
             running,
+            episode_distiller_progress: if *queue_name == "episodeDistiller" {
+                inspect_episode_distiller_progress(connection, table_name)?
+            } else {
+                None
+            },
         });
     }
     Ok(queues)
+}
+
+fn inspect_episode_distiller_progress(
+    connection: &Connection,
+    table_name: &str,
+) -> Result<Option<EpisodeDistillerProgressInspect>, CliError> {
+    if !table_has_column(connection, table_name, "metadata")? {
+        return Ok(None);
+    }
+    let row = connection
+        .query_row(
+            &format!(
+                "
+                select id, coalesce(metadata, '{{}}')
+                from {table_name}
+                where status = 'running'
+                order by locked_at desc, updated_at desc, id asc
+                limit 1
+                "
+            ),
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| {
+            CliError::io(format!(
+                "failed to inspect episode distiller progress metadata: {error}"
+            ))
+        })?;
+    let Some((running_job_id, raw_metadata)) = row else {
+        return Ok(None);
+    };
+    let metadata: Value = serde_json::from_str(&raw_metadata).unwrap_or(Value::Null);
+    let current_segment = metadata_u64_at(&metadata, "/episodeDistiller/currentSegment");
+    let segment_count = metadata_u64_at(&metadata, "/episodeDistiller/segmentCount");
+    let last_segment_started_at =
+        metadata_string_at(&metadata, "/episodeDistiller/lastSegmentStartedAt");
+    let last_segment_completed_at =
+        metadata_string_at(&metadata, "/episodeDistiller/lastSegmentCompletedAt");
+    let last_episode_created_at =
+        metadata_string_at(&metadata, "/episodeDistiller/lastEpisodeCreatedAt");
+    let output_gap_seconds = latest_unix_ms_age_seconds([
+        last_episode_created_at.as_deref(),
+        last_segment_completed_at.as_deref(),
+        last_segment_started_at.as_deref(),
+    ]);
+    let output_watchdog_status = output_gap_seconds.map(|age| {
+        if age <= 10 * 60 {
+            "fresh"
+        } else if age <= 20 * 60 {
+            "watch"
+        } else {
+            "force_stop_candidate"
+        }
+        .to_string()
+    });
+    let saved_episode_count = metadata
+        .pointer("/episodeDistiller/savedEpisodeIds")
+        .and_then(Value::as_array)
+        .map(|items| items.len() as u64)
+        .unwrap_or(0);
+    Ok(Some(EpisodeDistillerProgressInspect {
+        running_job_id,
+        current_segment,
+        segment_count,
+        last_segment_started_at,
+        last_segment_completed_at,
+        last_episode_created_at,
+        output_gap_seconds,
+        output_watchdog_status,
+        saved_episode_count,
+    }))
 }
 
 fn table_exists(connection: &Connection, table_name: &str) -> Result<bool, CliError> {
@@ -299,6 +381,40 @@ fn inspect_active_leases(connection: &Connection) -> Result<Vec<ActiveProviderLe
         .map_err(|error| CliError::io(format!("failed to query active leases: {error}")))?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| CliError::io(format!("failed to read active leases: {error}")))
+}
+
+fn metadata_string_at(metadata: &Value, pointer: &str) -> Option<String> {
+    metadata
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn metadata_u64_at(metadata: &Value, pointer: &str) -> Option<u64> {
+    metadata.pointer(pointer).and_then(|value| {
+        value
+            .as_u64()
+            .or_else(|| value.as_i64().and_then(|number| u64::try_from(number).ok()))
+    })
+}
+
+fn latest_unix_ms_age_seconds<const N: usize>(timestamps: [Option<&str>; N]) -> Option<u64> {
+    let latest = timestamps
+        .into_iter()
+        .flatten()
+        .filter_map(unix_ms_value)
+        .max()?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    Some(now.saturating_sub(latest).div_ceil(1000) as u64)
+}
+
+fn unix_ms_value(timestamp: &str) -> Option<u128> {
+    timestamp.strip_prefix("unix-ms:")?.parse::<u128>().ok()
 }
 
 fn latest_timestamp(values: impl Iterator<Item = String>) -> Option<String> {
@@ -462,6 +578,91 @@ mod tests {
     }
 
     #[test]
+    fn inspect_reports_episode_distiller_output_watchdog_progress() {
+        let app_dir = temp_app_dir("episode_progress");
+        let sqlite_path = app_dir.join("queue.sqlite");
+        let connection = Connection::open(&sqlite_path).unwrap();
+        let old_output = unix_ms_ago(25 * 60);
+        connection
+            .execute_batch(&format!(
+                r#"
+            create table episode_distiller_queue (
+              id text primary key,
+              status text not null,
+              created_at text not null,
+              updated_at text not null,
+              locked_at text,
+              heartbeat_at text,
+              metadata text
+            );
+            insert into episode_distiller_queue (
+              id, status, created_at, updated_at, locked_at, heartbeat_at, metadata
+            ) values (
+              'episode-job-1', 'running', '2026-06-22T01:00:00.000Z',
+              '2026-06-22T01:10:00.000Z', '2026-06-22T01:01:00.000Z',
+              '2026-06-22T01:09:00.000Z',
+              '{{
+                "episodeDistiller": {{
+                  "currentSegment": 2,
+                  "segmentCount": 5,
+                  "lastSegmentStartedAt": "{old_output}",
+                  "lastSegmentCompletedAt": "{old_output}",
+                  "lastEpisodeCreatedAt": "{old_output}",
+                  "savedEpisodeIds": ["episode-1", "episode-2"]
+                }}
+              }}'
+            );
+            "#
+            ))
+            .unwrap();
+        drop(connection);
+
+        let env = MapEnv::from_pairs(vec![
+            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
+            (
+                "CONTEXT_STILL_SQLITE_CORE_PATH",
+                sqlite_path.to_str().unwrap(),
+            ),
+        ]);
+        let supervisor = MockSupervisor::new();
+
+        let report = inspect_report(&env, &supervisor).unwrap();
+
+        let episode = report
+            .queues
+            .iter()
+            .find(|queue| queue.queue_name == "episodeDistiller")
+            .unwrap();
+        let progress = episode.episode_distiller_progress.as_ref().unwrap();
+        assert_eq!(progress.running_job_id, "episode-job-1");
+        assert_eq!(progress.current_segment, Some(2));
+        assert_eq!(progress.segment_count, Some(5));
+        assert_eq!(progress.saved_episode_count, 2);
+        assert_eq!(
+            progress.output_watchdog_status.as_deref(),
+            Some("force_stop_candidate")
+        );
+        assert!(progress.output_gap_seconds.unwrap() >= 20 * 60);
+
+        std::fs::remove_dir_all(&app_dir).unwrap();
+    }
+
+    #[test]
+    fn inspect_watchdog_uses_latest_episode_or_segment_progress_timestamp() {
+        let old_episode = unix_ms_ago(25 * 60);
+        let fresh_segment = unix_ms_ago(2 * 60);
+
+        let age = latest_unix_ms_age_seconds([
+            Some(old_episode.as_str()),
+            None,
+            Some(fresh_segment.as_str()),
+        ])
+        .unwrap();
+
+        assert!(age < 10 * 60);
+    }
+
+    #[test]
     fn inspect_uses_live_resident_sqlite_path_when_shell_env_omits_it() {
         let app_dir = temp_app_dir("resident_path");
         let live_sqlite_path = app_dir.join("live.sqlite");
@@ -533,6 +734,74 @@ mod tests {
     fn inspect_reports_rust_executor_pid_from_active_lease_worker_id() {
         let app_dir = temp_app_dir("rust_executor_pid");
         let sqlite_path = app_dir.join("queue.sqlite");
+        let supervisor = MockSupervisor::new();
+        let rust_pid = supervisor
+            .spawn(
+                "context-stilld",
+                &["run"],
+                &app_dir.join("logs/context-stilld.log"),
+                &app_dir,
+            )
+            .unwrap();
+        let connection = Connection::open(&sqlite_path).unwrap();
+        connection
+            .execute_batch(
+                &format!(
+                    r#"
+            create table episode_distiller_queue (
+              id text primary key,
+              status text not null,
+              created_at text not null,
+              heartbeat_at text
+            );
+            create table llm_provider_leases (
+              id text primary key,
+              pool_id text not null,
+              target_id text not null,
+              queue_name text not null,
+              queue_job_id text not null,
+              worker_id text not null,
+              status text not null,
+              heartbeat_at text not null,
+              expires_at text not null
+            );
+            insert into episode_distiller_queue (id, status, created_at, heartbeat_at)
+              values ('job-1', 'running', '2026-06-22T01:00:00.000Z', '2026-06-22T01:01:00.000Z');
+            insert into llm_provider_leases (
+              id, pool_id, target_id, queue_name, queue_job_id, worker_id, status, heartbeat_at, expires_at
+            ) values (
+              'lease-1', 'local-llm-default', 'local-llm:qwen-a', 'episodeDistiller', 'job-1',
+              'context-stilld-rust-executor:local-llm-default:{rust_pid}-123456789', 'active',
+              '2026-06-22T01:01:00.000Z', '2026-06-22T01:03:00.000Z'
+            );
+            "#,
+                ),
+            )
+            .unwrap();
+        drop(connection);
+
+        let env = MapEnv::from_pairs(vec![
+            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
+            (
+                "CONTEXT_STILL_SQLITE_CORE_PATH",
+                sqlite_path.to_str().unwrap(),
+            ),
+        ]);
+
+        let report = inspect_report(&env, &supervisor).unwrap();
+
+        assert_eq!(report.executor_mode, "rust_native");
+        assert!(report.executor_running);
+        assert_eq!(report.executor_pid, Some(rust_pid));
+        assert_eq!(report.worker_pid, None);
+
+        std::fs::remove_dir_all(&app_dir).unwrap();
+    }
+
+    #[test]
+    fn inspect_does_not_report_dead_rust_lease_as_running_executor() {
+        let app_dir = temp_app_dir("dead_rust_executor_pid");
+        let sqlite_path = app_dir.join("queue.sqlite");
         let connection = Connection::open(&sqlite_path).unwrap();
         connection
             .execute_batch(
@@ -579,11 +848,19 @@ mod tests {
 
         let report = inspect_report(&env, &supervisor).unwrap();
 
-        assert_eq!(report.executor_mode, "rust_native");
-        assert!(report.executor_running);
-        assert_eq!(report.executor_pid, Some(4242));
-        assert_eq!(report.worker_pid, None);
+        assert!(!report.executor_running);
+        assert_eq!(report.executor_pid, None);
+        assert_eq!(report.executor_mode, "idle");
+        assert_eq!(report.active_lease_count, 1);
 
         std::fs::remove_dir_all(&app_dir).unwrap();
+    }
+
+    fn unix_ms_ago(seconds: u64) -> String {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        format!("unix-ms:{}", now.saturating_sub(u128::from(seconds) * 1000))
     }
 }

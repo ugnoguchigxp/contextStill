@@ -175,3 +175,294 @@ fn normalize_uri(uri: &str) -> String {
         .map(|tail| format!("{SCHEME}{tail}"))
         .unwrap_or_else(|| uri.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::SystemTime;
+
+    use rusqlite::Connection;
+    use serde_json::json;
+
+    use super::*;
+    use crate::domains::mcp_lifecycle::native_tools::NativeToolContext;
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_db_path() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "context_still_native_resources_{nanos}_{id}.sqlite"
+        ))
+    }
+
+    fn create_resources_schema(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"
+                create table context_compile_runs (
+                  id text primary key,
+                  goal text not null,
+                  intent text not null,
+                  session_id text,
+                  repo_path text,
+                  retrieval_mode text not null,
+                  status text not null,
+                  degraded_reasons text not null default '[]',
+                  token_budget integer not null default 0,
+                  duration_ms integer not null default 0,
+                  source text not null default 'unknown',
+                  pack_snapshot text,
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                "#,
+            )
+            .unwrap();
+    }
+
+    fn make_context(db_path: &Path) -> NativeToolContext {
+        NativeToolContext {
+            project_root: std::env::temp_dir(),
+            sqlite_core_path: db_path.to_path_buf(),
+        }
+    }
+
+    #[test]
+    fn list_resources_returns_expected_entries() {
+        let val = list_resources();
+        let resources = val["resources"].as_array().unwrap();
+        assert_eq!(resources.len(), 4);
+        let names: Vec<&str> = resources
+            .iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"context-compiler-summary"));
+        assert!(names.contains(&"context-pack-runs-list"));
+        assert!(names.contains(&"context-pack-latest"));
+        assert!(names.contains(&"doctor-health"));
+    }
+
+    #[test]
+    fn list_resources_uris_use_context_still_scheme() {
+        let val = list_resources();
+        let resources = val["resources"].as_array().unwrap();
+        for res in resources {
+            let uri = res["uri"].as_str().unwrap();
+            assert!(uri.starts_with("context-still://"));
+        }
+    }
+
+    #[test]
+    fn read_resource_summary_returns_text_content() {
+        let db_path = temp_db_path();
+        let context = make_context(&db_path);
+        let val = read_resource(
+            &json!({"uri": "context-still://summary/context-compiler"}),
+            &context,
+        );
+        let contents = val["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["mimeType"].as_str().unwrap(), "text/plain");
+        assert!(contents[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("# contextStill context compiler"));
+    }
+
+    #[test]
+    fn read_resource_packs_list_empty_db() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_resources_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let val = read_resource(&json!({"uri": "context-still://packs/list"}), &context);
+        let contents = val["contents"].as_array().unwrap();
+        let text_raw = contents[0]["text"].as_str().unwrap();
+        let decoded: Value = serde_json::from_str(text_raw).unwrap();
+        assert_eq!(decoded["runs"].as_array().unwrap().len(), 0);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn read_resource_packs_list_with_runs() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_resources_schema(&connection);
+        connection.execute(
+            r#"
+            insert into context_compile_runs (
+              id, goal, intent, session_id, repo_path, retrieval_mode, status, degraded_reasons, token_budget, duration_ms, source, created_at
+            ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "#,
+            ("run1", "goal1", "intent1", "sess1", "repo1", "mode1", "status1", "[]", &100, &200, "source1", "2026-06-23T00:00:00Z")
+        ).unwrap();
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let val = read_resource(&json!({"uri": "context-still://packs/list"}), &context);
+        let contents = val["contents"].as_array().unwrap();
+        let text_raw = contents[0]["text"].as_str().unwrap();
+        let decoded: Value = serde_json::from_str(text_raw).unwrap();
+        let runs = decoded["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0]["id"].as_str().unwrap(), "run1");
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn read_resource_packs_latest_no_runs() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_resources_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let val = read_resource(&json!({"uri": "context-still://packs/latest"}), &context);
+        let contents = val["contents"].as_array().unwrap();
+        let text_raw = contents[0]["text"].as_str().unwrap();
+        let decoded: Value = serde_json::from_str(text_raw).unwrap();
+        assert_eq!(
+            decoded["message"].as_str().unwrap(),
+            "No context_compile run found yet."
+        );
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn read_resource_packs_latest_with_snapshot() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_resources_schema(&connection);
+        connection
+            .execute(
+                r#"
+            insert into context_compile_runs (
+              id, goal, intent, retrieval_mode, status, pack_snapshot, created_at
+            ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "#,
+                (
+                    "run1",
+                    "goal1",
+                    "intent1",
+                    "mode1",
+                    "status1",
+                    "{\"snapshot_key\":\"snapshot_val\"}",
+                    "2026-06-23T00:00:00Z",
+                ),
+            )
+            .unwrap();
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let val = read_resource(&json!({"uri": "context-still://packs/latest"}), &context);
+        let contents = val["contents"].as_array().unwrap();
+        let text_raw = contents[0]["text"].as_str().unwrap();
+        let decoded: Value = serde_json::from_str(text_raw).unwrap();
+        assert_eq!(decoded["snapshot_key"].as_str().unwrap(), "snapshot_val");
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn read_resource_packs_run_specific() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_resources_schema(&connection);
+        connection
+            .execute(
+                r#"
+            insert into context_compile_runs (
+              id, goal, intent, retrieval_mode, status, pack_snapshot, created_at
+            ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "#,
+                (
+                    "run1",
+                    "goal1",
+                    "intent1",
+                    "mode1",
+                    "status1",
+                    "{\"snapshot_key\":\"snapshot_val\"}",
+                    "2026-06-23T00:00:00Z",
+                ),
+            )
+            .unwrap();
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let val = read_resource(&json!({"uri": "context-still://packs/run/run1"}), &context);
+        let contents = val["contents"].as_array().unwrap();
+        let text_raw = contents[0]["text"].as_str().unwrap();
+        let decoded: Value = serde_json::from_str(text_raw).unwrap();
+        assert_eq!(decoded["snapshot_key"].as_str().unwrap(), "snapshot_val");
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn read_resource_packs_run_empty_id() {
+        let db_path = temp_db_path();
+        let context = make_context(&db_path);
+        let val = read_resource(&json!({"uri": "context-still://packs/run/   "}), &context);
+        let contents = val["contents"].as_array().unwrap();
+        let text_raw = contents[0]["text"].as_str().unwrap();
+        let decoded: Value = serde_json::from_str(text_raw).unwrap();
+        assert_eq!(decoded["error"].as_str().unwrap(), "run id is required");
+    }
+
+    #[test]
+    fn read_resource_unknown_uri() {
+        let db_path = temp_db_path();
+        let context = make_context(&db_path);
+        let val = read_resource(&json!({"uri": "context-still://unknown"}), &context);
+        let contents = val["contents"].as_array().unwrap();
+        let text_raw = contents[0]["text"].as_str().unwrap();
+        let decoded: Value = serde_json::from_str(text_raw).unwrap();
+        assert_eq!(decoded["error"].as_str().unwrap(), "resource not found");
+    }
+
+    #[test]
+    fn normalize_uri_converts_memory_router() {
+        let converted = normalize_uri("memory-router://foo/bar");
+        assert_eq!(converted, "context-still://foo/bar");
+    }
+
+    #[test]
+    fn normalize_uri_keeps_context_still() {
+        let kept = normalize_uri("context-still://foo/bar");
+        assert_eq!(kept, "context-still://foo/bar");
+    }
+
+    #[test]
+    fn read_resource_no_table_returns_empty() {
+        let db_path = temp_db_path();
+        let context = make_context(&db_path);
+        // Table context_compile_runs does not exist
+        let val = read_resource(&json!({"uri": "context-still://packs/list"}), &context);
+        let contents = val["contents"].as_array().unwrap();
+        let text_raw = contents[0]["text"].as_str().unwrap();
+        let decoded: Value = serde_json::from_str(text_raw).unwrap();
+        assert_eq!(decoded["runs"].as_array().unwrap().len(), 0);
+
+        let latest_val = read_resource(&json!({"uri": "context-still://packs/latest"}), &context);
+        let latest_contents = latest_val["contents"].as_array().unwrap();
+        let latest_text_raw = latest_contents[0]["text"].as_str().unwrap();
+        let latest_decoded: Value = serde_json::from_str(latest_text_raw).unwrap();
+        assert_eq!(
+            latest_decoded["message"].as_str().unwrap(),
+            "No context_compile run found yet."
+        );
+    }
+
+    #[test]
+    fn read_resource_doctor_smoke() {
+        let db_path = temp_db_path();
+        let context = make_context(&db_path);
+        // Just call it to verify it doesn't panic
+        let _ = read_resource(&json!({"uri": "context-still://health/doctor"}), &context);
+    }
+}

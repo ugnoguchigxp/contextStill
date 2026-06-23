@@ -51,6 +51,22 @@ pub struct QueueTableInspect {
     pub runnable_pending: u64,
     pub running: u64,
     pub last_heartbeat_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub episode_distiller_progress: Option<EpisodeDistillerProgressInspect>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EpisodeDistillerProgressInspect {
+    pub running_job_id: String,
+    pub current_segment: Option<u64>,
+    pub segment_count: Option<u64>,
+    pub last_segment_started_at: Option<String>,
+    pub last_segment_completed_at: Option<String>,
+    pub last_episode_created_at: Option<String>,
+    pub output_gap_seconds: Option<u64>,
+    pub output_watchdog_status: Option<String>,
+    pub saved_episode_count: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]

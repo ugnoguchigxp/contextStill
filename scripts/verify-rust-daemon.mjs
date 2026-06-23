@@ -3,6 +3,10 @@ import { performance } from "node:perf_hooks";
 
 const tasks = [
   { label: "cargo fmt", command: ["cargo", "fmt", "--check"] },
+  {
+    label: "cargo clippy",
+    command: ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+  },
   { label: "cargo test", command: ["cargo", "test", "--workspace"] },
   {
     label: "context-stilld paths",

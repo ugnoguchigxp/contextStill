@@ -393,3 +393,418 @@ fn insert_coverage_trace(
         .map_err(|error| format!("failed to insert context_decision coverage: {error}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::SystemTime;
+
+    use rusqlite::Connection;
+    use serde_json::json;
+
+    use super::*;
+    use crate::domains::mcp_lifecycle::native_tools::NativeToolContext;
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_db_path() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!("context_still_native_decision_{nanos}_{id}.sqlite"))
+    }
+
+    fn create_decision_schema(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"
+                create table context_decision_runs (
+                  id text primary key,
+                  session_id text,
+                  decision_point text not null,
+                  options text not null default '[]',
+                  retrieval_hints text not null default '{}',
+                  decision text not null,
+                  selected_action text not null,
+                  rejected_actions text not null default '[]',
+                  mandate text not null,
+                  agent_message text not null,
+                  confidence integer not null,
+                  confidence_trace text not null default '{}',
+                  autonomy_level text not null default 'high',
+                  risk_budget text not null default 'medium',
+                  knowledge_policy text not null default 'optional',
+                  guardrails text not null default '{}',
+                  unsupported_alternatives text not null default '[]',
+                  status text not null,
+                  metadata text not null default '{}',
+                  created_at text not null default CURRENT_TIMESTAMP,
+                  updated_at text not null default CURRENT_TIMESTAMP
+                );
+                create table context_decision_evidence (
+                  id text primary key,
+                  decision_run_id text not null,
+                  knowledge_id text,
+                  role text not null,
+                  weight_at_decision real not null default 0,
+                  dynamic_score_at_decision real not null default 0,
+                  applicability_score real not null default 0,
+                  temporal_relevance real not null default 100,
+                  summary text not null default '',
+                  source_refs text not null default '[]',
+                  metadata text not null default '{}',
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                create table context_decision_coverage_traces (
+                  id text primary key,
+                  decision_run_id text not null,
+                  query text not null,
+                  query_role text not null,
+                  scope text not null default '{}',
+                  hit_count integer not null default 0,
+                  max_similarity real,
+                  selected_knowledge_ids text not null default '[]',
+                  rejected_knowledge_ids text not null default '[]',
+                  reason text not null default '',
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                "#,
+            )
+            .unwrap();
+    }
+
+    fn create_knowledge_schema(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"
+                create table knowledge_items (
+                  id text primary key,
+                  type text not null,
+                  status text not null,
+                  scope text not null default 'repo',
+                  polarity text not null default 'positive',
+                  title text not null,
+                  body text not null,
+                  importance real not null default 70,
+                  dynamic_score real not null default 0,
+                  created_at text not null default CURRENT_TIMESTAMP,
+                  updated_at text not null default CURRENT_TIMESTAMP
+                );
+                "#,
+            )
+            .unwrap();
+    }
+
+    fn make_context(db_path: &Path) -> NativeToolContext {
+        NativeToolContext {
+            project_root: std::env::temp_dir(),
+            sqlite_core_path: db_path.to_path_buf(),
+        }
+    }
+
+    fn is_error(val: &Value) -> bool {
+        val.get("isError").and_then(Value::as_bool).unwrap_or(false)
+    }
+
+    fn get_error_message(val: &Value) -> String {
+        val.get("content")
+            .and_then(Value::as_array)
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn parse_inner(val: &Value) -> Value {
+        let text = val["content"][0]["text"].as_str().unwrap();
+        serde_json::from_str(text).unwrap()
+    }
+
+    #[test]
+    fn context_decision_requires_decision_point() {
+        let db_path = temp_db_path();
+        let context = make_context(&db_path);
+        let res = context_decision(&json!({"arguments": {}}), &context);
+        assert!(is_error(&res));
+        assert!(get_error_message(&res).contains("decisionPoint is required"));
+    }
+
+    #[test]
+    fn context_decision_requires_args() {
+        let db_path = temp_db_path();
+        let context = make_context(&db_path);
+        let res = context_decision(&json!({}), &context);
+        assert!(is_error(&res));
+        assert!(get_error_message(&res).contains("arguments must be an object"));
+    }
+
+    #[test]
+    fn context_decision_missing_table_returns_error() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        // Do not create tables
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let res = context_decision(&json!({"arguments": {"decisionPoint": "test"}}), &context);
+        assert!(is_error(&res));
+        assert!(get_error_message(&res).contains("context_decision_runs table is not available"));
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn context_decision_hard_stop_returns_reject() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        // "reset --hard" should trigger hard stop
+        let res = context_decision(
+            &json!({"arguments": {"decisionPoint": "git reset --hard"}}),
+            &context,
+        );
+        assert!(!is_error(&res));
+        let data = parse_inner(&res);
+        assert_eq!(data["decision"].as_str().unwrap(), "reject");
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn context_decision_hard_stop_in_knowledge_returns_reject() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        create_knowledge_schema(&connection);
+        connection.execute(
+            "insert into knowledge_items (id, type, status, polarity, title, body) values (?1, ?2, ?3, ?4, ?5, ?6)",
+            ("k1", "rule", "active", "negative", "Do not do reset --hard", "reset --hard is prohibited")
+        ).unwrap();
+        drop(connection);
+
+        let context = make_context(&db_path);
+        // The query "reset" matches the negative knowledge containing "reset --hard"
+        let res = context_decision(&json!({"arguments": {"decisionPoint": "reset"}}), &context);
+        assert!(!is_error(&res));
+        let data = parse_inner(&res);
+        assert_eq!(data["decision"].as_str().unwrap(), "reject");
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn context_decision_no_knowledge_returns_revise() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        create_knowledge_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let res = context_decision(
+            &json!({"arguments": {"decisionPoint": "some random task"}}),
+            &context,
+        );
+        assert!(!is_error(&res));
+        let data = parse_inner(&res);
+        assert_eq!(data["decision"].as_str().unwrap(), "revise_and_execute");
+        assert!(data["coverageSummary"]["degraded"].as_bool().unwrap());
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn context_decision_supporting_knowledge_returns_execute() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        create_knowledge_schema(&connection);
+        connection.execute(
+            "insert into knowledge_items (id, type, status, polarity, title, body) values (?1, ?2, ?3, ?4, ?5, ?6)",
+            ("k1", "rule", "active", "positive", "Compiling rule", "Use context_compile to compile")
+        ).unwrap();
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let res = context_decision(
+            &json!({"arguments": {"decisionPoint": "compile"}}),
+            &context,
+        );
+        assert!(!is_error(&res));
+        let data = parse_inner(&res);
+        assert_eq!(data["decision"].as_str().unwrap(), "execute");
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn context_decision_mixed_knowledge_returns_revise() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        create_knowledge_schema(&connection);
+        connection.execute(
+            "insert into knowledge_items (id, type, status, polarity, title, body) values (?1, ?2, ?3, ?4, ?5, ?6)",
+            ("k1", "rule", "active", "positive", "Compiling rule", "Use context_compile to compile")
+        ).unwrap();
+        connection.execute(
+            "insert into knowledge_items (id, type, status, polarity, title, body) values (?1, ?2, ?3, ?4, ?5, ?6)",
+            ("k2", "rule", "active", "negative", "Do not force compile", "Avoid forcing compilation")
+        ).unwrap();
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let res = context_decision(
+            &json!({"arguments": {"decisionPoint": "compile force"}}),
+            &context,
+        );
+        assert!(!is_error(&res));
+        let data = parse_inner(&res);
+        assert_eq!(data["decision"].as_str().unwrap(), "revise_and_execute");
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn context_decision_persists_run() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        create_knowledge_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let res = context_decision(
+            &json!({"arguments": {"decisionPoint": "compile", "sessionId": "sess1"}}),
+            &context,
+        );
+        assert!(!is_error(&res));
+        let data = parse_inner(&res);
+        let run_id = data["decisionId"].as_str().unwrap();
+
+        let conn = Connection::open(&db_path).unwrap();
+        let session_id: String = conn
+            .query_row(
+                "select session_id from context_decision_runs where id = ?1",
+                [run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(session_id, "sess1");
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn context_decision_persists_evidence() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        create_knowledge_schema(&connection);
+        connection.execute(
+            "insert into knowledge_items (id, type, status, polarity, title, body) values (?1, ?2, ?3, ?4, ?5, ?6)",
+            ("k1", "rule", "active", "positive", "Compiling rule", "Use context_compile to compile")
+        ).unwrap();
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let res = context_decision(
+            &json!({"arguments": {"decisionPoint": "compile"}}),
+            &context,
+        );
+        assert!(!is_error(&res));
+        let data = parse_inner(&res);
+        let run_id = data["decisionId"].as_str().unwrap();
+
+        let conn = Connection::open(&db_path).unwrap();
+        let kid: String = conn.query_row(
+            "select knowledge_id from context_decision_evidence where decision_run_id = ?1 and role = 'selected_support'",
+            [run_id],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(kid, "k1");
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn context_decision_persists_coverage_trace() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        create_knowledge_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let res = context_decision(
+            &json!({"arguments": {"decisionPoint": "compile"}}),
+            &context,
+        );
+        assert!(!is_error(&res));
+        let data = parse_inner(&res);
+        let run_id = data["decisionId"].as_str().unwrap();
+
+        let conn = Connection::open(&db_path).unwrap();
+        let query: String = conn
+            .query_row(
+                "select query from context_decision_coverage_traces where decision_run_id = ?1",
+                [run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(query, "compile");
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn mandate_returns_stable_text() {
+        assert_eq!(
+            mandate("reject"),
+            "Do not execute the proposed action until a safer path is provided."
+        );
+        assert_eq!(
+            mandate("execute"),
+            "Proceed autonomously and verify the result."
+        );
+        assert_eq!(mandate("revise_and_execute"), "Proceed only after narrowing scope, preserving rollback, and verifying the changed behavior.");
+        assert_eq!(mandate("unknown"), "Escalate before proceeding.");
+    }
+
+    #[test]
+    fn decision_query_includes_hints() {
+        let hints = json!({
+            "technologies": ["force"],
+            "changeTypes": ["clean"]
+        });
+        let q = decision_query("compile", &hints);
+        assert!(q.contains("compile"));
+        assert!(q.contains("force"));
+        assert!(q.contains("clean"));
+    }
+
+    #[test]
+    fn has_hard_stop_language_detects_patterns() {
+        assert!(has_hard_stop_language("do a reset --hard here"));
+        assert!(has_hard_stop_language("this is irreversible"));
+        assert!(!has_hard_stop_language("please build the project"));
+    }
+
+    #[test]
+    fn context_decision_no_knowledge_table_returns_degraded() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        // Do not create knowledge_items table
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let res = context_decision(
+            &json!({"arguments": {"decisionPoint": "compile"}}),
+            &context,
+        );
+        assert!(!is_error(&res));
+        let data = parse_inner(&res);
+        assert_eq!(data["decision"].as_str().unwrap(), "revise_and_execute");
+        assert!(data["coverageSummary"]["degraded"].as_bool().unwrap());
+        let _ = std::fs::remove_file(db_path);
+    }
+}

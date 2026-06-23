@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::domains::{
     bootstrap::service::resolve_paths, daemon::repository::ProcessState,
@@ -537,7 +538,7 @@ fn preferred_local_llm_target_ids(settings: &Value, route_target: &str) -> Vec<S
         .into_iter()
         .flatten()
         .filter_map(|model| {
-            let id = string_field(model, "id")?;
+            let id = local_llm_model_id(model)?;
             if id == route_target || string_field(model, "model").as_deref() == Some(route_target) {
                 return Some(id);
             }
@@ -596,7 +597,7 @@ fn local_llm_target_config(
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .find(|model| string_field(model, "id").as_deref() == Some(target_id))
+        .find(|model| local_llm_model_id(model).as_deref() == Some(target_id))
         .ok_or_else(|| CliError::io(format!("local-llm target not found: {target_id}")))?;
     let api_base_url = string_field(target, "apiBaseUrl")
         .or_else(|| string_field(provider, "apiBaseUrl"))
@@ -613,6 +614,27 @@ fn local_llm_target_config(
         api_path,
         model,
     })
+}
+
+fn local_llm_model_id(model: &Value) -> Option<String> {
+    string_field(model, "id").or_else(|| stable_local_llm_model_id(model))
+}
+
+fn stable_local_llm_model_id(model: &Value) -> Option<String> {
+    let api_base_url = string_field(model, "apiBaseUrl")?
+        .trim_end_matches('/')
+        .to_string();
+    let api_path =
+        string_field(model, "apiPath").unwrap_or_else(|| "/v1/chat/completions".to_string());
+    let model_name = string_field(model, "model")?;
+    let normalized = serde_json::json!({
+        "apiBaseUrl": api_base_url,
+        "apiPath": api_path.trim(),
+        "model": model_name.trim()
+    })
+    .to_string();
+    let digest = format!("{:x}", Sha256::digest(normalized.as_bytes()));
+    Some(format!("local-llm-{}", &digest[..12]))
 }
 
 fn load_secret_value(connection: &Connection, key: &str) -> Option<String> {
@@ -852,5 +874,44 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["episodeDistiller", "findingCandidate"]
         );
+    }
+
+    #[test]
+    fn rust_executor_resolves_stable_local_llm_target_ids_when_model_id_is_absent() {
+        let model = json!({
+            "apiBaseUrl": "http://192.168.0.61:50043/v1",
+            "apiPath": "/v1/chat/completions",
+            "model": "Qwen 3.6 27B"
+        });
+        let target_id = local_llm_model_id(&model).unwrap();
+        assert_eq!(target_id, "local-llm-3aeb3b705406");
+        let settings = json!({
+            "providerPools": [{
+                "id": "local-llm-default",
+                "enabled": true,
+                "targets": [{"provider": "local-llm", "localLlmModelId": target_id}],
+                "maxConcurrent": 1
+            }],
+            "providers": {
+                "local-llm": {
+                    "models": [model]
+                }
+            },
+            "taskRouting": {
+                "episodeDistiller": {
+                    "provider": "local-llm",
+                    "providerPoolId": "local-llm-default",
+                    "model": "{\"apiBaseUrl\":\"http://192.168.0.61:50043/v1\",\"apiPath\":\"/v1/chat/completions\",\"model\":\"Qwen 3.6 27B\"}"
+                }
+            }
+        });
+
+        let queues =
+            executor_priority_queues_for_pool(&settings, "local-llm-default", &HashSet::new());
+        assert_eq!(queues.len(), 1);
+        assert_eq!(queues[0].queue_name, "episodeDistiller");
+        assert_eq!(queues[0].preferred_target_ids, vec![target_id.clone()]);
+        let target = local_llm_target_config(&settings, &target_id).unwrap();
+        assert_eq!(target.model, "Qwen 3.6 27B");
     }
 }

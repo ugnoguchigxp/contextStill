@@ -72,9 +72,12 @@ pub(crate) fn search_knowledge(params: &Value, context: &NativeToolContext) -> V
     };
     let mut items = Vec::new();
     for row in rows.flatten() {
-        if !matches_arg_array(args, "statuses", &row.status)
-            && !default_status_matches(args, &row.status)
-        {
+        let status_ok = if args.contains_key("statuses") {
+            matches_arg_array(args, "statuses", &row.status)
+        } else {
+            default_status_matches(args, &row.status)
+        };
+        if !status_ok {
             continue;
         }
         if !matches_arg_array(args, "types", &row.kind)
@@ -593,4 +596,973 @@ fn string_array_arg(args: &serde_json::Map<String, Value>, key: &str) -> Vec<Str
 
 fn number_arg(args: &serde_json::Map<String, Value>, key: &str) -> Option<f64> {
     args.get(key).and_then(Value::as_f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::SystemTime;
+
+    use rusqlite::Connection;
+    use serde_json::json;
+
+    use super::*;
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_db_path() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "context_still_native_knowledge_{nanos}_{id}.sqlite"
+        ))
+    }
+
+    fn make_context(db_path: &Path) -> NativeToolContext {
+        NativeToolContext {
+            project_root: std::env::temp_dir(),
+            sqlite_core_path: db_path.to_path_buf(),
+        }
+    }
+
+    fn create_knowledge_schema(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"
+                create table knowledge_items (
+                  id text primary key,
+                  type text not null,
+                  status text not null,
+                  scope text not null default 'repo',
+                  polarity text not null default 'positive',
+                  intent_tags text not null default '[]',
+                  title text not null,
+                  body text not null,
+                  applies_to text not null default '{}',
+                  confidence real not null default 70,
+                  importance real not null default 70,
+                  compile_select_count integer not null default 0,
+                  last_compiled_at text,
+                  agentic_accept_count integer not null default 0,
+                  explicit_upvote_count integer not null default 0,
+                  explicit_downvote_count integer not null default 0,
+                  dynamic_score real not null default 0,
+                  metadata text not null default '{}',
+                  updated_at text not null default CURRENT_TIMESTAMP,
+                  last_verified_at text,
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                create table sources (
+                  id text primary key,
+                  uri text not null,
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                create table source_fragments (
+                  id text primary key,
+                  source_id text not null,
+                  locator text not null,
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                create table knowledge_source_links (
+                  id text primary key,
+                  knowledge_id text not null,
+                  source_fragment_id text not null,
+                  confidence real not null default 0,
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                create table knowledge_items_fts (
+                  id text,
+                  title text,
+                  body text
+                );
+                "#,
+            )
+            .unwrap();
+    }
+
+    fn create_decision_schema(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"
+                create table context_decision_runs (
+                  id text primary key,
+                  session_id text,
+                  decision_point text not null,
+                  options text not null default '[]',
+                  retrieval_hints text not null default '{}',
+                  decision text not null,
+                  selected_action text not null,
+                  rejected_actions text not null default '[]',
+                  mandate text not null,
+                  agent_message text not null,
+                  confidence integer not null,
+                  confidence_trace text not null default '{}',
+                  autonomy_level text not null default 'high',
+                  risk_budget text not null default 'medium',
+                  knowledge_policy text not null default 'optional',
+                  guardrails text not null default '{}',
+                  unsupported_alternatives text not null default '[]',
+                  status text not null,
+                  metadata text not null default '{}',
+                  created_at text not null default CURRENT_TIMESTAMP,
+                  updated_at text not null default CURRENT_TIMESTAMP
+                );
+                create table context_decision_evidence (
+                  id text primary key,
+                  decision_run_id text not null,
+                  knowledge_id text,
+                  role text not null,
+                  weight_at_decision real not null default 0,
+                  dynamic_score_at_decision real not null default 0,
+                  applicability_score real not null default 0,
+                  temporal_relevance real not null default 100,
+                  summary text not null default '',
+                  source_refs text not null default '[]',
+                  metadata text not null default '{}',
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                create table context_decision_feedback (
+                  id text primary key,
+                  decision_run_id text not null,
+                  source text not null,
+                  outcome text not null default 'still_unknown',
+                  inferred_reason text not null default '',
+                  affected_knowledge_ids text not null default '[]',
+                  suggested_adjustment text not null default '{}',
+                  metadata text not null default '{}',
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                create table context_decision_human_feedback (
+                  id text primary key,
+                  decision_run_id text not null,
+                  value text not null,
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                "#,
+            )
+            .unwrap();
+    }
+
+    fn insert_knowledge(
+        connection: &Connection,
+        id: &str,
+        kind: &str,
+        status: &str,
+        title: &str,
+        body: &str,
+    ) {
+        connection
+            .execute(
+                "insert into knowledge_items (id, type, status, title, body) values (?1, ?2, ?3, ?4, ?5)",
+                (id, kind, status, title, body),
+            )
+            .unwrap();
+    }
+
+    fn insert_decision_run(connection: &Connection, id: &str) {
+        connection
+            .execute(
+                r#"insert into context_decision_runs (
+                  id, decision_point, decision, selected_action, mandate,
+                  agent_message, confidence, status
+                ) values (?1, 'test point', 'execute', 'proceed', 'test mandate',
+                  'test message', 80, 'completed')"#,
+                [id],
+            )
+            .unwrap();
+    }
+
+    fn extract_text(result: &Value) -> String {
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    fn parse_inner(result: &Value) -> Value {
+        let text = extract_text(result);
+        serde_json::from_str(&text).unwrap_or(json!({}))
+    }
+
+    fn is_error(result: &Value) -> bool {
+        result
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
+    // ──────────────────────────────────────────────
+    //  search_knowledge tests
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn search_knowledge_requires_query() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_knowledge(&json!({"arguments": {}}), &context);
+        assert!(is_error(&result));
+        assert!(extract_text(&result).contains("query is required"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn search_knowledge_no_table_returns_empty() {
+        let db_path = temp_db_path();
+        // Create empty DB without knowledge_items table
+        let _connection = Connection::open(&db_path).unwrap();
+        drop(_connection);
+
+        let context = make_context(&db_path);
+        let result = search_knowledge(&json!({"arguments": {"query": "anything"}}), &context);
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        assert_eq!(inner["items"].as_array().unwrap().len(), 0);
+        let degraded = inner["diagnostics"]["degradedReasons"].as_array().unwrap();
+        assert!(degraded
+            .iter()
+            .any(|v| v.as_str() == Some("knowledge_items_missing")));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn search_knowledge_matches_query() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        insert_knowledge(
+            &connection,
+            "k1",
+            "rule",
+            "active",
+            "Rust error handling",
+            "Always use Result for recoverable errors in Rust",
+        );
+        insert_knowledge(
+            &connection,
+            "k2",
+            "rule",
+            "active",
+            "Python style guide",
+            "Follow PEP8 style guide for Python code",
+        );
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_knowledge(
+            &json!({"arguments": {"query": "Rust error handling"}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        let items = inner["items"].as_array().unwrap();
+        assert!(!items.is_empty());
+        // The Rust item should match and appear
+        assert!(items.iter().any(|item| item["id"].as_str() == Some("k1")));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn search_knowledge_respects_limit() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        for i in 0..5 {
+            insert_knowledge(
+                &connection,
+                &format!("k{i}"),
+                "rule",
+                "active",
+                &format!("Rust test rule {i}"),
+                &format!("Rust rule body for testing limit {i}"),
+            );
+        }
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_knowledge(
+            &json!({"arguments": {"query": "Rust rule", "limit": 2}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        let items = inner["items"].as_array().unwrap();
+        assert!(items.len() <= 2);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn search_knowledge_filters_by_statuses() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        insert_knowledge(
+            &connection,
+            "active1",
+            "rule",
+            "active",
+            "Rust active rule",
+            "Rust active rule body text",
+        );
+        insert_knowledge(
+            &connection,
+            "draft1",
+            "rule",
+            "draft",
+            "Rust draft rule",
+            "Rust draft rule body text",
+        );
+        insert_knowledge(
+            &connection,
+            "deprecated1",
+            "rule",
+            "deprecated",
+            "Rust deprecated rule",
+            "Rust deprecated rule body text",
+        );
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_knowledge(
+            &json!({"arguments": {"query": "Rust rule", "statuses": ["draft"]}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        let items = inner["items"].as_array().unwrap();
+        // Only draft items should match
+        for item in items {
+            assert_eq!(item["status"].as_str().unwrap(), "draft");
+        }
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn search_knowledge_default_status_active() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        insert_knowledge(
+            &connection,
+            "active1",
+            "rule",
+            "active",
+            "Rust active item",
+            "Rust active item body",
+        );
+        insert_knowledge(
+            &connection,
+            "draft1",
+            "rule",
+            "draft",
+            "Rust draft item",
+            "Rust draft item body",
+        );
+        drop(connection);
+
+        let context = make_context(&db_path);
+        // No statuses filter → default is 'active'
+        let result = search_knowledge(&json!({"arguments": {"query": "Rust item"}}), &context);
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        let items = inner["items"].as_array().unwrap();
+        for item in items {
+            assert_eq!(item["status"].as_str().unwrap(), "active");
+        }
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn search_knowledge_filters_by_types() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        insert_knowledge(
+            &connection,
+            "r1",
+            "rule",
+            "active",
+            "Rust type filter rule",
+            "Rust type filter rule body",
+        );
+        insert_knowledge(
+            &connection,
+            "p1",
+            "procedure",
+            "active",
+            "Rust type filter procedure",
+            "Rust type filter procedure body",
+        );
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_knowledge(
+            &json!({"arguments": {"query": "Rust type filter", "types": ["procedure"]}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        let items = inner["items"].as_array().unwrap();
+        for item in items {
+            assert_eq!(item["type"].as_str().unwrap(), "procedure");
+        }
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn search_knowledge_filters_by_polarities() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        insert_knowledge(
+            &connection,
+            "pos1",
+            "rule",
+            "active",
+            "Rust polarity positive",
+            "Rust polarity positive body",
+        );
+        connection
+            .execute(
+                "insert into knowledge_items (id, type, status, polarity, title, body) values (?1, ?2, ?3, ?4, ?5, ?6)",
+                ("neg1", "rule", "active", "negative", "Rust polarity negative", "Rust polarity negative body"),
+            )
+            .unwrap();
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_knowledge(
+            &json!({"arguments": {"query": "Rust polarity", "polarities": ["negative"]}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        let items = inner["items"].as_array().unwrap();
+        for item in items {
+            assert_eq!(item["polarity"].as_str().unwrap(), "negative");
+        }
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn search_knowledge_includes_source_refs() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        insert_knowledge(
+            &connection,
+            "k-src",
+            "rule",
+            "active",
+            "Rust source ref test",
+            "Rust source ref test body",
+        );
+        connection
+            .execute(
+                "insert into sources (id, uri) values ('s1', 'file:///src/main.rs')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into source_fragments (id, source_id, locator) values ('sf1', 's1', 'L10-L20')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into knowledge_source_links (id, knowledge_id, source_fragment_id, confidence) values ('ksl1', 'k-src', 'sf1', 0.9)",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_knowledge(
+            &json!({"arguments": {"query": "Rust source ref test"}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        let items = inner["items"].as_array().unwrap();
+        let item = items
+            .iter()
+            .find(|i| i["id"].as_str() == Some("k-src"))
+            .unwrap();
+        let refs = item["sourceRefs"].as_array().unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].as_str().unwrap(), "file:///src/main.rs#L10-L20");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn search_knowledge_json_parse_failure_no_panic() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        // Insert row with malformed JSON in intent_tags and applies_to
+        connection
+            .execute(
+                "insert into knowledge_items (id, type, status, title, body, intent_tags, applies_to) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                (
+                    "k-bad-json",
+                    "rule",
+                    "active",
+                    "Rust bad json test",
+                    "Rust bad json test body content",
+                    "not valid json[[[",
+                    "{broken",
+                ),
+            )
+            .unwrap();
+        drop(connection);
+
+        let context = make_context(&db_path);
+        // Should NOT panic
+        let result = search_knowledge(
+            &json!({"arguments": {"query": "Rust bad json test"}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    // ──────────────────────────────────────────────
+    //  context_decision_feedback tests
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn context_decision_feedback_requires_decision_id() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = context_decision_feedback(&json!({"arguments": {"source": "ai"}}), &context);
+        assert!(is_error(&result));
+        assert!(extract_text(&result).contains("decisionId is required"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn context_decision_feedback_unknown_decision_returns_error() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = context_decision_feedback(
+            &json!({"arguments": {"decisionId": "nonexistent-id", "source": "ai"}}),
+            &context,
+        );
+        assert!(is_error(&result));
+        assert!(extract_text(&result).contains("not found"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn context_decision_feedback_ai_source_records() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        insert_decision_run(&connection, "dec-ai-1");
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = context_decision_feedback(
+            &json!({"arguments": {
+                "decisionId": "dec-ai-1",
+                "source": "ai",
+                "outcome": "success",
+                "reason": "Tests passed"
+            }}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        assert_eq!(
+            inner["feedback"]["decisionRunId"].as_str().unwrap(),
+            "dec-ai-1"
+        );
+        assert_eq!(inner["feedback"]["source"].as_str().unwrap(), "ai");
+        assert_eq!(inner["feedback"]["outcome"].as_str().unwrap(), "success");
+        assert_eq!(
+            inner["feedback"]["inferredReason"].as_str().unwrap(),
+            "Tests passed"
+        );
+
+        // Verify persisted in DB
+        let connection = Connection::open(&db_path).unwrap();
+        let count: i64 = connection
+            .query_row(
+                "select count(*) from context_decision_feedback where decision_run_id = 'dec-ai-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn context_decision_feedback_human_source_records() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        insert_decision_run(&connection, "dec-human-1");
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = context_decision_feedback(
+            &json!({"arguments": {
+                "decisionId": "dec-human-1",
+                "source": "human",
+                "value": "bad"
+            }}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        assert_eq!(
+            inner["humanFeedback"]["decisionRunId"].as_str().unwrap(),
+            "dec-human-1"
+        );
+        assert_eq!(inner["humanFeedback"]["value"].as_str().unwrap(), "bad");
+
+        // Verify persisted in DB
+        let connection = Connection::open(&db_path).unwrap();
+        let value: String = connection
+            .query_row(
+                "select value from context_decision_human_feedback where decision_run_id = 'dec-human-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, "bad");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    // ──────────────────────────────────────────────
+    //  register_candidates tests
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn register_candidates_valid_rule() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = register_candidates(
+            &json!({"arguments": {"items": [
+                {
+                    "type": "rule",
+                    "title": "Always use Result",
+                    "body": "Always use Result for recoverable errors"
+                }
+            ]}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        assert_eq!(
+            inner["status"].as_str().unwrap(),
+            "bulk_candidates_registered"
+        );
+        assert_eq!(inner["registeredCount"].as_i64().unwrap(), 1);
+        assert_eq!(inner["failedCount"].as_i64().unwrap(), 0);
+        let items = inner["items"].as_array().unwrap();
+        assert_eq!(items[0]["status"].as_str().unwrap(), "candidate_registered");
+        assert_eq!(items[0]["type"].as_str().unwrap(), "rule");
+
+        // Verify persisted in DB
+        let connection = Connection::open(&db_path).unwrap();
+        let count: i64 = connection
+            .query_row(
+                "select count(*) from knowledge_items where type = 'rule'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn register_candidates_valid_procedure() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let body = "Use when: migrating to Rust\nWorkflow:\n1. Read TS code\n2. Write Rust\nVerification:\n- Tests pass\nAvoid:\n- Do not skip tests";
+        let result = register_candidates(
+            &json!({"arguments": {"items": [
+                {
+                    "type": "procedure",
+                    "title": "TS to Rust migration",
+                    "body": body
+                }
+            ]}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        assert_eq!(
+            inner["status"].as_str().unwrap(),
+            "bulk_candidates_registered"
+        );
+        assert_eq!(inner["registeredCount"].as_i64().unwrap(), 1);
+        let items = inner["items"].as_array().unwrap();
+        assert_eq!(items[0]["type"].as_str().unwrap(), "procedure");
+
+        // Verify persisted in DB
+        let connection = Connection::open(&db_path).unwrap();
+        let kind: String = connection
+            .query_row("select type from knowledge_items limit 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(kind, "procedure");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn register_candidates_missing_body_rejected() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = register_candidates(
+            &json!({"arguments": {"items": [
+                {
+                    "type": "rule",
+                    "title": "No body rule"
+                }
+            ]}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        assert_eq!(inner["registeredCount"].as_i64().unwrap(), 0);
+        assert_eq!(inner["failedCount"].as_i64().unwrap(), 1);
+        let items = inner["items"].as_array().unwrap();
+        assert_eq!(items[0]["status"].as_str().unwrap(), "candidate_failed");
+        assert!(items[0]["error"].as_str().unwrap().contains("body"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn register_candidates_invalid_type_rejected() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = register_candidates(
+            &json!({"arguments": {"items": [
+                {
+                    "type": "invalid_type",
+                    "title": "Bad type",
+                    "body": "Some body text"
+                }
+            ]}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        assert_eq!(inner["registeredCount"].as_i64().unwrap(), 0);
+        let items = inner["items"].as_array().unwrap();
+        assert_eq!(items[0]["status"].as_str().unwrap(), "candidate_failed");
+        assert!(items[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("type must be rule or procedure"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn register_candidates_procedure_without_skill_sections_rejected() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = register_candidates(
+            &json!({"arguments": {"items": [
+                {
+                    "type": "procedure",
+                    "title": "Bad procedure",
+                    "body": "This procedure has no required sections at all"
+                }
+            ]}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let inner = parse_inner(&result);
+        assert_eq!(inner["registeredCount"].as_i64().unwrap(), 0);
+        let items = inner["items"].as_array().unwrap();
+        assert_eq!(items[0]["status"].as_str().unwrap(), "candidate_failed");
+        assert!(items[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("PROCEDURE_CANDIDATE_MISSING_SKILL_LIKE_SECTIONS"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn register_candidates_empty_items_rejected() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = register_candidates(&json!({"arguments": {"items": []}}), &context);
+        assert!(is_error(&result));
+        assert!(extract_text(&result).contains("1-10"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn register_candidates_too_many_items_rejected() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_knowledge_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let items: Vec<Value> = (0..11)
+            .map(|i| {
+                json!({
+                    "type": "rule",
+                    "title": format!("Rule {i}"),
+                    "body": format!("Rule body {i}")
+                })
+            })
+            .collect();
+        let result = register_candidates(&json!({"arguments": {"items": items}}), &context);
+        assert!(is_error(&result));
+        assert!(extract_text(&result).contains("1-10"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    // ──────────────────────────────────────────────
+    //  Helper function tests
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn infer_title_from_body() {
+        assert_eq!(infer_title("# My Title\nBody text"), "My Title");
+        assert_eq!(
+            infer_title("- List item first\nMore text"),
+            "List item first"
+        );
+        assert_eq!(infer_title("* Starred item\nMore text"), "Starred item");
+        assert_eq!(
+            infer_title("\n\n  Leading whitespace line\n"),
+            "Leading whitespace line"
+        );
+        assert_eq!(infer_title(""), "Registered candidate");
+        // Title should be truncated at 96 chars
+        let long_body = "A".repeat(200);
+        let inferred = infer_title(&long_body);
+        assert!(inferred.chars().count() <= 96);
+    }
+
+    #[test]
+    fn has_skill_like_sections_check() {
+        let valid = "Use when: something\nWorkflow:\n1. Step one\nVerification:\n- Check result\nAvoid:\n- Bad practice";
+        assert!(has_skill_like_sections(valid));
+
+        let missing_avoid = "Use when: something\nWorkflow:\n1. Step\nVerification:\n- Check";
+        assert!(!has_skill_like_sections(missing_avoid));
+
+        let missing_workflow = "Use when: something\nVerification:\n- Check\nAvoid:\n- Bad";
+        assert!(!has_skill_like_sections(missing_workflow));
+
+        assert!(!has_skill_like_sections(""));
+        assert!(!has_skill_like_sections(
+            "Just plain text without any headings"
+        ));
+    }
+
+    #[test]
+    fn selected_support_knowledge_ids_from_evidence() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_decision_schema(&connection);
+        insert_decision_run(&connection, "dec-evidence-1");
+        // Insert evidence with different roles
+        connection
+            .execute(
+                "insert into context_decision_evidence (id, decision_run_id, knowledge_id, role) values ('e1', 'dec-evidence-1', 'k1', 'selected_support')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into context_decision_evidence (id, decision_run_id, knowledge_id, role) values ('e2', 'dec-evidence-1', 'k2', 'selected_support')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into context_decision_evidence (id, decision_run_id, knowledge_id, role) values ('e3', 'dec-evidence-1', 'k3', 'background')",
+                [],
+            )
+            .unwrap();
+        // Evidence with null knowledge_id should be excluded
+        connection
+            .execute(
+                "insert into context_decision_evidence (id, decision_run_id, knowledge_id, role) values ('e4', 'dec-evidence-1', null, 'selected_support')",
+                [],
+            )
+            .unwrap();
+
+        let ids = selected_support_knowledge_ids(&connection, "dec-evidence-1");
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&"k1".to_string()));
+        assert!(ids.contains(&"k2".to_string()));
+        // background role and null knowledge_id should not appear
+        assert!(!ids.contains(&"k3".to_string()));
+
+        let _ = std::fs::remove_file(db_path);
+    }
 }

@@ -82,6 +82,7 @@
     "seed:llm-usage-sample": "bun run src/cli/seed-llm-usage-sample.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
+    "lint:rust": "cargo clippy --workspace --all-targets -- -D warnings",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "docs:check-links": "bun scripts/validate-doc-links.mjs",
@@ -109,7 +110,9 @@
     "verify:postgres": "bun run test:mcp:contract && bun run verify:queue:smoke",
     "verify:queue:smoke": "DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run db:migrate && DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} CONTEXT_STILL_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 ./test/queue-smoke.operational.ts",
     "verify:full": "bun run verify && bun run verify:sqlite && bun run verify:rust-daemon",
-    "test:mcp:contract": "DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} CONTEXT_STILL_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 test/mcp.contract.test.ts"
+    "test:mcp:contract": "DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} CONTEXT_STILL_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 test/mcp.contract.test.ts",
+    "coverage:rust": "cargo llvm-cov -p context-stilld --summary-only",
+    "coverage:rust:html": "cargo llvm-cov -p context-stilld --html --output-dir target/llvm-cov/html"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1047.0",

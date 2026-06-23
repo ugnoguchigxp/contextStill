@@ -47,6 +47,7 @@ struct EpisodeDistillerJobRow {
     source_key: String,
     attempt_count: i64,
     max_attempts: i64,
+    metadata: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -179,7 +180,9 @@ struct ProcessCounters {
     value_skipped: i64,
     duplicate_generation_kind_skipped: i64,
     failed_segments: i64,
+    accepted_candidate_count: i64,
     episode_ids: Vec<String>,
+    saved_source_keys: Vec<String>,
 }
 
 pub(crate) fn run_episode_distiller_job_for_connection(
@@ -350,15 +353,95 @@ fn process_episode_distiller_job(
     let segments = build_deterministic_segments(&document);
     let cwd = metadata_string(&document.metadata, &["cwd", "repoPath", "workspacePath"]);
     let project = metadata_string(&document.metadata, &["project", "projectName", "repoKey"]);
-    let mut counters = ProcessCounters::default();
-    let mut pending = Vec::new();
-    let mut segment_errors: Vec<Value> = Vec::new();
-    let mut skipped_duplicate_generation_kinds: Vec<Value> = Vec::new();
-    let mut skipped_value_reviews: Vec<Value> = Vec::new();
+    let mut counters = counters_from_metadata(&job.metadata);
+    let mut segment_errors = Vec::new();
+    let mut skipped_duplicate_generation_kinds = json_array_at(
+        &job.metadata,
+        "/episodeDistiller/skippedDuplicateGenerationKinds",
+    );
+    let mut skipped_value_reviews =
+        json_array_at(&job.metadata, "/episodeDistiller/skippedValueReviews");
+    let mut segment_results = json_array_at(&job.metadata, "/episodeDistiller/segmentResults");
+    let completed_segments = completed_segment_indexes(&segment_results);
+    let mut current_segment: Option<usize> = None;
+    let mut last_segment_started_at =
+        metadata_string_at(&job.metadata, "/episodeDistiller/lastSegmentStartedAt");
+    let mut last_segment_completed_at =
+        metadata_string_at(&job.metadata, "/episodeDistiller/lastSegmentCompletedAt");
+    let mut last_episode_created_at =
+        metadata_string_at(&job.metadata, "/episodeDistiller/lastEpisodeCreatedAt");
+
+    patch_episode_progress(
+        connection,
+        job,
+        &episode_progress_metadata(
+            &counters,
+            segments.len(),
+            current_segment,
+            last_segment_started_at.as_deref(),
+            last_segment_completed_at.as_deref(),
+            last_episode_created_at.as_deref(),
+            &segment_results,
+            &segment_errors,
+            &skipped_duplicate_generation_kinds,
+            &skipped_value_reviews,
+            None,
+        ),
+    )?;
 
     for (segment_index, segment) in segments.iter().enumerate() {
+        if completed_segments.contains(&segment_index) {
+            continue;
+        }
+        current_segment = Some(segment_index);
+        last_segment_started_at = Some(now_timestamp());
+        patch_episode_progress(
+            connection,
+            job,
+            &episode_progress_metadata(
+                &counters,
+                segments.len(),
+                current_segment,
+                last_segment_started_at.as_deref(),
+                last_segment_completed_at.as_deref(),
+                last_episode_created_at.as_deref(),
+                &segment_results,
+                &segment_errors,
+                &skipped_duplicate_generation_kinds,
+                &skipped_value_reviews,
+                None,
+            ),
+        )?;
+
         if estimate_token_count(&segment.text) <= 10 {
             counters.skipped += 1;
+            last_segment_completed_at = Some(now_timestamp());
+            record_segment_result(
+                &mut segment_results,
+                json!({
+                    "segment": segment_index,
+                    "status": "skipped",
+                    "reason": "low_token_count",
+                    "completedAt": last_segment_completed_at
+                }),
+            );
+            patch_episode_progress(
+                connection,
+                job,
+                &episode_progress_metadata(
+                    &counters,
+                    segments.len(),
+                    current_segment,
+                    last_segment_started_at.as_deref(),
+                    last_segment_completed_at.as_deref(),
+                    last_episode_created_at.as_deref(),
+                    &segment_results,
+                    &segment_errors,
+                    &skipped_duplicate_generation_kinds,
+                    &skipped_value_reviews,
+                    None,
+                ),
+            )?;
             continue;
         }
         let canonical_episodes = match distill_segment_with_retry(
@@ -372,24 +455,81 @@ fn process_episode_distiller_job(
             Err(error) if is_provider_unavailable(&error.to_string()) => return Err(error),
             Err(error) => {
                 counters.failed_segments += 1;
+                last_segment_completed_at = Some(now_timestamp());
                 segment_errors.push(json!({
                     "segment": segment_index,
                     "error": truncate(&error.to_string(), 500)
                 }));
+                record_segment_result(
+                    &mut segment_results,
+                    json!({
+                        "segment": segment_index,
+                        "status": "failed",
+                        "error": truncate(&error.to_string(), 500),
+                        "completedAt": last_segment_completed_at
+                    }),
+                );
+                patch_episode_progress(
+                    connection,
+                    job,
+                    &episode_progress_metadata(
+                        &counters,
+                        segments.len(),
+                        current_segment,
+                        last_segment_started_at.as_deref(),
+                        last_segment_completed_at.as_deref(),
+                        last_episode_created_at.as_deref(),
+                        &segment_results,
+                        &segment_errors,
+                        &skipped_duplicate_generation_kinds,
+                        &skipped_value_reviews,
+                        None,
+                    ),
+                )?;
                 continue;
             }
         };
         if canonical_episodes.is_empty() {
             counters.skipped += 1;
+            last_segment_completed_at = Some(now_timestamp());
+            record_segment_result(
+                &mut segment_results,
+                json!({
+                    "segment": segment_index,
+                    "status": "empty",
+                    "completedAt": last_segment_completed_at
+                }),
+            );
+            patch_episode_progress(
+                connection,
+                job,
+                &episode_progress_metadata(
+                    &counters,
+                    segments.len(),
+                    current_segment,
+                    last_segment_started_at.as_deref(),
+                    last_segment_completed_at.as_deref(),
+                    last_episode_created_at.as_deref(),
+                    &segment_results,
+                    &segment_errors,
+                    &skipped_duplicate_generation_kinds,
+                    &skipped_value_reviews,
+                    None,
+                ),
+            )?;
             continue;
         }
         let mut seen_generation_kinds = HashSet::new();
+        let mut segment_pending = Vec::new();
+        let mut segment_value_skipped = 0;
+        let mut segment_duplicate_skipped = 0;
         for raw in canonical_episodes {
             let canonical = calibrate_episode(raw);
             let generation_kind = normalize_generation_kind(&canonical.generation_kind);
             if !seen_generation_kinds.insert(generation_kind.clone()) {
                 counters.skipped += 1;
                 counters.duplicate_generation_kind_skipped += 1;
+                segment_duplicate_skipped += 1;
                 skipped_duplicate_generation_kinds.push(json!({
                     "segment": segment_index,
                     "generationKind": generation_kind
@@ -400,6 +540,7 @@ fn process_episode_distiller_job(
             if !value_review.publish {
                 counters.skipped += 1;
                 counters.value_skipped += 1;
+                segment_value_skipped += 1;
                 skipped_value_reviews.push(json!({
                     "segment": segment_index,
                     "generationKind": generation_kind,
@@ -414,7 +555,7 @@ fn process_episode_distiller_job(
                 segment.end_offset,
                 &generation_kind,
             );
-            pending.push(PendingEpisode {
+            segment_pending.push(PendingEpisode {
                 canonical,
                 source_key,
                 source_start_offset: segment.start_offset,
@@ -423,6 +564,120 @@ fn process_episode_distiller_job(
                 event_end: segment.event_end.clone(),
             });
         }
+
+        if segment_pending.is_empty() {
+            last_segment_completed_at = Some(now_timestamp());
+            let status = if segment_value_skipped > 0 {
+                "low_value_skipped"
+            } else if segment_duplicate_skipped > 0 {
+                "duplicate_generation_kind_skipped"
+            } else {
+                "no_episode"
+            };
+            record_segment_result(
+                &mut segment_results,
+                json!({
+                    "segment": segment_index,
+                    "status": status,
+                    "valueSkipped": segment_value_skipped,
+                    "duplicateGenerationKindSkipped": segment_duplicate_skipped,
+                    "completedAt": last_segment_completed_at
+                }),
+            );
+            patch_episode_progress(
+                connection,
+                job,
+                &episode_progress_metadata(
+                    &counters,
+                    segments.len(),
+                    current_segment,
+                    last_segment_started_at.as_deref(),
+                    last_segment_completed_at.as_deref(),
+                    last_episode_created_at.as_deref(),
+                    &segment_results,
+                    &segment_errors,
+                    &skipped_duplicate_generation_kinds,
+                    &skipped_value_reviews,
+                    None,
+                ),
+            )?;
+            continue;
+        }
+
+        counters.accepted_candidate_count += segment_pending.len() as i64;
+        let mut segment_episode_ids = Vec::new();
+        let mut segment_source_keys = Vec::new();
+        let mut segment_generated = 0;
+        let mut segment_deduped = 0;
+        for item in segment_pending.iter() {
+            let (episode_id, deduped) = create_episode_idempotently(
+                connection,
+                item,
+                &document,
+                cwd.as_deref(),
+                project.as_deref(),
+            )?;
+            push_unique_string(&mut counters.episode_ids, episode_id.clone());
+            push_unique_string(&mut counters.saved_source_keys, item.source_key.clone());
+            segment_episode_ids.push(episode_id);
+            segment_source_keys.push(item.source_key.clone());
+            if deduped {
+                counters.deduped += 1;
+                segment_deduped += 1;
+            } else {
+                counters.generated += 1;
+                segment_generated += 1;
+            }
+            last_episode_created_at = Some(now_timestamp());
+            patch_episode_progress(
+                connection,
+                job,
+                &episode_progress_metadata(
+                    &counters,
+                    segments.len(),
+                    current_segment,
+                    last_segment_started_at.as_deref(),
+                    last_segment_completed_at.as_deref(),
+                    last_episode_created_at.as_deref(),
+                    &segment_results,
+                    &segment_errors,
+                    &skipped_duplicate_generation_kinds,
+                    &skipped_value_reviews,
+                    None,
+                ),
+            )?;
+        }
+        last_segment_completed_at = Some(now_timestamp());
+        record_segment_result(
+            &mut segment_results,
+            json!({
+                "segment": segment_index,
+                "status": if segment_generated > 0 { "saved" } else { "deduped" },
+                "episodeIds": segment_episode_ids,
+                "sourceKeys": segment_source_keys,
+                "acceptedCandidateCount": segment_pending.len(),
+                "generated": segment_generated,
+                "deduped": segment_deduped,
+                "completedAt": last_segment_completed_at
+            }),
+        );
+        patch_episode_progress(
+            connection,
+            job,
+            &episode_progress_metadata(
+                &counters,
+                segments.len(),
+                current_segment,
+                last_segment_started_at.as_deref(),
+                last_segment_completed_at.as_deref(),
+                last_episode_created_at.as_deref(),
+                &segment_results,
+                &segment_errors,
+                &skipped_duplicate_generation_kinds,
+                &skipped_value_reviews,
+                None,
+            ),
+        )?;
     }
 
     if counters.generated == 0
@@ -459,22 +714,6 @@ fn process_episode_distiller_job(
         )));
     }
 
-    for item in pending.iter() {
-        let (episode_id, deduped) = create_episode_idempotently(
-            connection,
-            item,
-            &document,
-            cwd.as_deref(),
-            project.as_deref(),
-        )?;
-        counters.episode_ids.push(episode_id);
-        if deduped {
-            counters.deduped += 1;
-        } else {
-            counters.generated += 1;
-        }
-    }
-
     let outcome = if counters.generated > 0 || counters.deduped > 0 {
         "episodes_distilled"
     } else if counters.value_skipped > 0 {
@@ -487,23 +726,20 @@ fn process_episode_distiller_job(
     } else {
         "skipped"
     };
-    let metadata = json!({
-        "episodeDistiller": {
-            "generated": counters.generated,
-            "deduped": counters.deduped,
-            "skipped": counters.skipped,
-            "valueSkipped": counters.value_skipped,
-            "duplicateGenerationKindSkipped": counters.duplicate_generation_kind_skipped,
-            "failedSegments": counters.failed_segments,
-            "segmentCount": segments.len(),
-            "episodeIds": counters.episode_ids,
-            "acceptedCandidateCount": pending.len(),
-            "segmentErrors": segment_errors,
-            "skippedDuplicateGenerationKinds": skipped_duplicate_generation_kinds,
-            "skippedValueReviews": skipped_value_reviews,
-            "completedAt": now_timestamp()
-        }
-    });
+    let completed_at = now_timestamp();
+    let metadata = episode_progress_metadata(
+        &counters,
+        segments.len(),
+        current_segment,
+        last_segment_started_at.as_deref(),
+        last_segment_completed_at.as_deref(),
+        last_episode_created_at.as_deref(),
+        &segment_results,
+        &segment_errors,
+        &skipped_duplicate_generation_kinds,
+        &skipped_value_reviews,
+        Some(completed_at.as_str()),
+    );
     mark_completed(connection, job, status, outcome, &metadata)?;
     append_queue_event_for_connection(
         connection,
@@ -521,7 +757,7 @@ fn process_episode_distiller_job(
                 "duplicateGenerationKindSkipped": counters.duplicate_generation_kind_skipped,
                 "failedSegments": counters.failed_segments,
                 "episodeIds": counters.episode_ids,
-                "acceptedCandidateCount": pending.len(),
+                "acceptedCandidateCount": counters.accepted_candidate_count,
                 "executor": "rust"
             })
             .to_string(),
@@ -539,7 +775,7 @@ fn load_job(connection: &Connection, job_id: &str) -> Result<EpisodeDistillerJob
     connection
         .query_row(
             "
-            select id, source_kind, source_key, attempt_count, max_attempts
+            select id, source_kind, source_key, attempt_count, max_attempts, coalesce(metadata, '{}')
             from episode_distiller_queue
             where id = ?1
             limit 1
@@ -552,6 +788,7 @@ fn load_job(connection: &Connection, job_id: &str) -> Result<EpisodeDistillerJob
                     source_key: row.get(2)?,
                     attempt_count: row.get(3)?,
                     max_attempts: row.get(4)?,
+                    metadata: parse_json_or_empty(&row.get::<_, String>(5)?),
                 })
             },
         )
@@ -1180,6 +1417,144 @@ fn existing_episode_id(
         .map_err(|error| CliError::io(format!("failed to check existing episode card: {error}")))
 }
 
+fn counters_from_metadata(metadata: &Value) -> ProcessCounters {
+    let episode_ids = metadata_string_array_at(metadata, "/episodeDistiller/savedEpisodeIds")
+        .or_else(|| metadata_string_array_at(metadata, "/episodeDistiller/episodeIds"))
+        .unwrap_or_default();
+    ProcessCounters {
+        generated: metadata_i64_at(metadata, "/episodeDistiller/generated"),
+        deduped: metadata_i64_at(metadata, "/episodeDistiller/deduped"),
+        skipped: metadata_i64_at(metadata, "/episodeDistiller/skipped"),
+        value_skipped: metadata_i64_at(metadata, "/episodeDistiller/valueSkipped"),
+        duplicate_generation_kind_skipped: metadata_i64_at(
+            metadata,
+            "/episodeDistiller/duplicateGenerationKindSkipped",
+        ),
+        failed_segments: 0,
+        accepted_candidate_count: metadata_i64_at(
+            metadata,
+            "/episodeDistiller/acceptedCandidateCount",
+        ),
+        episode_ids,
+        saved_source_keys: metadata_string_array_at(metadata, "/episodeDistiller/savedSourceKeys")
+            .unwrap_or_default(),
+    }
+}
+
+fn patch_episode_progress(
+    connection: &Connection,
+    job: &EpisodeDistillerJobRow,
+    metadata: &Value,
+) -> Result<(), CliError> {
+    connection
+        .execute(
+            "
+            update episode_distiller_queue
+            set metadata = json_patch(coalesce(nullif(metadata, ''), '{}'), ?1),
+                updated_at = CURRENT_TIMESTAMP
+            where id = ?2
+            ",
+            params![metadata.to_string(), job.id],
+        )
+        .map_err(|error| {
+            CliError::io(format!(
+                "failed to update episode distiller progress metadata: {error}"
+            ))
+        })?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn episode_progress_metadata(
+    counters: &ProcessCounters,
+    segment_count: usize,
+    current_segment: Option<usize>,
+    last_segment_started_at: Option<&str>,
+    last_segment_completed_at: Option<&str>,
+    last_episode_created_at: Option<&str>,
+    segment_results: &[Value],
+    segment_errors: &[Value],
+    skipped_duplicate_generation_kinds: &[Value],
+    skipped_value_reviews: &[Value],
+    completed_at: Option<&str>,
+) -> Value {
+    let mut metadata = json!({
+        "episodeDistiller": {
+            "executor": "rust",
+            "generated": counters.generated,
+            "deduped": counters.deduped,
+            "skipped": counters.skipped,
+            "valueSkipped": counters.value_skipped,
+            "duplicateGenerationKindSkipped": counters.duplicate_generation_kind_skipped,
+            "failedSegments": counters.failed_segments,
+            "segmentCount": segment_count,
+            "currentSegment": current_segment,
+            "episodeIds": counters.episode_ids,
+            "savedEpisodeIds": counters.episode_ids,
+            "savedSourceKeys": counters.saved_source_keys,
+            "acceptedCandidateCount": counters.accepted_candidate_count,
+            "lastSegmentStartedAt": last_segment_started_at,
+            "lastSegmentCompletedAt": last_segment_completed_at,
+            "lastEpisodeCreatedAt": last_episode_created_at,
+            "segmentResults": segment_results,
+            "segmentErrors": segment_errors,
+            "skippedDuplicateGenerationKinds": skipped_duplicate_generation_kinds,
+            "skippedValueReviews": skipped_value_reviews
+        }
+    });
+    if let Some(completed_at) = completed_at {
+        metadata["episodeDistiller"]["completedAt"] = json!(completed_at);
+    }
+    metadata
+}
+
+fn completed_segment_indexes(segment_results: &[Value]) -> HashSet<usize> {
+    segment_results
+        .iter()
+        .filter_map(|item| {
+            let segment = item.get("segment")?.as_u64()? as usize;
+            let status = item.get("status")?.as_str()?;
+            if is_completed_segment_status(status) {
+                Some(segment)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn is_completed_segment_status(status: &str) -> bool {
+    matches!(
+        status,
+        "saved"
+            | "deduped"
+            | "skipped"
+            | "empty"
+            | "low_value_skipped"
+            | "duplicate_generation_kind_skipped"
+            | "no_episode"
+    )
+}
+
+fn record_segment_result(segment_results: &mut Vec<Value>, result: Value) {
+    let segment = result.get("segment").and_then(Value::as_u64);
+    if let Some(segment) = segment {
+        segment_results.retain(|item| item.get("segment").and_then(Value::as_u64) != Some(segment));
+    }
+    segment_results.push(result);
+    segment_results.sort_by_key(|item| {
+        item.get("segment")
+            .and_then(Value::as_u64)
+            .unwrap_or(u64::MAX)
+    });
+}
+
+fn push_unique_string(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|item| item == &value) {
+        values.push(value);
+    }
+}
+
 fn mark_completed(
     connection: &Connection,
     job: &EpisodeDistillerJobRow,
@@ -1511,6 +1886,48 @@ fn metadata_string(metadata: &Value, keys: &[&str]) -> Option<String> {
     })
 }
 
+fn metadata_string_at(metadata: &Value, pointer: &str) -> Option<String> {
+    metadata
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn metadata_i64_at(metadata: &Value, pointer: &str) -> i64 {
+    metadata
+        .pointer(pointer)
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
+        })
+        .unwrap_or(0)
+}
+
+fn metadata_string_array_at(metadata: &Value, pointer: &str) -> Option<Vec<String>> {
+    Some(
+        metadata
+            .pointer(pointer)?
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect(),
+    )
+}
+
+fn json_array_at(metadata: &Value, pointer: &str) -> Vec<Value> {
+    metadata
+        .pointer(pointer)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
 fn parse_json_or_empty(value: &str) -> Value {
     serde_json::from_str(value).unwrap_or_else(|_| json!({}))
 }
@@ -1801,6 +2218,210 @@ mod tests {
             .query_row("select count(*) from episode_refs", [], |row| row.get(0))
             .unwrap();
         assert_eq!(ref_count, 1);
+        let metadata: String = connection
+            .query_row(
+                "select metadata from episode_distiller_queue where id = 'job-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let metadata = parse_json_or_empty(&metadata);
+        assert_eq!(
+            metadata.pointer("/episodeDistiller/segmentCount"),
+            Some(&json!(1))
+        );
+        assert_eq!(
+            metadata.pointer("/episodeDistiller/generated"),
+            Some(&json!(1))
+        );
+        assert!(metadata
+            .pointer("/episodeDistiller/lastEpisodeCreatedAt")
+            .and_then(Value::as_str)
+            .is_some());
+        assert_eq!(
+            metadata
+                .pointer("/episodeDistiller/segmentResults/0/status")
+                .and_then(Value::as_str),
+            Some("saved")
+        );
+    }
+
+    #[test]
+    fn rust_episode_distiller_persists_completed_segment_before_provider_retry() {
+        let connection = Connection::open_in_memory().unwrap();
+        create_episode_runtime_tables(&connection);
+        insert_two_segment_memory(&connection);
+        insert_episode_job(&connection, "job-1", json!({}));
+        let server =
+            spawn_response_sequence_server(vec![
+            (200, llm_response_body("First segment saved before retry", "task_episode")),
+            (
+                503,
+                r#"{"error":{"message":"Loading model","type":"unavailable_error","code":503}}"#
+                    .to_string(),
+            ),
+        ]);
+        let target = LocalLlmTargetConfig {
+            target_id: "local-a".to_string(),
+            api_base_url: server,
+            api_path: "/v1/chat/completions".to_string(),
+            model: "qwen".to_string(),
+        };
+
+        let status = run_episode_distiller_job_for_connection(
+            &connection,
+            "job-1",
+            "worker-1",
+            &target,
+            Some("test-key"),
+            30,
+        )
+        .unwrap();
+
+        assert_eq!(status, EpisodeExecutionStatus::RetriedProviderUnavailable);
+        let card_count: i64 = connection
+            .query_row("select count(*) from episode_cards", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(card_count, 1);
+        let row = connection
+            .query_row(
+                "select status, attempt_count, last_outcome_kind, metadata from episode_distiller_queue where id = 'job-1'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(row.0, "pending");
+        assert_eq!(row.1, 0);
+        assert_eq!(row.2, "provider_unavailable");
+        let metadata = parse_json_or_empty(&row.3);
+        assert_eq!(
+            metadata
+                .pointer("/episodeDistiller/segmentResults/0/status")
+                .and_then(Value::as_str),
+            Some("saved")
+        );
+        assert!(metadata
+            .pointer("/episodeDistiller/savedEpisodeIds/0")
+            .and_then(Value::as_str)
+            .is_some());
+        assert!(metadata
+            .pointer("/episodeDistiller/lastEpisodeCreatedAt")
+            .and_then(Value::as_str)
+            .is_some());
+    }
+
+    #[test]
+    fn rust_episode_distiller_resumes_after_saved_segment_metadata() {
+        let connection = Connection::open_in_memory().unwrap();
+        create_episode_runtime_tables(&connection);
+        insert_two_segment_memory(&connection);
+        let document = read_source_document(&connection, "memory-1").unwrap();
+        let segments = build_deterministic_segments(&document);
+        assert_eq!(segments.len(), 2);
+        let saved_source_key = episode_source_fragment_key(
+            "memory-1",
+            segments[0].start_offset,
+            segments[0].end_offset,
+            "task_episode",
+        );
+        let pending = PendingEpisode {
+            canonical: test_canonical_episode(),
+            source_key: saved_source_key.clone(),
+            source_start_offset: segments[0].start_offset,
+            source_end_offset: segments[0].end_offset,
+            event_start: segments[0].event_start.clone(),
+            event_end: segments[0].event_end.clone(),
+        };
+        let (saved_episode_id, deduped) =
+            create_episode_idempotently(&connection, &pending, &document, None, None).unwrap();
+        assert!(!deduped);
+        insert_episode_job(
+            &connection,
+            "job-1",
+            json!({
+                "episodeDistiller": {
+                    "generated": 1,
+                    "acceptedCandidateCount": 1,
+                    "episodeIds": [saved_episode_id],
+                    "savedEpisodeIds": [saved_episode_id],
+                    "savedSourceKeys": [saved_source_key],
+                    "segmentResults": [{
+                        "segment": 0,
+                        "status": "saved"
+                    }]
+                }
+            }),
+        );
+        let server = spawn_single_response_server(
+            200,
+            llm_response_body("Second segment after resume", "task_episode"),
+        );
+        let target = LocalLlmTargetConfig {
+            target_id: "local-a".to_string(),
+            api_base_url: server,
+            api_path: "/v1/chat/completions".to_string(),
+            model: "qwen".to_string(),
+        };
+
+        let status = run_episode_distiller_job_for_connection(
+            &connection,
+            "job-1",
+            "worker-1",
+            &target,
+            Some("test-key"),
+            30,
+        )
+        .unwrap();
+
+        assert_eq!(status, EpisodeExecutionStatus::Completed);
+        let card_count: i64 = connection
+            .query_row("select count(*) from episode_cards", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(card_count, 2);
+        let metadata: String = connection
+            .query_row(
+                "select metadata from episode_distiller_queue where id = 'job-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let metadata = parse_json_or_empty(&metadata);
+        assert_eq!(
+            metadata
+                .pointer("/episodeDistiller/segmentResults/0/status")
+                .and_then(Value::as_str),
+            Some("saved")
+        );
+        assert_eq!(
+            metadata
+                .pointer("/episodeDistiller/segmentResults/1/status")
+                .and_then(Value::as_str),
+            Some("saved")
+        );
+    }
+
+    #[test]
+    fn rust_episode_distiller_retry_does_not_carry_previous_failed_segment_count() {
+        let counters = counters_from_metadata(&json!({
+            "episodeDistiller": {
+                "generated": 1,
+                "failedSegments": 3,
+                "savedEpisodeIds": ["episode-1"],
+                "savedSourceKeys": ["source-key-1"]
+            }
+        }));
+
+        assert_eq!(counters.generated, 1);
+        assert_eq!(counters.failed_segments, 0);
+        assert_eq!(counters.episode_ids, vec!["episode-1".to_string()]);
+        assert_eq!(counters.saved_source_keys, vec!["source-key-1".to_string()]);
     }
 
     #[test]
@@ -1917,6 +2538,65 @@ mod tests {
         assert_eq!(ref_count, 0);
     }
 
+    fn insert_two_segment_memory(connection: &Connection) {
+        connection
+            .execute(
+                "
+                insert into vibe_memories (id, session_id, content, metadata, created_at)
+                values ('memory-1', 'session-1', 'Rust queue executor should save each completed episode segment before continuing to later LocalLLM calls.', '{\"cwd\":\"/repo\",\"project\":\"contextStill\"}', '2026-06-23T00:00:00.000Z')
+                ",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "
+                insert into agent_diff_entries (
+                  id, vibe_memory_id, file_path, diff_hunk, change_type, language,
+                  symbol_name, symbol_kind, signature, start_line, end_line, created_at
+                ) values (
+                  'diff-1', 'memory-1', 'src/first.rs',
+                  'Implemented the first segment of EpisodeDistiller incremental persistence and verified it writes EpisodeCard rows immediately.',
+                  'modify', 'rust', 'first', 'function', 'fn first()', 10, 20, '2026-06-23T00:01:00.000Z'
+                )
+                ",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "
+                insert into agent_diff_entries (
+                  id, vibe_memory_id, file_path, diff_hunk, change_type, language,
+                  symbol_name, symbol_kind, signature, start_line, end_line, created_at
+                ) values (
+                  'diff-2', 'memory-1', 'src/second.rs',
+                  'Continued with a second segment so the worker must perform a later LocalLLM call after saving the first segment.',
+                  'modify', 'rust', 'second', 'function', 'fn second()', 30, 40, '2026-06-23T00:02:00.000Z'
+                )
+                ",
+                [],
+            )
+            .unwrap();
+    }
+
+    fn insert_episode_job(connection: &Connection, job_id: &str, metadata: Value) {
+        connection
+            .execute(
+                "
+                insert into episode_distiller_queue (
+                  id, source_kind, source_key, status, priority, attempt_count, max_attempts,
+                  locked_by, locked_at, heartbeat_at, metadata, created_at, updated_at
+                ) values (
+                  ?1, 'vibe_memory', 'memory-1', 'running', 10, 0, 2,
+                  'worker-1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                ",
+                params![job_id, metadata.to_string()],
+            )
+            .unwrap();
+    }
+
     fn create_episode_runtime_tables(connection: &Connection) {
         connection
             .execute_batch(
@@ -1995,6 +2675,20 @@ mod tests {
                   metadata text not null default '{}',
                   created_at text not null default CURRENT_TIMESTAMP
                 );
+                create table agent_diff_entries (
+                  id text primary key,
+                  vibe_memory_id text not null,
+                  file_path text not null,
+                  diff_hunk text not null,
+                  change_type text,
+                  language text,
+                  symbol_name text,
+                  symbol_kind text,
+                  signature text,
+                  start_line integer,
+                  end_line integer,
+                  created_at text not null
+                );
                 "#,
             )
             .unwrap();
@@ -2033,31 +2727,77 @@ mod tests {
         }
     }
 
+    fn llm_response_body(title: &str, generation_kind: &str) -> String {
+        json!({
+            "choices": [{
+                "message": {
+                    "content": json!([{
+                        "title": title,
+                        "context": "Rust EpisodeDistiller is processing segmented source evidence.",
+                        "intent": "Persist useful EpisodeCards as each segment completes.",
+                        "keyDecisions": ["Save segment output immediately instead of waiting for job completion."],
+                        "actionTaken": "The Rust worker persisted a segment result and updated queue progress metadata.",
+                        "outcome": "Completed segment output remains available even if a later segment needs retry.",
+                        "failedApproach": "",
+                        "reusableLesson": "Long-running LLM jobs should publish durable partial outputs at natural boundaries.",
+                        "usefulFutureTriggers": ["EpisodeDistiller long run", "queue retry after partial progress"],
+                        "openLoops": [],
+                        "generationKind": generation_kind,
+                        "outcomeKind": "success",
+                        "domains": ["contextStill"],
+                        "technologies": ["Rust", "SQLite", "LocalLLM"],
+                        "changeTypes": ["runtime"],
+                        "tools": ["cargo"],
+                        "scores": {
+                            "importance": 86,
+                            "confidence": 76,
+                            "reusability": 82,
+                            "decision_density": 74,
+                            "failure_value": 60,
+                            "causal_clarity": 78,
+                            "project_specificity": 82,
+                            "evidence_quality": 75,
+                            "compression_quality": 72,
+                            "staleness_risk": 25
+                        }
+                    }]).to_string()
+                }
+            }]
+        })
+        .to_string()
+    }
+
     fn spawn_single_response_server(status: u16, body: String) -> String {
+        spawn_response_sequence_server(vec![(status, body)])
+    }
+
+    fn spawn_response_sequence_server(responses: Vec<(u16, String)>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut line = String::new();
-            loop {
-                line.clear();
-                reader.read_line(&mut line).unwrap();
-                if line == "\r\n" || line.is_empty() {
-                    break;
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
                 }
+                let reason = if status == 200 {
+                    "OK"
+                } else {
+                    "Service Unavailable"
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).unwrap();
             }
-            let reason = if status == 200 {
-                "OK"
-            } else {
-                "Service Unavailable"
-            };
-            let response = format!(
-                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.as_bytes().len(),
-                body
-            );
-            stream.write_all(response.as_bytes()).unwrap();
         });
         format!("http://{address}")
     }

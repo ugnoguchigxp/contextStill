@@ -273,3 +273,548 @@ fn fetch_agent_diffs(connection: &Connection, memory_id: &str) -> Vec<Value> {
         .map(|rows| rows.flatten().collect())
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::SystemTime;
+
+    use rusqlite::Connection;
+    use serde_json::json;
+
+    use super::*;
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_db_path() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!("context_still_native_memory_{nanos}_{id}.sqlite"))
+    }
+
+    fn create_memory_schema(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"
+                create table vibe_memories (
+                  id text primary key,
+                  session_id text not null,
+                  content text not null,
+                  memory_type text not null default 'conversation',
+                  embedding_status text not null default 'pending',
+                  created_at text not null default CURRENT_TIMESTAMP,
+                  metadata text not null default '{}'
+                );
+                create table agent_diff_entries (
+                  id text primary key,
+                  vibe_memory_id text not null,
+                  file_path text not null,
+                  diff_hunk text not null default '',
+                  change_type text,
+                  language text,
+                  symbol_name text,
+                  symbol_kind text,
+                  signature text,
+                  start_line integer,
+                  end_line integer,
+                  metadata text not null default '{}',
+                  created_at text not null default CURRENT_TIMESTAMP,
+                  updated_at text not null default CURRENT_TIMESTAMP
+                );
+                "#,
+            )
+            .unwrap();
+    }
+
+    fn make_context(db_path: &Path) -> NativeToolContext {
+        NativeToolContext {
+            project_root: std::env::temp_dir(),
+            sqlite_core_path: db_path.to_path_buf(),
+        }
+    }
+
+    fn insert_memory(connection: &Connection, id: &str, session_id: &str, content: &str) {
+        connection
+            .execute(
+                "insert into vibe_memories (id, session_id, content) values (?1, ?2, ?3)",
+                (id, session_id, content),
+            )
+            .unwrap();
+    }
+
+    fn insert_memory_with_meta(
+        connection: &Connection,
+        id: &str,
+        session_id: &str,
+        content: &str,
+        metadata: &str,
+        created_at: &str,
+    ) {
+        connection
+            .execute(
+                "insert into vibe_memories (id, session_id, content, metadata, created_at) values (?1, ?2, ?3, ?4, ?5)",
+                (id, session_id, content, metadata, created_at),
+            )
+            .unwrap();
+    }
+
+    fn insert_diff(
+        connection: &Connection,
+        id: &str,
+        memory_id: &str,
+        file_path: &str,
+        diff_hunk: &str,
+        symbol_name: Option<&str>,
+    ) {
+        connection
+            .execute(
+                "insert into agent_diff_entries (id, vibe_memory_id, file_path, diff_hunk, symbol_name) values (?1, ?2, ?3, ?4, ?5)",
+                (id, memory_id, file_path, diff_hunk, symbol_name),
+            )
+            .unwrap();
+    }
+
+    /// is_error かどうかを判定するヘルパー
+    fn is_error(result: &serde_json::Value) -> bool {
+        result
+            .get("isError")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// content テキストを取得するヘルパー
+    fn extract_text(result: &serde_json::Value) -> String {
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// content テキストを JSON としてパースするヘルパー
+    fn extract_json(result: &serde_json::Value) -> serde_json::Value {
+        let text = extract_text(result);
+        serde_json::from_str(&text).unwrap_or(json!({}))
+    }
+
+    // ─── search_memory tests ───
+
+    #[test]
+    fn search_memory_requires_query() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_memory(&json!({"arguments": {}}), &context);
+        assert!(is_error(&result));
+        assert!(extract_text(&result).contains("query is required"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_memory_no_table_returns_no_content() {
+        let db_path = temp_db_path();
+        // テーブルを作成せずにDBだけ作る
+        let _connection = Connection::open(&db_path).unwrap();
+        drop(_connection);
+
+        let context = make_context(&db_path);
+        let result = search_memory(&json!({"arguments": {"query": "test"}}), &context);
+        assert!(!is_error(&result));
+        assert!(extract_text(&result).contains("no content"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_memory_matches_query() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        insert_memory(&connection, "m1", "s1", "Rust error handling patterns");
+        insert_memory(&connection, "m2", "s1", "Python data analysis pipeline");
+        insert_memory(&connection, "m3", "s1", "Rust async runtime internals");
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_memory(&json!({"arguments": {"query": "Rust"}}), &context);
+        assert!(!is_error(&result));
+        let data = extract_json(&result);
+        let items = data["items"].as_array().unwrap();
+        // "Rust" を含むメモリのみ返される
+        assert!(items.len() >= 2);
+        for item in items {
+            let id = item["id"].as_str().unwrap();
+            assert!(id == "m1" || id == "m3", "unexpected id: {id}");
+        }
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_memory_respects_limit() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        for i in 0..5 {
+            insert_memory(
+                &connection,
+                &format!("m{i}"),
+                "s1",
+                &format!("Rust topic number {i} with some Rust details"),
+            );
+        }
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_memory(
+            &json!({"arguments": {"query": "Rust", "limit": 2}}),
+            &context,
+        );
+        let data = extract_json(&result);
+        let items = data["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_memory_include_content_adds_preview() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        insert_memory(
+            &connection,
+            "m1",
+            "s1",
+            "Rust performance tuning guide for production systems",
+        );
+        drop(connection);
+
+        let context = make_context(&db_path);
+        // includeContent=false (デフォルト) - contentPreview は含まれない
+        let result_no = search_memory(&json!({"arguments": {"query": "Rust"}}), &context);
+        let data_no = extract_json(&result_no);
+        let item_no = &data_no["items"][0];
+        assert!(item_no.get("contentPreview").is_none());
+
+        // includeContent=true - contentPreview が含まれる
+        let result_yes = search_memory(
+            &json!({"arguments": {"query": "Rust", "includeContent": true}}),
+            &context,
+        );
+        let data_yes = extract_json(&result_yes);
+        let item_yes = &data_yes["items"][0];
+        assert!(item_yes.get("contentPreview").is_some());
+        assert!(item_yes["contentPreview"]
+            .as_str()
+            .unwrap()
+            .contains("Rust"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_memory_preview_chars_respected() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        let long_content = format!("Rust {}", "x".repeat(500));
+        insert_memory(&connection, "m1", "s1", &long_content);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_memory(
+            &json!({"arguments": {"query": "Rust", "includeContent": true, "previewChars": 20}}),
+            &context,
+        );
+        let data = extract_json(&result);
+        let item = &data["items"][0];
+        let preview = item["contentPreview"].as_str().unwrap();
+        // previewChars=20 なので最大20文字（+ "..." の truncation）
+        assert!(
+            preview.chars().count() <= 20,
+            "preview too long: {}",
+            preview.chars().count()
+        );
+        assert_eq!(item["previewChars"].as_u64().unwrap(), 20);
+        assert!(item["contentTruncated"].as_bool().unwrap());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_memory_filters_by_session_id() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        insert_memory(&connection, "m1", "session-a", "Rust memory in session A");
+        insert_memory(&connection, "m2", "session-b", "Rust memory in session B");
+        insert_memory(
+            &connection,
+            "m3",
+            "session-a",
+            "Another Rust item session A",
+        );
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_memory(
+            &json!({"arguments": {"query": "Rust", "sessionId": "session-a"}}),
+            &context,
+        );
+        let data = extract_json(&result);
+        let items = data["items"].as_array().unwrap();
+        // session-a のみが返される
+        for item in items {
+            assert_eq!(item["sessionId"].as_str().unwrap(), "session-a");
+        }
+        assert_eq!(items.len(), 2);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_memory_diff_match_boosts_score() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        // 同じ content を持つ2つのメモリ
+        insert_memory(&connection, "m-no-diff", "s1", "implement parser module");
+        insert_memory(&connection, "m-with-diff", "s1", "implement parser module");
+        // m-with-diff のみにマッチする diff を追加
+        insert_diff(
+            &connection,
+            "d1",
+            "m-with-diff",
+            "src/parser.rs",
+            "+fn parse_token() {}",
+            Some("parser"),
+        );
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = search_memory(&json!({"arguments": {"query": "parser"}}), &context);
+        let data = extract_json(&result);
+        let items = data["items"].as_array().unwrap();
+        assert!(items.len() >= 2);
+        // diff がある方がスコアが高くなり先頭に来る
+        assert_eq!(items[0]["id"].as_str().unwrap(), "m-with-diff");
+        let score_with = items[0]["score"].as_i64().unwrap();
+        let score_without = items[1]["score"].as_i64().unwrap();
+        assert!(
+            score_with > score_without,
+            "diff match should boost score: {score_with} > {score_without}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    // ─── fetch_memory tests ───
+
+    #[test]
+    fn fetch_memory_happy_path() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        insert_memory_with_meta(
+            &connection,
+            "mem-1",
+            "sess-1",
+            "Full memory content for testing",
+            r#"{"key": "value"}"#,
+            "2025-01-01T00:00:00Z",
+        );
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = fetch_memory(&json!({"arguments": {"id": "mem-1"}}), &context);
+        assert!(!is_error(&result));
+        let data = extract_json(&result);
+        assert_eq!(data["id"].as_str().unwrap(), "mem-1");
+        assert_eq!(data["sessionId"].as_str().unwrap(), "sess-1");
+        assert_eq!(
+            data["content"].as_str().unwrap(),
+            "Full memory content for testing"
+        );
+        assert_eq!(data["memoryType"].as_str().unwrap(), "conversation");
+        assert_eq!(data["metadata"]["key"].as_str().unwrap(), "value");
+        assert!(!data["truncated"].as_bool().unwrap());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn fetch_memory_not_found() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = fetch_memory(&json!({"arguments": {"id": "nonexistent"}}), &context);
+        assert!(is_error(&result));
+        assert!(extract_text(&result).contains("not found"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn fetch_memory_return_meta_only() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        insert_memory(&connection, "mem-meta", "s1", "Secret content here");
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = fetch_memory(
+            &json!({"arguments": {"id": "mem-meta", "returnMetaOnly": true}}),
+            &context,
+        );
+        assert!(!is_error(&result));
+        let data = extract_json(&result);
+        assert_eq!(data["id"].as_str().unwrap(), "mem-meta");
+        assert_eq!(data["sessionId"].as_str().unwrap(), "s1");
+        // returnMetaOnly=true なので content フィールドは含まれない
+        assert!(data.get("content").is_none());
+        // contentLength は含まれる
+        assert!(data["contentLength"].as_u64().unwrap() > 0);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn fetch_memory_include_agent_diffs() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        insert_memory(&connection, "mem-diff", "s1", "Memory with diffs attached");
+        insert_diff(
+            &connection,
+            "diff-1",
+            "mem-diff",
+            "src/main.rs",
+            "+fn main() {}",
+            Some("main"),
+        );
+        insert_diff(
+            &connection,
+            "diff-2",
+            "mem-diff",
+            "src/lib.rs",
+            "+pub mod utils;",
+            None,
+        );
+        drop(connection);
+
+        let context = make_context(&db_path);
+        // includeAgentDiffs=false (デフォルト) → agentDiffs なし
+        let result_no = fetch_memory(&json!({"arguments": {"id": "mem-diff"}}), &context);
+        let data_no = extract_json(&result_no);
+        assert!(data_no.get("agentDiffs").is_none());
+
+        // includeAgentDiffs=true → agentDiffs あり
+        let result_yes = fetch_memory(
+            &json!({"arguments": {"id": "mem-diff", "includeAgentDiffs": true}}),
+            &context,
+        );
+        let data_yes = extract_json(&result_yes);
+        let diffs = data_yes["agentDiffs"].as_array().unwrap();
+        assert_eq!(diffs.len(), 2);
+        // diff の内容を検証
+        let paths: Vec<&str> = diffs
+            .iter()
+            .map(|d| d["filePath"].as_str().unwrap())
+            .collect();
+        assert!(paths.contains(&"src/main.rs"));
+        assert!(paths.contains(&"src/lib.rs"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn fetch_memory_max_chars_truncation() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        let long_content = "A".repeat(500);
+        insert_memory(&connection, "mem-long", "s1", &long_content);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = fetch_memory(
+            &json!({"arguments": {"id": "mem-long", "maxChars": 50}}),
+            &context,
+        );
+        let data = extract_json(&result);
+        let content = data["content"].as_str().unwrap();
+        assert!(
+            content.len() <= 50,
+            "content should be truncated to maxChars"
+        );
+        assert!(data["truncated"].as_bool().unwrap());
+        assert_eq!(data["contentLength"].as_u64().unwrap(), 500);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn fetch_memory_start_end_range() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        // 26文字: "abcdefghijklmnopqrstuvwxyz"
+        insert_memory(&connection, "mem-range", "s1", "abcdefghijklmnopqrstuvwxyz");
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = fetch_memory(
+            &json!({"arguments": {"id": "mem-range", "start": 5, "end": 10}}),
+            &context,
+        );
+        let data = extract_json(&result);
+        let content = data["content"].as_str().unwrap();
+        assert_eq!(content, "fghij");
+        assert_eq!(data["sliceStart"].as_u64().unwrap(), 5);
+        assert_eq!(data["sliceEnd"].as_u64().unwrap(), 10);
+        assert!(data["truncated"].as_bool().unwrap());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn fetch_memory_query_window() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_memory_schema(&connection);
+        // "needle" がオフセット50付近にあるテキスト
+        let prefix = "x".repeat(50);
+        let suffix = "y".repeat(50);
+        let content = format!("{prefix}NEEDLE{suffix}");
+        insert_memory(&connection, "mem-query", "s1", &content);
+        drop(connection);
+
+        let context = make_context(&db_path);
+        let result = fetch_memory(
+            &json!({"arguments": {"id": "mem-query", "query": "needle", "maxChars": 30}}),
+            &context,
+        );
+        let data = extract_json(&result);
+        let slice = data["content"].as_str().unwrap();
+        // query でウィンドウが "needle" を中心に配置される
+        assert!(
+            slice.to_lowercase().contains("needle"),
+            "query window should contain the matched term, got: {slice}"
+        );
+        assert!(data["truncated"].as_bool().unwrap());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+}
