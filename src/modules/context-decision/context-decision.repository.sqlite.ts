@@ -185,6 +185,10 @@ function asObjectArray(value: unknown): Array<Record<string, unknown>> {
 
 function toIso(value: string | null): string {
   if (!value) return new Date(0).toISOString();
+  if (value.startsWith("unix-ms:")) {
+    const millis = Number(value.slice("unix-ms:".length));
+    if (Number.isFinite(millis)) return new Date(millis).toISOString();
+  }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString();
 }

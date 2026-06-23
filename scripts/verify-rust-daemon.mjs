@@ -230,6 +230,20 @@ function assertRuntimeRustOnly(result) {
   return result;
 }
 
+function assertQueueInspect(result) {
+  const checked = assertJsonLine(result, "queues");
+  if (checked.code !== 0) return checked;
+  const json = JSON.parse(result.stdout);
+  if (json.executorMode === "maintenance_only" && Number(json.runnablePendingCount ?? 0) > 0) {
+    return {
+      ...result,
+      code: 1,
+      stderr: `${result.stderr}\nQueue has runnable pending jobs but no executor is active: executorMode=${json.executorMode} runnablePendingCount=${json.runnablePendingCount}\n`,
+    };
+  }
+  return result;
+}
+
 async function runLiveOwnershipCheck() {
   console.log("[verify:rust-daemon] live ownership check ...");
   if (process.platform !== "darwin") {
@@ -327,7 +341,7 @@ for (const task of tasks) {
     result = assertJsonLine(result, "process");
   }
   if (task.label === "context-stilld queue inspect" && result.code === 0) {
-    result = assertJsonLine(result, "queues");
+    result = assertQueueInspect(result);
   }
   if (task.label === "context-stilld runtime sidecars" && result.code === 0) {
     result = assertRuntimeSidecars(result);

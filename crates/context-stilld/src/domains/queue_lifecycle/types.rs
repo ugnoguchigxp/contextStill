@@ -26,6 +26,11 @@ pub struct QueueInspectReport {
     pub action: &'static str,
     pub status: String,
     pub worker_pid: Option<u32>,
+    pub executor_mode: String,
+    pub executor_running: bool,
+    pub executor_pid: Option<u32>,
+    pub runnable_pending_count: u64,
+    pub blocked_reason: Option<String>,
     pub sqlite_status: &'static str,
     pub sqlite_core_path: String,
     pub queues: Vec<QueueTableInspect>,
@@ -43,6 +48,7 @@ pub struct QueueTableInspect {
     pub table_status: &'static str,
     pub status_counts: Vec<QueueStatusCount>,
     pub oldest_pending_at: Option<String>,
+    pub runnable_pending: u64,
     pub running: u64,
     pub last_heartbeat_at: Option<String>,
 }
@@ -64,6 +70,21 @@ pub struct ActiveProviderLease {
     pub worker_id: String,
     pub heartbeat_at: String,
     pub expires_at: String,
+}
+
+impl ActiveProviderLease {
+    pub(crate) fn is_rust_executor(&self) -> bool {
+        self.worker_id.starts_with("context-stilld-rust-executor:")
+    }
+
+    pub(crate) fn rust_executor_pid(&self) -> Option<u32> {
+        let suffix = self
+            .worker_id
+            .strip_prefix("context-stilld-rust-executor:")?;
+        let (_, pid_and_suffix) = suffix.rsplit_once(':')?;
+        let (pid, _) = pid_and_suffix.split_once('-')?;
+        pid.parse::<u32>().ok()
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]

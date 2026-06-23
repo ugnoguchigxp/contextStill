@@ -410,6 +410,21 @@ describe("ContextDecisionPage", () => {
     });
   });
 
+  test("renders sidebar feedback and date in the same compact metadata row", () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContextDecisionPage />
+      </QueryClientProvider>,
+    );
+
+    const sidebarItem = screen.getAllByText("Should we build?")[0].closest(".compile-run-item");
+    expect(sidebarItem).not.toBeNull();
+    const metadata = sidebarItem?.querySelector(".compile-run-meta");
+    expect(metadata?.textContent).toContain("no feedback");
+    expect(metadata?.querySelector("time")?.textContent).toBe("2026/06/10");
+    expect(sidebarItem?.querySelector(".compile-run-foot")).toBeNull();
+  });
+
   test("handles loading state in details", async () => {
     // 詳細がロード中の状態
     vi.mocked(useContextDecisionDetail).mockReturnValue({

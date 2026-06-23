@@ -241,6 +241,21 @@ fn reconcile_queue_continuous<E: EnvProvider, S: ProcessSupervisor>(
             message: maintenance.message,
         });
     }
+    if env_flag_default(env, "CONTEXT_STILL_RESIDENT_QUEUE_EXECUTOR", true) {
+        let executor = queue_lifecycle::service::run_executor_tick_report(env)?;
+        let status = match executor.status.as_str() {
+            "missing_sqlite" | "executor_unconfigured" => executor.status.clone(),
+            "unsupported" => "degraded".to_string(),
+            _ => maintenance.status.clone(),
+        };
+        return Ok(ManagedSurfaceReport {
+            name: "queue-supervisor",
+            enabled: true,
+            status,
+            pid: None,
+            message: format!("{}; {}", maintenance.message, executor.message),
+        });
+    }
     Ok(rust_only_queue_report(
         maintenance.status,
         maintenance.message,
@@ -279,6 +294,21 @@ fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
             status: maintenance.status,
             pid: None,
             message: maintenance.message,
+        });
+    }
+    if env_flag_default(env, "CONTEXT_STILL_RESIDENT_QUEUE_EXECUTOR", true) {
+        let executor = queue_lifecycle::service::run_executor_tick_report(env)?;
+        let status = match executor.status.as_str() {
+            "missing_sqlite" | "executor_unconfigured" => executor.status.clone(),
+            "unsupported" => "degraded".to_string(),
+            _ => maintenance.status.clone(),
+        };
+        return Ok(ManagedSurfaceReport {
+            name: "queue-supervisor",
+            enabled: true,
+            status,
+            pid: None,
+            message: format!("{}; {}", maintenance.message, executor.message),
         });
     }
     Ok(rust_only_queue_report(

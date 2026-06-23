@@ -966,6 +966,34 @@ export async function getCompileRunRankingTraceSqlite(
       { sourceRefs: normalizeStringArray(parseJson(row.source_refs)) },
     ]),
   );
+  const effectiveTraceRows =
+    traceRows.length > 0
+      ? traceRows
+      : packRows
+          .map((row, index): SqliteCandidateTraceRow | null => {
+            const itemKind = normalizePackKnowledgeItemKind(row.item_kind, row.section);
+            if (!itemKind) return null;
+            const rank = index + 1;
+            return {
+              item_kind: itemKind,
+              item_id: row.item_id,
+              text_rank: rank,
+              text_score: row.score,
+              vector_rank: null,
+              vector_score: null,
+              merged_rank: rank,
+              merged_score: row.score,
+              final_rank: rank,
+              final_score: row.score,
+              selected: 1,
+              suppressed: 0,
+              suppression_reason: null,
+              agentic_decision: "accepted",
+              ranking_reason: row.ranking_reason || "packed_without_candidate_trace",
+              community_key: null,
+            };
+          })
+          .filter((row): row is SqliteCandidateTraceRow => row !== null);
 
   const packPositionByKey = new Map<string, number>();
   const parsedPack = parsePackSnapshot(run.pack_snapshot, run);
@@ -1015,7 +1043,7 @@ export async function getCompileRunRankingTraceSqlite(
   }
 
   const evalSummary = await getCompileEvalSummaryByRunId(run.id);
-  const items = traceRows
+  const items = effectiveTraceRows
     .filter((row) => row.item_kind === "rule" || row.item_kind === "procedure")
     .map((row) => {
       const key = `${row.item_kind}:${row.item_id}`;

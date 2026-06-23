@@ -48,16 +48,16 @@ try {
   if (!queueSurface) {
     throw new Error(`resident run did not report queue surface: ${JSON.stringify(run)}`);
   }
-  if (queueSurface.status !== "scheduled") {
+  if (queueSurface.status !== "executor_unconfigured") {
     throw new Error(`unexpected Rust-managed queue surface: ${JSON.stringify(queueSurface)}`);
   }
-  if (!queueSurface.message?.includes("resident Rust-only mode active")) {
+  if (!queueSurface.message?.includes("runtime settings are missing")) {
     throw new Error(`resident queue did not stay Rust-only: ${JSON.stringify(queueSurface)}`);
   }
 
   const status = parseJson(cargo("queue", "status", "--json"), "queue status");
-  if (status.status !== "scheduled") {
-    throw new Error(`queue supervisor should be Rust-scheduled, got: ${JSON.stringify(status)}`);
+  if (status.status !== "executor_unconfigured" && status.status !== "scheduled") {
+    throw new Error(`queue supervisor reported unexpected status: ${JSON.stringify(status)}`);
   }
 
   const rustOnly = parseJson(cargo("runtime", "assert-rust-only", "--json"), "runtime assert");
@@ -67,7 +67,13 @@ try {
 
   console.log(
     JSON.stringify(
-      { ok: true, status: status.status, daemonDebtCount: rustOnly.daemonDebtCount, appDataDir },
+      {
+        ok: true,
+        queueSurfaceStatus: queueSurface.status,
+        status: status.status,
+        daemonDebtCount: rustOnly.daemonDebtCount,
+        appDataDir,
+      },
       null,
       2,
     ),

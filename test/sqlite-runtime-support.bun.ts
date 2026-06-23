@@ -41,6 +41,7 @@ import {
   insertContextDecisionCoverageRows,
   insertContextDecisionEvidenceRows,
   insertContextDecisionRun,
+  listContextDecisionRuns,
   saveHumanDecisionFeedback,
 } from "../src/modules/context-decision/context-decision.repository.js";
 import { inspectDatabase } from "../src/modules/doctor/inspectors/database.inspector.js";
@@ -747,6 +748,19 @@ describe("sqlite runtime support repositories", () => {
     expect(trace?.items[0]?.itemId).toBe(knowledgeId);
     expect(trace?.items[0]?.packed).toBe(true);
     expect(trace?.items[0]?.feedback.verdict).toBe("used");
+
+    sqlite.db.query("delete from context_compile_candidate_traces where run_id = ?").run(runId);
+    const fallbackTrace = await getCompileRunRankingTrace(runId);
+    expect(fallbackTrace?.items[0]).toMatchObject({
+      itemId: knowledgeId,
+      textRank: 1,
+      mergedRank: 1,
+      finalRank: 1,
+      selected: true,
+      packed: true,
+      rankingReason: "rust_native_text_score",
+    });
+    expect(fallbackTrace?.feedbackSummary.used).toBe(1);
   });
 
   test("inspects sqlite core database without requiring postgres-only tables", async () => {
@@ -805,6 +819,7 @@ describe("sqlite runtime support repositories", () => {
   });
 
   test("persists context decision runs, evidence, and feedback in sqlite", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
     const decisionId = await insertContextDecisionRun({
       input: {
         decisionPoint: "Should SQLite context decision run?",
@@ -823,6 +838,11 @@ describe("sqlite runtime support repositories", () => {
       unsupportedAlternatives: [],
       status: "completed",
     });
+    const createdAtUnixMs = 1782175198000;
+    const expectedCreatedAt = new Date(createdAtUnixMs).toISOString();
+    sqlite.db
+      .query("update context_decision_runs set created_at = ?, updated_at = ? where id = ?")
+      .run(`unix-ms:${createdAtUnixMs}`, `unix-ms:${createdAtUnixMs}`, decisionId);
     await insertContextDecisionEvidenceRows(decisionId, [
       {
         knowledgeId: null,
@@ -856,9 +876,12 @@ describe("sqlite runtime support repositories", () => {
 
     const detail = await getContextDecisionDetail(decisionId);
     expect(detail?.run.decision).toBe("execute");
+    expect(detail?.run.createdAt).toBe(expectedCreatedAt);
     expect(detail?.evidence[0]?.summary).toBe("SQLite evidence");
     expect(detail?.coverage[0]?.query).toBe("sqlite migration");
     expect(detail?.run.humanFeedback).toBe("good");
+    const runs = await listContextDecisionRuns({ limit: 10 });
+    expect(runs.find((run) => run.id === decisionId)?.createdAt).toBe(expectedCreatedAt);
 
     const metrics = await getContextDecisionMetrics();
     expect(metrics.totalDecisions).toBe(1);
@@ -1547,6 +1570,72 @@ describe("sqlite runtime support repositories", () => {
     });
     expect(row?.last_error).toContain("Unsupported model");
     expect(row?.next_run_at).toBeTruthy();
+  });
+
+  test("returns episodeDistiller loading-model 503 failures to the queue", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const recorded = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-distiller-loading-model-session",
+      content: "The local LLM route is loading the configured model before any episode is saved.",
+      memoryType: "chat",
+      metadata: {
+        projectName: "contextStill",
+        cwd: "/repo/contextStill",
+      },
+      agentDiffs: [
+        {
+          filePath: "src/modules/episodeDistiller/worker.ts",
+          diffHunk: "@@ provider loading @@\n+local-llm HTTP 503",
+          changeType: "modify",
+          language: "typescript",
+        },
+      ],
+    });
+    const job = await enqueueEpisodeDistillerJob({
+      sourceKey: recorded.memory.id,
+      metadata: { sourceType: "loading-model-test" },
+    });
+    const createdAtBefore = sqlite.db
+      .query<{ created_at: string }, [string]>(
+        "select created_at from episode_distiller_queue where id = ?",
+      )
+      .get(job.id)?.created_at;
+    setEpisodeDistillerTestHooksForTests({
+      distillSegment: async () => {
+        throw new Error(
+          'local-llm HTTP 503: {"error":{"message":"Loading model","type":"unavailable_error","code":503}}',
+        );
+      },
+    });
+
+    const run = await runQueueWorkerOnce({
+      queueName: "episodeDistiller",
+      workerId: "sqlite-episode-loading-model-worker",
+    });
+
+    expect(run.ok).toBe(false);
+    expect(run.message).toContain("worker_unavailable:");
+    const row = sqlite.db
+      .query<
+        {
+          status: string;
+          last_outcome_kind: string;
+          last_error: string;
+          next_run_at: string;
+          created_at: string;
+        },
+        [string]
+      >(
+        "select status, last_outcome_kind, last_error, next_run_at, created_at from episode_distiller_queue where id = ?",
+      )
+      .get(job.id);
+    expect(row).toMatchObject({
+      status: "pending",
+      last_outcome_kind: "worker_unavailable",
+    });
+    expect(row?.last_error).toContain("Loading model");
+    expect(row?.next_run_at).toBeTruthy();
+    expect(row?.created_at).toBe(createdAtBefore);
   });
 
   test("does not immediately stale-recover fresh provider leases", async () => {

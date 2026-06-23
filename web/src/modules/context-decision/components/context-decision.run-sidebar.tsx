@@ -45,6 +45,11 @@ export function DecisionBadge({ decision }: { decision: ContextDecisionRunSummar
   return <Badge variant={decisionVariant[decision]}>{decision}</Badge>;
 }
 
+function formatDecisionRunDate(value: string, tz: string): string {
+  if (value === new Date(0).toISOString()) return "-";
+  return tzFormatDate(value, tz);
+}
+
 function DecisionRunListItem({
   run,
   active,
@@ -71,9 +76,7 @@ function DecisionRunListItem({
         <DecisionStatusBadge status={run.status} />
         <DecisionBadge decision={run.decision} />
         <span>{run.humanFeedback ?? "no feedback"}</span>
-      </div>
-      <div className="compile-run-foot">
-        <time>{tzFormatDate(run.createdAt, tz)}</time>
+        <time>{formatDecisionRunDate(run.createdAt, tz)}</time>
       </div>
     </button>
   );

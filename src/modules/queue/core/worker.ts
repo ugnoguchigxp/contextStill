@@ -555,6 +555,9 @@ function isQueueWorkerUnavailableError(message: string): boolean {
     normalized.includes("failed to fetch") ||
     normalized.includes("fetch failed") ||
     normalized.includes("was there a typo in the url or port") ||
+    normalized.includes("local-llm http 503") ||
+    normalized.includes("loading model") ||
+    normalized.includes("unavailable_error") ||
     normalized.includes("local-llm http 404") ||
     normalized.includes("unsupported model:")
   );

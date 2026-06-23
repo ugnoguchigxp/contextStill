@@ -29,6 +29,11 @@ pub fn inspect_report<E: EnvProvider, S: ProcessSupervisor>(
             action: "inspect",
             status: lifecycle.status,
             worker_pid: lifecycle.pid,
+            executor_mode: "missing_sqlite".to_string(),
+            executor_running: false,
+            executor_pid: None,
+            runnable_pending_count: 0,
+            blocked_reason: Some("SQLite core database is missing".to_string()),
             sqlite_status: "missing",
             sqlite_core_path,
             queues: Vec::new(),
@@ -53,6 +58,32 @@ pub fn inspect_report<E: EnvProvider, S: ProcessSupervisor>(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
+    let runnable_pending_count = queues.iter().map(|queue| queue.runnable_pending).sum();
+    let rust_executor_running = active_leases
+        .iter()
+        .any(ActiveProviderLease::is_rust_executor);
+    let rust_executor_pid = active_leases
+        .iter()
+        .find_map(ActiveProviderLease::rust_executor_pid);
+    let external_worker_running = !active_leases.is_empty() && !rust_executor_running;
+    let executor_running =
+        lifecycle.pid.is_some() || rust_executor_running || external_worker_running;
+    let executor_mode = if lifecycle.pid.is_some() {
+        "legacy_process".to_string()
+    } else if rust_executor_running {
+        "rust_native".to_string()
+    } else if external_worker_running {
+        "external_worker".to_string()
+    } else if runnable_pending_count > 0 {
+        "maintenance_only".to_string()
+    } else {
+        "idle".to_string()
+    };
+    let blocked_reason = if executor_mode == "maintenance_only" {
+        Some("runnable queue jobs exist but no executor is active".to_string())
+    } else {
+        None
+    };
     let last_heartbeat_at = latest_timestamp(
         queues
             .iter()
@@ -65,6 +96,11 @@ pub fn inspect_report<E: EnvProvider, S: ProcessSupervisor>(
         action: "inspect",
         status: lifecycle.status,
         worker_pid: lifecycle.pid,
+        executor_mode,
+        executor_running,
+        executor_pid: lifecycle.pid.or(rust_executor_pid),
+        runnable_pending_count,
+        blocked_reason,
         sqlite_status: "ok",
         sqlite_core_path,
         queues,
@@ -108,6 +144,7 @@ fn inspect_queue_tables(connection: &Connection) -> Result<Vec<QueueTableInspect
                 table_status: "missing",
                 status_counts: Vec::new(),
                 oldest_pending_at: None,
+                runnable_pending: 0,
                 running: 0,
                 last_heartbeat_at: None,
             });
@@ -129,6 +166,7 @@ fn inspect_queue_tables(connection: &Connection) -> Result<Vec<QueueTableInspect
                     "select min(created_at) from {table_name} where status in ('pending', 'paused')"
                 ),
             )?,
+            runnable_pending: runnable_pending(connection, queue_name, table_name)?,
             last_heartbeat_at: scalar_string(
                 connection,
                 &format!(
@@ -186,6 +224,52 @@ fn scalar_string(connection: &Connection, sql: &str) -> Result<Option<String>, C
     connection
         .query_row(sql, [], |row| row.get::<_, Option<String>>(0))
         .map_err(|error| CliError::io(format!("failed to query queue timestamp: {error}")))
+}
+
+fn runnable_pending(
+    connection: &Connection,
+    queue_name: &str,
+    table_name: &str,
+) -> Result<u64, CliError> {
+    let next_run_condition = if queue_name == "finalizeDistille"
+        || !table_has_column(connection, table_name, "next_run_at")?
+    {
+        ""
+    } else {
+        "and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP)"
+    };
+    connection
+        .query_row(
+            &format!(
+                "
+                select count(*)
+                from {table_name}
+                where status in ('pending', 'paused')
+                  {next_run_condition}
+                "
+            ),
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count as u64)
+        .map_err(|error| CliError::io(format!("failed to count runnable queue jobs: {error}")))
+}
+
+fn table_has_column(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool, CliError> {
+    let mut statement = connection
+        .prepare(&format!("pragma table_info({table_name})"))
+        .map_err(|error| CliError::io(format!("failed to inspect table columns: {error}")))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| CliError::io(format!("failed to query table columns: {error}")))?;
+    let columns = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| CliError::io(format!("failed to read table columns: {error}")))?;
+    Ok(columns.iter().any(|column| column == column_name))
 }
 
 fn inspect_active_leases(connection: &Connection) -> Result<Vec<ActiveProviderLease>, CliError> {
@@ -441,6 +525,64 @@ mod tests {
                 .oldest_pending_at,
             Some("2026-06-22T01:00:00.000Z".to_string())
         );
+
+        std::fs::remove_dir_all(&app_dir).unwrap();
+    }
+
+    #[test]
+    fn inspect_reports_rust_executor_pid_from_active_lease_worker_id() {
+        let app_dir = temp_app_dir("rust_executor_pid");
+        let sqlite_path = app_dir.join("queue.sqlite");
+        let connection = Connection::open(&sqlite_path).unwrap();
+        connection
+            .execute_batch(
+                r#"
+            create table episode_distiller_queue (
+              id text primary key,
+              status text not null,
+              created_at text not null,
+              heartbeat_at text
+            );
+            create table llm_provider_leases (
+              id text primary key,
+              pool_id text not null,
+              target_id text not null,
+              queue_name text not null,
+              queue_job_id text not null,
+              worker_id text not null,
+              status text not null,
+              heartbeat_at text not null,
+              expires_at text not null
+            );
+            insert into episode_distiller_queue (id, status, created_at, heartbeat_at)
+              values ('job-1', 'running', '2026-06-22T01:00:00.000Z', '2026-06-22T01:01:00.000Z');
+            insert into llm_provider_leases (
+              id, pool_id, target_id, queue_name, queue_job_id, worker_id, status, heartbeat_at, expires_at
+            ) values (
+              'lease-1', 'local-llm-default', 'local-llm:qwen-a', 'episodeDistiller', 'job-1',
+              'context-stilld-rust-executor:local-llm-default:4242-123456789', 'active',
+              '2026-06-22T01:01:00.000Z', '2026-06-22T01:03:00.000Z'
+            );
+            "#,
+            )
+            .unwrap();
+        drop(connection);
+
+        let env = MapEnv::from_pairs(vec![
+            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
+            (
+                "CONTEXT_STILL_SQLITE_CORE_PATH",
+                sqlite_path.to_str().unwrap(),
+            ),
+        ]);
+        let supervisor = MockSupervisor::new();
+
+        let report = inspect_report(&env, &supervisor).unwrap();
+
+        assert_eq!(report.executor_mode, "rust_native");
+        assert!(report.executor_running);
+        assert_eq!(report.executor_pid, Some(4242));
+        assert_eq!(report.worker_pid, None);
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }

@@ -238,6 +238,66 @@ describe("context-decision.service", () => {
     expect(mockInsertContextDecisionCoverageRows).toHaveBeenCalled();
   });
 
+  test("keeps decision answer text beyond the old short truncation limit", async () => {
+    mockSearchKnowledge.mockImplementation(async (params: any) => {
+      const q = params.query.toLowerCase();
+      if (q.includes("safe to execute")) {
+        return [
+          createDummyKnowledge({
+            id: "kb-support-long-answer",
+            title: "Long answer support rule",
+            body: "Use when verifying code implementation with bounded safeguards. Continue only after the TypeScript verification condition is checked for this code implementation.",
+            score: 1,
+            applicabilityScore: 100,
+          }),
+        ];
+      }
+      return [];
+    });
+
+    const longAnswer = `判断は revise_and_execute です。${"検証条件を確認してから、狭い範囲で判断を進める必要があります。".repeat(55)}`;
+    expect(longAnswer.length).toBeGreaterThan(1200);
+    expect(longAnswer.length).toBeLessThan(2000);
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          decision: "revise_and_execute",
+          confidence: 95,
+          mandate: "Verify with bounded safeguards before execution",
+          selectedAction: "verify with bounded safeguards",
+          rejectedActions: [],
+          reasoningSummary:
+            "Knowledge Assessment override: support exists, but bounded safeguards should be verified first.",
+          evidenceInterpretation: [
+            {
+              title: "Long answer support rule",
+              classification: "execution_support",
+              adoption: "adopted",
+              similarityToDecision: "same bounded TypeScript verification context",
+              appliesToProposedAction: true,
+              effectOnDecision: "supports execute",
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({ content: longAnswer });
+    mockGetAgenticLlmProviders.mockResolvedValue([{ isConfigured: () => true, chat }]);
+
+    const result = await decideContext({
+      decisionPoint: "verify code implementation with bounded safeguards",
+      retrievalHints: {
+        technologies: ["typescript"],
+        changeTypes: ["chore"],
+        domains: ["testing"],
+      },
+      metadata: {},
+    });
+
+    expect(result.agentMessage).toBe(longAnswer);
+    expect(result.agentMessage.endsWith("...")).toBe(false);
+  });
+
   test("decideContext falls back to deterministic decision when LLM fails", async () => {
     // support はなし
     mockSearchKnowledge.mockResolvedValue([]);
@@ -1109,6 +1169,130 @@ describe("context-decision.service", () => {
       knowledgeId: string | null;
     }>;
     expect(persistedEvidence.some((item) => item.knowledgeId === "episode-1")).toBe(false);
+  });
+
+  test("prompts the LLM to evaluate support, counter, and Episode hits before continuing", async () => {
+    mockSearchEpisodes.mockResolvedValueOnce([createDummyEpisode()]);
+    const supportKnowledge = createDummyKnowledge({
+      id: "kb-support",
+      title: "Bounded continuation support",
+      body: "Continue TypeScript implementation when rollback is available and verification can be run after the change.",
+      score: 0.96,
+      applicabilityScore: 100,
+    });
+    const unrelatedSupport = createDummyKnowledge({
+      id: "kb-unrelated",
+      title: "Dashboard editor cache rule",
+      body: "Cache regex editor state for dashboard previews.",
+      score: 0.25,
+      applicabilityScore: 0,
+    });
+    const counterKnowledge = createDummyKnowledge({
+      id: "kb-counter",
+      title: "Irreversible restart counter",
+      body: "A similar TypeScript implementation should stop only when restart impact is irreversible and rollback safeguards are absent.",
+      polarity: "positive",
+      score: 0.94,
+      applicabilityScore: 80,
+    });
+    mockSearchKnowledge.mockImplementation(async (params: any) => {
+      const q = params.query.toLowerCase();
+      if (q.includes("safe to execute")) return [supportKnowledge, unrelatedSupport];
+      if (q.includes("counterexample") || q.includes("failure condition")) {
+        return [counterKnowledge];
+      }
+      return [];
+    });
+
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          decision: "revise_and_execute",
+          confidence: 78,
+          mandate: "Continue with bounded safeguards.",
+          selectedAction: "continue after verification",
+          rejectedActions: [],
+          reasoningSummary:
+            "Knowledge Assessment override: risk is bounded by rollback and verification safeguards.",
+          evidenceInterpretation: [
+            {
+              title: "Bounded continuation support",
+              classification: "execution_support",
+              adoption: "adopted",
+              similarityToDecision: "same TypeScript implementation and verification context",
+              appliesToProposedAction: true,
+              effectOnDecision: "supports execute",
+            },
+            {
+              title: "Dashboard editor cache rule",
+              classification: "unrelated",
+              adoption: "not_adopted",
+              similarityToDecision: "different UI cache situation",
+              appliesToProposedAction: false,
+              effectOnDecision: "ignored",
+            },
+          ],
+          episodeInterpretation: [
+            {
+              title: "Migration failure precedent",
+              adoption: "adopted",
+              similarityToDecision: "similar verification failure risk",
+              effectOnDecision: "requires revision",
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        content:
+          "判断は revise_and_execute です。support Knowledge は検証可能な TypeScript 実装という点で採用し、counter Knowledge は不可逆影響がない限り停止ではなく safeguards に使います。過去ケースは検証不足リスクが似ているため、先に検証条件を置けば継続できます。",
+      });
+    mockGetAgenticLlmProviders.mockResolvedValue([{ isConfigured: () => true, chat }]);
+
+    await decideContext({
+      decisionPoint: "continue TypeScript implementation with rollback verification safeguards",
+      retrievalHints: {
+        technologies: ["typescript"],
+        changeTypes: ["implementation"],
+        domains: ["decision"],
+      },
+      metadata: {
+        primaryEvidence: [
+          {
+            kind: "verification_result",
+            title: "Observed verification plan",
+            summary: "A rollback and verification path is available.",
+            strength: "observed",
+          },
+        ],
+      },
+    });
+
+    const judgmentSystemPrompt = chat.mock.calls[0]?.[0]?.messages?.[0]?.content as string;
+    const judgmentUserPrompt = chat.mock.calls[0]?.[0]?.messages?.[1]?.content as string;
+    const answerSystemPrompt = chat.mock.calls[1]?.[0]?.messages?.[0]?.content as string;
+    const answerUserPrompt = chat.mock.calls[1]?.[0]?.messages?.[1]?.content as string;
+    expect(judgmentSystemPrompt).toContain(
+      "Read each support, counter, risk, and EpisodeCard hit as a candidate that can be adopted or not adopted.",
+    );
+    expect(judgmentSystemPrompt).toContain(
+      "Default toward execute or revise_and_execute when risk can be bounded with safeguards",
+    );
+    expect(judgmentUserPrompt).toContain("episodeInterpretation");
+    expect(answerSystemPrompt).toContain("Do not write a mechanical coverage summary");
+    expect(answerSystemPrompt).toContain("Prefer continuing autonomously when risk is bounded");
+    expect(answerUserPrompt).toContain(
+      "Support/preference Knowledge hits to evaluate for adoption:",
+    );
+    expect(answerUserPrompt).toContain("adoption=adopted; title=Bounded continuation support");
+    expect(answerUserPrompt).toContain("adoption=not_adopted; title=Dashboard editor cache rule");
+    expect(answerUserPrompt).toContain("Counter/risk Knowledge hits to evaluate for adoption:");
+    expect(answerUserPrompt).toContain("Irreversible restart counter");
+    expect(answerUserPrompt).toContain("Similar EpisodeCard precedents:");
+    expect(answerUserPrompt).toContain("Migration failure precedent");
+    expect(answerUserPrompt).toContain(
+      "Include a risk estimate when counter/risk Knowledge or failure EpisodeCards are present",
+    );
   });
 
   test("filters low relevance support into ranking trace instead of selected support", async () => {

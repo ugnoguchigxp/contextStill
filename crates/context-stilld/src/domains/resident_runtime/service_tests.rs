@@ -110,10 +110,10 @@ fn resident_run_once_does_not_start_ts_queue_executor_by_default() {
         .iter()
         .find(|surface| surface.name == "queue-supervisor")
         .expect("queue surface");
-    assert_eq!(queue_surface.status, "scheduled");
+    assert_eq!(queue_surface.status, "executor_unconfigured");
     assert!(queue_surface
         .message
-        .contains("resident Rust-only mode active"));
+        .contains("runtime settings are missing"));
 
     let spawned = supervisor.spawned.lock().unwrap();
     assert!(spawned.values().all(|call| call.command != "bun"));

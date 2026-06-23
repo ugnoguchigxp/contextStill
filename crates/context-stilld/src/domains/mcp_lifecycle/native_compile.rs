@@ -104,6 +104,9 @@ pub(crate) fn context_compile(params: &Value, context: &NativeToolContext) -> Va
     if let Err(error) = insert_compile_items(&connection, &run_id, &knowledge, &episodes) {
         return tool_error(&error);
     }
+    if let Err(error) = insert_candidate_traces(&connection, &run_id, &knowledge) {
+        return tool_error(&error);
+    }
     if let Err(error) = insert_knowledge_usage_events(
         &connection,
         &run_id,
@@ -1712,6 +1715,51 @@ fn insert_compile_items(
     Ok(())
 }
 
+fn insert_candidate_traces(
+    connection: &Connection,
+    run_id: &str,
+    knowledge: &[PackKnowledge],
+) -> Result<(), String> {
+    if knowledge.is_empty() || !table_exists(connection, "context_compile_candidate_traces") {
+        return Ok(());
+    }
+    let now = now_iso();
+    for (index, item) in knowledge.iter().enumerate() {
+        let rank = i64::try_from(index + 1).unwrap_or(i64::MAX);
+        let item_kind = if item.kind == "procedure" {
+            "procedure"
+        } else {
+            "rule"
+        };
+        connection
+            .execute(
+                r#"
+                insert into context_compile_candidate_traces (
+                  run_id, item_kind, item_id, text_rank, text_score, merged_rank, merged_score,
+                  final_rank, final_score, selected, suppressed, suppression_reason,
+                  agentic_decision, ranking_reason, community_key, evidence, created_at
+                ) values (?1, ?2, ?3, ?4, ?5, ?4, ?5, ?4, ?5, 1, 0, null,
+                  'accepted', 'rust_native_text_score', null, ?6, ?7)
+                "#,
+                (
+                    run_id,
+                    item_kind,
+                    &item.id,
+                    rank,
+                    item.score as f64,
+                    json!({
+                        "engine": "rust-native",
+                        "retrievalMethod": "sqlite_text"
+                    })
+                    .to_string(),
+                    &now,
+                ),
+            )
+            .map_err(|error| format!("failed to insert candidate trace: {error}"))?;
+    }
+    Ok(())
+}
+
 fn insert_knowledge_usage_events(
     connection: &Connection,
     run_id: &str,
@@ -1982,6 +2030,28 @@ mod tests {
                   created_at text not null default CURRENT_TIMESTAMP,
                   updated_at text not null default CURRENT_TIMESTAMP
                 );
+                create table context_compile_candidate_traces (
+                  id integer primary key autoincrement,
+                  run_id text not null,
+                  item_kind text not null,
+                  item_id text not null,
+                  text_rank integer,
+                  text_score real,
+                  vector_rank integer,
+                  vector_score real,
+                  merged_rank integer,
+                  merged_score real,
+                  final_rank integer,
+                  final_score real,
+                  selected integer not null default 0,
+                  suppressed integer not null default 0,
+                  suppression_reason text,
+                  agentic_decision text not null default 'not_evaluated',
+                  ranking_reason text,
+                  community_key text,
+                  evidence text not null default '{}',
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
                 create table episode_cards (
                   id text primary key,
                   title text not null,
@@ -2162,6 +2232,22 @@ mod tests {
             )
             .unwrap();
         assert_eq!(pack_kind, "procedure");
+        let trace_rows = connection
+            .query_row(
+                "select count(*), sum(case when selected = 1 then 1 else 0 end) from context_compile_candidate_traces",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(trace_rows, (1, 1));
+        let trace_reason = connection
+            .query_row(
+                "select ranking_reason from context_compile_candidate_traces limit 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(trace_reason, "rust_native_text_score");
 
         let _ = std::fs::remove_file(db_path);
     }

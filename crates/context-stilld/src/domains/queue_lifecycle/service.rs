@@ -7,6 +7,7 @@ use crate::shared::{config::EnvProvider, errors::CliError, process::ProcessSuper
 
 pub use super::claim::claim_next_queue_job_for_connection;
 pub use super::events::append_queue_event_for_connection;
+pub use super::executor::{run_executor_tick_report, QueueExecutorTickReport};
 pub use super::inspect::inspect_report;
 pub use super::maintenance::{run_maintenance_once_report, QueueMaintenanceReport};
 pub use super::provider_lease::{

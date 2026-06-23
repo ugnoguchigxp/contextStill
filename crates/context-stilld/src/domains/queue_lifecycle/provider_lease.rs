@@ -272,7 +272,7 @@ fn active_pool_capacity(pool: &ProviderPoolClaimConfig) -> u64 {
 }
 
 fn normalized_stale_lease_seconds(pool: &ProviderPoolClaimConfig) -> u64 {
-    pool.stale_lease_seconds.max(30)
+    pool.stale_lease_seconds.clamp(30, 120)
 }
 
 fn active_provider_targets(

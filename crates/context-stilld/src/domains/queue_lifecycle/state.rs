@@ -33,6 +33,29 @@ pub fn pause_queue_job_for_connection(
     )
 }
 
+pub fn heartbeat_queue_job_for_connection(
+    connection: &Connection,
+    queue_name: &str,
+    id: &str,
+) -> Result<u64, CliError> {
+    let table_name = queue_table_name(queue_name)?;
+    let changed = connection
+        .execute(
+            &format!(
+                "
+                update {table_name}
+                set heartbeat_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                where id = ?1
+                  and status = 'running'
+                "
+            ),
+            params![id],
+        )
+        .map_err(|error| CliError::io(format!("failed to heartbeat queue job: {error}")))?;
+    Ok(changed as u64)
+}
+
 pub fn keep_queue_job_waiting_for_worker_for_connection(
     connection: &Connection,
     queue_name: &str,
