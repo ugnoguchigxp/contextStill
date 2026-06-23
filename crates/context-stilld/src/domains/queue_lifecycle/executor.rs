@@ -390,12 +390,10 @@ fn executor_priority_queues_for_pool(
     pool_id: &str,
     paused_queues: &HashSet<String>,
 ) -> Vec<ProviderQueueClaimSpec> {
-    let (mut supported, unsupported): (Vec<_>, Vec<_>) =
-        priority_queues_for_pool(settings, pool_id, paused_queues)
-            .into_iter()
-            .partition(|spec| rust_executor_supports_queue(&spec.queue_name));
-    supported.extend(unsupported);
-    supported
+    priority_queues_for_pool(settings, pool_id, paused_queues)
+        .into_iter()
+        .filter(|spec| rust_executor_supports_queue(&spec.queue_name))
+        .collect()
 }
 
 fn rust_executor_supports_queue(queue_name: &str) -> bool {
@@ -729,7 +727,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn rust_executor_tick_claims_and_fails_closed_for_unsupported_queue() {
+    fn rust_executor_tick_does_not_claim_unsupported_queue() {
         let app_dir = temp_app_dir("executor_tick");
         let sqlite_path = app_dir.join("queue.sqlite");
         let connection = Connection::open(&sqlite_path).unwrap();
@@ -794,9 +792,9 @@ mod tests {
 
         let report = run_executor_tick_report(&env).unwrap();
 
-        assert_eq!(report.status, "unsupported");
-        assert_eq!(report.claimed, 1);
-        assert_eq!(report.unsupported, 1);
+        assert_eq!(report.status, "idle");
+        assert_eq!(report.claimed, 0);
+        assert_eq!(report.unsupported, 0);
         let connection = Connection::open(&sqlite_path).unwrap();
         let row = connection
             .query_row(
@@ -805,7 +803,7 @@ mod tests {
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(1)?,
                         row.get::<_, i64>(2)?,
                         row.get::<_, i64>(3)?,
                     ))
@@ -816,9 +814,9 @@ mod tests {
             row,
             (
                 "pending".to_string(),
-                "worker_unavailable".to_string(),
-                1,
-                1
+                None,
+                0,
+                0
             )
         );
         let active_leases: i64 = connection
@@ -836,13 +834,13 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(retried_events, 1);
+        assert_eq!(retried_events, 0);
 
         std::fs::remove_dir_all(app_dir).unwrap();
     }
 
     #[test]
-    fn rust_executor_prioritizes_supported_episode_queue_ahead_of_unsupported_queues() {
+    fn rust_executor_filters_unsupported_queues() {
         let settings = json!({
             "providerPools": [{
                 "id": "local-llm-default",
@@ -872,7 +870,7 @@ mod tests {
                 .iter()
                 .map(|queue| queue.queue_name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["episodeDistiller", "findingCandidate"]
+            vec!["episodeDistiller"]
         );
     }
 
