@@ -1,3 +1,4 @@
+import { groupedConfig } from "../../config.js";
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import type {
   EpisodeCard,
@@ -12,6 +13,13 @@ import {
   resolveRouteModelForProvider,
   runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
+import {
+  buildBoundedSourceWindows,
+  deterministicSemanticChunksFromWindows,
+  type BoundedSourceWindow,
+  type SemanticChunk,
+  validateSemanticChunks,
+} from "../distillation/source-window.js";
 import {
   ensureRuntimeSettingsLoaded,
   resolveEpisodeDistillerRoute,
@@ -55,6 +63,13 @@ type EpisodeDistillerProcessResult = {
   episodeIds: string[];
 };
 
+type ChunkedSegmentPlan = {
+  segments: Segment[];
+  sourceWindows: BoundedSourceWindow[];
+  semanticChunks: SemanticChunk[];
+  pipelineVersion: "deterministic-segment-v1" | "internal-chunked-v1";
+};
+
 type EpisodeValueReview = {
   publish: boolean;
   score: number;
@@ -73,6 +88,12 @@ const MIN_EPISODE_EVIDENCE_QUALITY = 50;
 const MIN_EPISODE_COMPRESSION_QUALITY = 45;
 
 type EpisodeDistillerTestHooks = {
+  semanticChunks?: (params: {
+    windows: BoundedSourceWindow[];
+    document: EpisodeSourceDocument;
+    job: EpisodeDistillerJob;
+    signal?: AbortSignal;
+  }) => Promise<unknown>;
   distillSegment?: (params: {
     segment: Segment;
     document: EpisodeSourceDocument;
@@ -299,6 +320,155 @@ function buildMessages(segment: Segment, document: EpisodeSourceDocument): Disti
   ];
 }
 
+function buildSemanticChunkMessages(
+  windows: BoundedSourceWindow[],
+  document: EpisodeSourceDocument,
+): DistillationMessage[] {
+  return [
+    {
+      role: "system",
+      content: [
+        "あなたは ContextStill の source chunk planner です。",
+        "長い作業ログを、安価な Local LLM でも後続生成しやすい semantic chunk に分割します。",
+        "EpisodeCard や candidate は作らず、境界情報だけを JSON array で返してください。",
+        "固定長分割ではなく、依頼から結果、調査、実装、検証、失敗解消、判断転換のまとまりを優先してください。",
+        "chunk は必ず提示された source window の byte range 内に収めてください。",
+        "JSON 以外の説明文や Markdown は返さないでください。",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: [
+        `Vibe memory id: ${document.vibeMemoryId}`,
+        `Session id: ${document.sessionId}`,
+        "",
+        "次の shape の JSON array を返してください:",
+        "{",
+        '  "chunkIndex": 0,',
+        '  "sourceStartOffset": 0,',
+        '  "sourceEndOffset": 100,',
+        '  "eventIds": ["..."],',
+        '  "taskBoundaryKind": "request_to_result|investigation|implementation|verification|failure_resolution|decision_turn|misc",',
+        '  "title": "...",',
+        '  "boundaryReason": "...",',
+        '  "expectedOutputs": ["episode"],',
+        '  "openBoundary": false',
+        "}",
+        "",
+        "Source windows:",
+        JSON.stringify(
+          windows.map((window) => ({
+            windowIndex: window.windowIndex,
+            sourceStartOffset: window.sourceStartOffset,
+            sourceEndOffset: window.sourceEndOffset,
+            eventIds: window.eventIds,
+            text: window.text,
+          })),
+        ),
+      ].join("\n"),
+    },
+  ];
+}
+
+function segmentFromSemanticChunk(document: EpisodeSourceDocument, chunk: SemanticChunk): Segment {
+  return {
+    text: textForByteRange(document.content, chunk.sourceStartOffset, chunk.sourceEndOffset),
+    startOffset: chunk.sourceStartOffset,
+    endOffset: chunk.sourceEndOffset,
+    eventStart: chunk.eventIds[0] ?? null,
+    eventEnd: chunk.eventIds.at(-1) ?? null,
+    eventIds: chunk.eventIds,
+  };
+}
+
+async function createSemanticChunks(params: {
+  windows: BoundedSourceWindow[];
+  document: EpisodeSourceDocument;
+  job: EpisodeDistillerJob;
+  signal?: AbortSignal;
+}): Promise<SemanticChunk[]> {
+  if (params.windows.length === 0) return [];
+  if (testHooks.semanticChunks) {
+    const chunkOutput = await testHooks.semanticChunks(params);
+    const validated = validateSemanticChunks({ windows: params.windows, chunks: chunkOutput });
+    if (validated.length > 0) return validated;
+    return deterministicSemanticChunksFromWindows(params.windows);
+  }
+  await ensureRuntimeSettingsLoaded();
+  const route = resolveEpisodeDistillerRoute();
+  const provider = route.provider;
+  const model = resolveRouteModelForProvider({
+    provider,
+    routeModel: route.model,
+    localLlmModel: route.localLlmModel,
+  });
+  try {
+    const completion = await runDistillationCompletion(
+      {
+        model,
+        messages: buildSemanticChunkMessages(params.windows, params.document),
+        maxTokens: 2000,
+      },
+      {
+        providerSetting: provider,
+        fallbackOrder: route.fallback,
+        azureDeploymentSlots: route.azureDeploymentSlots,
+        localLlmModel: route.localLlmModel,
+        enableTools: false,
+        maxToolRounds: 0,
+        usageSource: "episode-distiller:semantic-chunk",
+        signal: params.signal,
+        blankResponseReminder: [
+          "空の応答です。semantic chunk の JSON array だけを返してください。",
+        ],
+      },
+    );
+    const parsed = parseLlmJsonLike(completion.content)?.value;
+    const validated = validateSemanticChunks({ windows: params.windows, chunks: parsed });
+    return validated.length > 0
+      ? validated
+      : deterministicSemanticChunksFromWindows(params.windows);
+  } catch (error) {
+    if (params.signal?.aborted) throw error;
+    return deterministicSemanticChunksFromWindows(params.windows);
+  }
+}
+
+async function buildSegmentPlan(params: {
+  document: EpisodeSourceDocument;
+  job: EpisodeDistillerJob;
+  signal?: AbortSignal;
+}): Promise<ChunkedSegmentPlan> {
+  if (!groupedConfig.distillation.internalChunkedDistillationEnabled) {
+    return {
+      segments: buildDeterministicSegments(params.document),
+      sourceWindows: [],
+      semanticChunks: [],
+      pipelineVersion: "deterministic-segment-v1",
+    };
+  }
+  const sourceWindows = buildBoundedSourceWindows({
+    content: params.document.content,
+    events: params.document.events,
+  });
+  const semanticChunks = await createSemanticChunks({
+    windows: sourceWindows,
+    document: params.document,
+    job: params.job,
+    signal: params.signal,
+  });
+  const episodeChunks = semanticChunks.filter((chunk) =>
+    chunk.expectedOutputs.some((output) => output === "episode" || output === "both"),
+  );
+  const segments = episodeChunks.map((chunk) => segmentFromSemanticChunk(params.document, chunk));
+  return {
+    segments,
+    sourceWindows,
+    semanticChunks,
+    pipelineVersion: "internal-chunked-v1",
+  };
+}
+
 async function distillSegment(params: {
   segment: Segment;
   document: EpisodeSourceDocument;
@@ -395,7 +565,8 @@ export async function processEpisodeDistillerJob(
   });
 
   const document = await readEpisodeSourceDocument(job.sourceKey);
-  const segments = buildDeterministicSegments(document);
+  const segmentPlan = await buildSegmentPlan({ document, job, signal });
+  const segments = segmentPlan.segments;
   const metadata = document.metadata;
   const cwd = metadataString(metadata, ["cwd", "repoPath", "workspacePath"]);
   const project = metadataString(metadata, ["project", "projectName", "repoKey"]);
@@ -539,6 +710,7 @@ export async function processEpisodeDistillerJob(
     outcome,
     metadata: {
       episodeDistiller: {
+        pipelineVersion: segmentPlan.pipelineVersion,
         generated,
         deduped,
         skipped,
@@ -546,6 +718,8 @@ export async function processEpisodeDistillerJob(
         duplicateGenerationKindSkipped,
         failedSegments,
         segmentCount: segments.length,
+        sourceWindowCount: segmentPlan.sourceWindows.length,
+        semanticChunkCount: segmentPlan.semanticChunks.length,
         episodeIds,
         acceptedCandidateCount: pendingEpisodes.length,
         segmentErrors,

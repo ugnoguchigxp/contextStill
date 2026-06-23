@@ -102,6 +102,7 @@ describe("runFindCandidate", () => {
     vi.clearAllMocks();
     groupedConfig.distillation.findCandidateProvider = "local-llm";
     groupedConfig.distillation.findCandidateTimeoutMs = 600_000;
+    groupedConfig.distillation.internalChunkedDistillationEnabled = false;
     groupedConfig.distillationTools.findCandidateMaxToolCalls = 8;
     mocks.resolveFindCandidateRoute.mockImplementation(
       (): RuntimeRouteMock => ({
@@ -713,6 +714,115 @@ describe("runFindCandidate", () => {
     expect(result.candidates).toEqual([]);
     expect(mocks.createEpisodeCard).not.toHaveBeenCalled();
     expect(mocks.getEpisodeCardBySource).not.toHaveBeenCalled();
+  });
+
+  test("uses internal chunked candidate generation for vibe memory when enabled", async () => {
+    groupedConfig.distillation.internalChunkedDistillationEnabled = true;
+    mocks.getDistillationTargetStateById.mockResolvedValue({
+      id: "target-vibe",
+      targetKind: "vibe_memory",
+      targetKey: "memory-1",
+    });
+    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+      content: "Queue stalled because the stale worker held a lease. Restart fixed processing.",
+      totalTokens: 18,
+      from: 0,
+      toExclusive: 18,
+      returnedTokens: 18,
+    });
+    mocks.runDistillationCompletion.mockImplementation(async (_request, options) => {
+      if (options.usageSource === "find-candidate:semantic-chunk") {
+        return {
+          content: JSON.stringify([
+            {
+              chunkIndex: 0,
+              sourceStartOffset: 0,
+              sourceEndOffset: 74,
+              eventIds: ["memory_reader:initial"],
+              taskBoundaryKind: "failure_resolution",
+              title: "Queue stale worker recovery",
+              boundaryReason: "The chunk contains cause and recovery.",
+              expectedOutputs: ["candidate"],
+              openBoundary: false,
+            },
+          ]),
+          toolEvents: [],
+          messages: [],
+        };
+      }
+      return {
+        content: JSON.stringify({
+          candidates: [
+            {
+              type: "rule",
+              polarity: "negative",
+              title: "Do not trust queue counts without worker ownership",
+              content:
+                "When queue processing stalls, verify live worker ownership and stale leases before treating queue counts as progress.",
+            },
+          ],
+        }),
+        toolEvents: [],
+        messages: [],
+      };
+    });
+
+    const result = await runFindCandidate({
+      targetStateId: "target-vibe",
+      callerMode: "storage",
+      provider: "local-llm",
+    });
+
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(2);
+    expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            content: expect.stringContaining("findCandidate chunk planner"),
+          }),
+        ]),
+      }),
+      expect.objectContaining({
+        usageSource: "find-candidate:semantic-chunk",
+        enableTools: false,
+      }),
+    );
+    expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            content: expect.stringContaining("Source chunk:"),
+          }),
+        ]),
+      }),
+      expect.objectContaining({
+        usageSource: "find-candidate:chunk-generation",
+        enableTools: false,
+      }),
+    );
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        type: "rule",
+        polarity: "negative",
+        title: "Do not trust queue counts without worker ownership",
+      }),
+    ]);
+    expect(result.insertedIds).toEqual(["candidate-1"]);
+    expect(result.readRanges).toEqual([{ from: 0, toExclusive: 18 }]);
+    expect(mocks.recordAuditLogSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "FIND_CANDIDATE_COMPLETED",
+        payload: expect.objectContaining({
+          findCandidate: expect.objectContaining({
+            pipelineVersion: "internal-chunked-v1",
+            semanticChunkCount: 1,
+            dedupedCandidateCount: 1,
+          }),
+        }),
+      }),
+    );
   });
 
   test("allows additional vibe memory reads after the deterministic first read", async () => {

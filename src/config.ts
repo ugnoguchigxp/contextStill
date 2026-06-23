@@ -358,6 +358,10 @@ export const groupedConfig: GroupedConfig = {
     sourceAgenticReaderManualEnabled: APP_CONSTANTS.sourceDistillationAgenticReaderManualEnabled,
     sourceAgenticReaderAutoEnabled: APP_CONSTANTS.sourceDistillationAgenticReaderAutoEnabled,
     vibeAgenticReaderManualEnabled: APP_CONSTANTS.vibeDistillationAgenticReaderManualEnabled,
+    internalChunkedDistillationEnabled: resolveBoolean(
+      readProjectEnv("INTERNAL_CHUNKED_DISTILLATION"),
+      false,
+    ),
   },
   admin: {
     apiKey: (readProjectEnv("ADMIN_API_KEY") ?? "").trim(),

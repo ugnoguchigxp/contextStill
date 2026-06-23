@@ -176,6 +176,7 @@ export type GroupedConfig = {
     sourceAgenticReaderManualEnabled: boolean;
     sourceAgenticReaderAutoEnabled: boolean;
     vibeAgenticReaderManualEnabled: boolean;
+    internalChunkedDistillationEnabled: boolean;
   };
   admin: {
     apiKey: string;

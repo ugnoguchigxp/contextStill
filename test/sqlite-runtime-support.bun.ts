@@ -12,6 +12,7 @@ import {
   fetchQueueDashboardStats,
   listQueueItems,
 } from "../api/modules/queue/queue.repository.js";
+import { groupedConfig } from "../src/config.js";
 import { repairEpisodeCardQuality } from "../src/cli/repair-episode-card-quality.js";
 import { resetLowQualityEpisodeCards } from "../src/cli/reset-low-quality-episode-cards.js";
 import { openSqliteCoreDatabase } from "../src/db/sqlite/client.js";
@@ -92,12 +93,14 @@ describe("sqlite runtime support repositories", () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "context-still-sqlite-runtime-"));
     process.env.CONTEXT_STILL_DB_BACKEND = "sqlite";
     process.env.CONTEXT_STILL_SQLITE_CORE_PATH = path.join(tempDir, "context-still-core.sqlite");
+    groupedConfig.distillation.internalChunkedDistillationEnabled = false;
     resetRuntimeSqliteCoreDatabaseForTests();
   });
 
   afterEach(async () => {
     setEpisodeDistillerTestHooksForTests({});
     setQueueWorkerTestHooksForTests({});
+    groupedConfig.distillation.internalChunkedDistillationEnabled = false;
     restoreEnv("CONTEXT_STILL_DB_BACKEND", originalBackend);
     restoreEnv("CONTEXT_STILL_SQLITE_CORE_PATH", originalSqlitePath);
     restoreEnv("DATABASE_URL", originalDatabaseUrl);
@@ -1094,6 +1097,169 @@ describe("sqlite runtime support repositories", () => {
         limit: 10,
       }),
     ).toHaveLength(1);
+  });
+
+  test("uses semantic chunks inside episodeDistiller queue jobs when enabled", async () => {
+    groupedConfig.distillation.internalChunkedDistillationEnabled = true;
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const recorded = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-chunked-session",
+      content:
+        "The queue investigation found a stale worker lease. Restarting the owner process restored episode processing.",
+      memoryType: "chat",
+      metadata: {
+        projectName: "contextStill",
+        cwd: "/repo/contextStill",
+      },
+      agentDiffs: [
+        {
+          filePath: "src/modules/queue/core/provider-lease.ts",
+          diffHunk: "@@ inspected lease recovery @@\n+verify owner pid",
+          changeType: "modify",
+          language: "typescript",
+        },
+      ],
+    });
+    const job = await enqueueEpisodeDistillerJob({
+      sourceKey: recorded.memory.id,
+      metadata: { sourceType: "test" },
+    });
+
+    setEpisodeDistillerTestHooksForTests({
+      semanticChunks: async ({ windows }) => [
+        {
+          chunkIndex: 0,
+          sourceStartOffset: windows[0]?.sourceStartOffset ?? 0,
+          sourceEndOffset: windows[0]?.sourceEndOffset ?? 1,
+          eventIds: windows[0]?.eventIds ?? [],
+          taskBoundaryKind: "failure_resolution",
+          title: "Queue stale worker recovery",
+          boundaryReason: "The source contains the failed state, cause, and recovery.",
+          expectedOutputs: ["episode"],
+          openBoundary: false,
+        },
+      ],
+      distillSegment: async () => [
+        {
+          title: "Queue stale worker recovery",
+          context: "Episode queue processing was blocked by stale worker ownership.",
+          intent: "Restore queue progress using live runtime truth.",
+          keyDecisions: ["Verify the worker owner and lease before trusting queue counts."],
+          actionTaken: "Inspected the stale lease and restarted the owner process.",
+          outcome: "Episode queue processing resumed after ownership was corrected.",
+          failedApproach: "Treating queue counts alone as proof of progress.",
+          reusableLesson: "Use live worker ownership and lease state when queue progress stalls.",
+          usefulFutureTriggers: ["episode queue stall", "stale lease"],
+          openLoops: [],
+          generationKind: "failure_episode",
+          outcomeKind: "success",
+          domains: ["queue"],
+          technologies: ["sqlite", "typescript"],
+          changeTypes: ["debugging"],
+          tools: ["bun"],
+          scores: {
+            importance: 90,
+            confidence: 80,
+            reusability: 85,
+            decision_density: 80,
+            failure_value: 85,
+            causal_clarity: 90,
+            project_specificity: 75,
+            evidence_quality: 80,
+            compression_quality: 80,
+            staleness_risk: 20,
+          },
+        },
+      ],
+    });
+
+    const run = await runQueueWorkerOnce({
+      queueName: "episodeDistiller",
+      workerId: "sqlite-episode-chunked-worker",
+    });
+
+    expect(run.ok).toBe(true);
+    const completedMetadataRow = sqlite.db
+      .query<{ metadata: string }, [string]>(
+        "select metadata from episode_distiller_queue where id = ?",
+      )
+      .get(job.id);
+    const metadata = JSON.parse(completedMetadataRow?.metadata ?? "{}");
+    expect(metadata.episodeDistiller).toMatchObject({
+      pipelineVersion: "internal-chunked-v1",
+      sourceWindowCount: 1,
+      semanticChunkCount: 1,
+      generated: 1,
+      acceptedCandidateCount: 1,
+    });
+  });
+
+  test("does not generate EpisodeCards from candidate-only semantic chunks", async () => {
+    groupedConfig.distillation.internalChunkedDistillationEnabled = true;
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const recorded = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-candidate-only-session",
+      content:
+        "The source only contains a reusable rule candidate and should not become an EpisodeCard.",
+      memoryType: "chat",
+      metadata: {
+        projectName: "contextStill",
+        cwd: "/repo/contextStill",
+      },
+    });
+    const job = await enqueueEpisodeDistillerJob({
+      sourceKey: recorded.memory.id,
+      metadata: { sourceType: "test" },
+    });
+
+    setEpisodeDistillerTestHooksForTests({
+      semanticChunks: async ({ windows }) => [
+        {
+          chunkIndex: 0,
+          sourceStartOffset: windows[0]?.sourceStartOffset ?? 0,
+          sourceEndOffset: windows[0]?.sourceEndOffset ?? 1,
+          eventIds: windows[0]?.eventIds ?? [],
+          taskBoundaryKind: "decision_turn",
+          title: "Candidate-only rule",
+          boundaryReason: "The source is useful as a candidate but not as a task episode.",
+          expectedOutputs: ["candidate"],
+          openBoundary: false,
+        },
+      ],
+      distillSegment: async () => {
+        throw new Error("candidate-only chunks must not be distilled as episodes");
+      },
+    });
+
+    const run = await runQueueWorkerOnce({
+      queueName: "episodeDistiller",
+      workerId: "sqlite-episode-candidate-only-worker",
+    });
+
+    expect(run.ok).toBe(true);
+    const completedJob = sqlite.db
+      .query<{ status: string; last_outcome_kind: string; metadata: string }, [string]>(
+        "select status, last_outcome_kind, metadata from episode_distiller_queue where id = ?",
+      )
+      .get(job.id);
+    expect(completedJob).toMatchObject({
+      status: "skipped",
+      last_outcome_kind: "no_episode",
+    });
+    const metadata = JSON.parse(completedJob?.metadata ?? "{}");
+    expect(metadata.episodeDistiller).toMatchObject({
+      pipelineVersion: "internal-chunked-v1",
+      semanticChunkCount: 1,
+      segmentCount: 0,
+      generated: 0,
+      acceptedCandidateCount: 0,
+    });
+    expect(
+      await searchEpisodes({
+        query: "Candidate-only rule",
+        limit: 10,
+      }),
+    ).toHaveLength(0);
   });
 
   test("skips low-value episodeDistiller candidates without creating EpisodeCards", async () => {
