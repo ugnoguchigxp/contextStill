@@ -60,6 +60,11 @@ function azureOpenAiSecretKey(index: number): RuntimeSecretKey {
   return "azureOpenAiApiKey";
 }
 
+function localLlmSecretKey(index: number): RuntimeSecretKey {
+  if (index === 0) return "localLlmApiKey";
+  return `localLlmApiKey${index + 1}`;
+}
+
 export function buildSecretMap(
   rows: SettingsRow[],
 ): Partial<Record<RuntimeSecretKey, SettingsRow | undefined>> {
@@ -69,6 +74,9 @@ export function buildSecretMap(
   }
   for (const row of rows) {
     if (/^azureOpenAiApiKey[1-9]\d*$/.test(row.key)) {
+      result[row.key as RuntimeSecretKey] = row;
+    }
+    if (/^localLlmApiKey[1-9]\d*$/.test(row.key)) {
       result[row.key as RuntimeSecretKey] = row;
     }
   }
@@ -156,10 +164,11 @@ export function applyRuntimeSettingsToProcess(
   groupedConfig.bedrock.model = bedrockEnabled ? settings.providers.bedrock.model : "";
   const localLlmModels = localLlmEnabled
     ? settings.providers["local-llm"].models
-        .map((model) => ({
+        .map((model, index) => ({
           name: model.name,
           apiBaseUrl: model.apiBaseUrl.replace(/\/+$/, ""),
           apiPath: model.apiPath.trim() || "/v1/chat/completions",
+          apiKey: secrets[localLlmSecretKey(index)]?.value ?? "",
           model: model.model,
         }))
         .filter((model) => model.apiBaseUrl.trim() && model.model.trim())
@@ -168,12 +177,13 @@ export function applyRuntimeSettingsToProcess(
     apiBaseUrl: settings.providers["local-llm"].apiBaseUrl.replace(/\/+$/, ""),
     apiPath: settings.providers["local-llm"].apiPath.trim() || "/v1/chat/completions",
     model: localLlmEnabled ? settings.providers["local-llm"].model : "",
+    apiKey: localLlmEnabled ? (secrets.localLlmApiKey?.value ?? "") : "",
   };
   groupedConfig.localLlm.apiBaseUrl = primaryLocalLlm.apiBaseUrl;
   groupedConfig.localLlm.apiPath = primaryLocalLlm.apiPath;
   groupedConfig.localLlm.model = primaryLocalLlm.model;
   groupedConfig.localLlm.models = localLlmModels;
-  groupedConfig.localLlm.apiKey = localLlmEnabled ? (secrets.localLlmApiKey?.value ?? "") : "";
+  groupedConfig.localLlm.apiKey = primaryLocalLlm.apiKey;
   groupedConfig.embedding.provider = settings.embedding.provider;
   groupedConfig.embedding.daemonUrl = settings.embedding.daemonUrl.replace(/\/+$/, "");
   groupedConfig.embedding.openaiModel = settings.embedding.openaiModel;
@@ -267,6 +277,7 @@ export function buildRuntimeSettingsView(
     azureOpenAiApiKey: RuntimeSecretStatus;
     azureOpenAiApiKeys?: RuntimeSecretStatus[];
     localLlmApiKey: RuntimeSecretStatus;
+    localLlmApiKeys?: RuntimeSecretStatus[];
     braveApiKey: RuntimeSecretStatus;
     exaApiKey: RuntimeSecretStatus;
     bedrockCredential: RuntimeSecretStatus;
@@ -293,6 +304,11 @@ export function buildRuntimeSettingsView(
       "local-llm": {
         ...settings.providers["local-llm"],
         apiKeySecret: secretStatuses.localLlmApiKey,
+        apiKeySecrets:
+          secretStatuses.localLlmApiKeys ??
+          settings.providers["local-llm"].models.map((_, index) =>
+            index === 0 ? secretStatuses.localLlmApiKey : emptyRuntimeSecretStatus(),
+          ),
       },
     },
     search: {
@@ -330,6 +346,8 @@ export function buildSourceMap(view: RuntimeSettingsView): Record<string, string
     "azure-openai.apiKey2": view.providers["azure-openai"].apiKeySecrets[1]?.source ?? "none",
     "azure-openai.apiKey3": view.providers["azure-openai"].apiKeySecrets[2]?.source ?? "none",
     "local-llm.apiKey": view.providers["local-llm"].apiKeySecret.source,
+    "local-llm.apiKey2": view.providers["local-llm"].apiKeySecrets[1]?.source ?? "none",
+    "local-llm.apiKey3": view.providers["local-llm"].apiKeySecrets[2]?.source ?? "none",
     "search.brave.apiKey": view.search.providers.brave.apiKeySecret.source,
     "search.exa.apiKey": view.search.providers.exa.apiKeySecret.source,
     "bedrock.credential": view.providers.bedrock.credentialSecret.source,
@@ -383,6 +401,15 @@ export function defaultCache(): RuntimeSettingsCache {
       maskedValue: maskSecret(bootstrap.secrets.localLlmApiKey),
       updatedAt: null,
     } satisfies RuntimeSecretStatus,
+    localLlmApiKeys: bootstrap.providers["local-llm"].models.map((_model, index) => {
+      const value = bootstrap.secrets[localLlmSecretKey(index)];
+      return {
+        configured: Boolean(value),
+        source: value ? "env" : "none",
+        maskedValue: maskSecret(value),
+        updatedAt: null,
+      } satisfies RuntimeSecretStatus;
+    }),
     braveApiKey: {
       configured: Boolean(bootstrap.secrets.braveApiKey),
       source: bootstrap.secrets.braveApiKey ? "env" : "none",

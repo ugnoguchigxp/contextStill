@@ -2154,6 +2154,7 @@ export type RuntimeSecretKey =
   | "azureOpenAiApiKey"
   | `azureOpenAiApiKey${number}`
   | "localLlmApiKey"
+  | `localLlmApiKey${number}`
   | "braveApiKey"
   | "exaApiKey";
 export type RuntimeSecretSource = "db" | "env" | "none" | "env-or-profile";
@@ -2365,6 +2366,7 @@ export type RuntimeSettingsView = RuntimeSettingsEditable & {
     };
     "local-llm": RuntimeSettingsEditable["providers"]["local-llm"] & {
       apiKeySecret: RuntimeSecretStatus;
+      apiKeySecrets: RuntimeSecretStatus[];
     };
     codex: RuntimeSettingsEditable["providers"]["codex"];
   };

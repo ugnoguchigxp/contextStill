@@ -144,6 +144,7 @@ function buildSettingsView(): RuntimeSettingsView {
           },
         ],
         apiKeySecret: secretStatus(false),
+        apiKeySecrets: [secretStatus(false), secretStatus(true)],
       },
       codex: {
         enabled: false,
@@ -957,6 +958,23 @@ describe("SettingsPage", () => {
       model: "gpt-5-4-mini-secondary",
     });
     expect(payload.secrets.azureOpenAiApiKey2).toEqual({ value: "second-secret" });
+  });
+
+  it("saves separate Local LLM endpoint API keys", async () => {
+    routerState.pathname = "/setting/llmprovider";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Provider Endpoints" })).toBeInTheDocument();
+
+    const qwenRow = getLocalLlmEditRow("Qwen");
+    fireEvent.change(within(qwenRow).getByLabelText("API Key 2 value"), {
+      target: { value: "qwen-secret" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.secrets.localLlmApiKey2).toEqual({ value: "qwen-secret" });
   });
 
   it("renders Advanced sync settings and allows toggling them", async () => {

@@ -37,7 +37,6 @@ pub(crate) enum EpisodeExecutionStatus {
     Completed,
     Skipped,
     Failed,
-    RetriedProviderUnavailable,
 }
 
 #[derive(Debug, Clone)]
@@ -199,26 +198,26 @@ pub(crate) fn run_episode_distiller_job_for_connection(
     match result {
         Ok(status) => Ok(status),
         Err(error) if is_provider_unavailable(&error.to_string()) => {
-            mark_provider_unavailable(connection, &job, &error.to_string())?;
+            mark_provider_failed(connection, &job, &error.to_string())?;
             append_queue_event_for_connection(
                 connection,
                 &pseudo_uuid(),
                 "episodeDistiller",
                 &job.id,
-                "retried",
-                Some("episode distiller provider unavailable"),
+                "failed",
+                Some("episode distiller provider failed"),
                 Some(
                     &json!({
                         "workerId": worker_id,
                         "executor": "rust",
                         "targetId": target.target_id,
-                        "reason": "provider_unavailable",
+                        "reason": "provider_failed",
                         "error": truncate(&error.to_string(), 500)
                     })
                     .to_string(),
                 ),
             )?;
-            Ok(EpisodeExecutionStatus::RetriedProviderUnavailable)
+            Ok(EpisodeExecutionStatus::Failed)
         }
         Err(error) => {
             mark_failed(connection, &job, &error.to_string())?;
@@ -363,6 +362,8 @@ fn process_episode_distiller_job(
         json_array_at(&job.metadata, "/episodeDistiller/skippedValueReviews");
     let mut segment_results = json_array_at(&job.metadata, "/episodeDistiller/segmentResults");
     let completed_segments = completed_segment_indexes(&segment_results);
+    let mut terminal_skip_error: Option<String> = None;
+    let mut terminal_failed_error: Option<String> = None;
     let mut current_segment: Option<usize> = None;
     let mut last_segment_started_at =
         metadata_string_at(&job.metadata, "/episodeDistiller/lastSegmentStartedAt");
@@ -452,20 +453,20 @@ fn process_episode_distiller_job(
             timeout_seconds,
         ) {
             Ok(items) => items,
-            Err(error) if is_provider_unavailable(&error.to_string()) => return Err(error),
             Err(error) => {
+                let error_text = error.to_string();
                 counters.failed_segments += 1;
                 last_segment_completed_at = Some(now_timestamp());
                 segment_errors.push(json!({
                     "segment": segment_index,
-                    "error": truncate(&error.to_string(), 500)
+                    "error": truncate(&error_text, 500)
                 }));
                 record_segment_result(
                     &mut segment_results,
                     json!({
                         "segment": segment_index,
                         "status": "failed",
-                        "error": truncate(&error.to_string(), 500),
+                        "error": truncate(&error_text, 500),
                         "completedAt": last_segment_completed_at
                     }),
                 );
@@ -486,6 +487,14 @@ fn process_episode_distiller_job(
                         None,
                     ),
                 )?;
+                if is_provider_terminal_failure(&error_text) {
+                    terminal_failed_error = Some(error_text);
+                    break;
+                }
+                if is_nonworking_local_llm_error(&error_text) {
+                    terminal_skip_error = Some(error_text);
+                    break;
+                }
                 continue;
             }
         };
@@ -684,6 +693,8 @@ fn process_episode_distiller_job(
         && counters.deduped == 0
         && counters.failed_segments > 0
         && counters.failed_segments as usize == segments.len()
+        && terminal_skip_error.is_none()
+        && terminal_failed_error.is_none()
     {
         let sample_errors = segment_errors
             .iter()
@@ -714,8 +725,17 @@ fn process_episode_distiller_job(
         )));
     }
 
+    if let Some(error) = terminal_failed_error {
+        return Err(CliError::io(format!(
+            "episode distiller provider failed: {}",
+            truncate(&error, 1000)
+        )));
+    }
+
     let outcome = if counters.generated > 0 || counters.deduped > 0 {
         "episodes_distilled"
+    } else if terminal_skip_error.is_some() {
+        "provider_unavailable_skipped"
     } else if counters.value_skipped > 0 {
         "low_value_skipped"
     } else {
@@ -727,7 +747,7 @@ fn process_episode_distiller_job(
         "skipped"
     };
     let completed_at = now_timestamp();
-    let metadata = episode_progress_metadata(
+    let mut metadata = episode_progress_metadata(
         &counters,
         segments.len(),
         current_segment,
@@ -740,6 +760,10 @@ fn process_episode_distiller_job(
         &skipped_value_reviews,
         Some(completed_at.as_str()),
     );
+    if let Some(error) = terminal_skip_error.as_deref() {
+        metadata["episodeDistiller"]["providerUnavailableSkippedAt"] = json!(completed_at);
+        metadata["episodeDistiller"]["providerUnavailableError"] = json!(truncate(error, 1000));
+    }
     mark_completed(connection, job, status, outcome, &metadata)?;
     append_queue_event_for_connection(
         connection,
@@ -1052,7 +1076,12 @@ fn distill_segment_with_retry(
     for _ in 0..2 {
         match distill_segment(segment, document, target, api_key, timeout_seconds) {
             Ok(items) => return Ok(items),
-            Err(error) if is_provider_unavailable(&error.to_string()) => return Err(error),
+            Err(error)
+                if is_provider_terminal_failure(&error.to_string())
+                    || is_nonworking_local_llm_error(&error.to_string()) =>
+            {
+                return Err(error);
+            }
             Err(error) => last_error = error.to_string(),
         }
     }
@@ -1621,7 +1650,7 @@ fn mark_failed(
     Ok(())
 }
 
-fn mark_provider_unavailable(
+fn mark_provider_failed(
     connection: &Connection,
     job: &EpisodeDistillerJobRow,
     error: &str,
@@ -1630,24 +1659,25 @@ fn mark_provider_unavailable(
         .execute(
             "
             update episode_distiller_queue
-            set status = 'pending',
-                next_run_at = datetime('now', '+30 seconds'),
+            set status = 'failed',
+                next_run_at = null,
                 locked_by = null,
                 locked_at = null,
                 heartbeat_at = null,
+                completed_at = CURRENT_TIMESTAMP,
                 last_error = ?1,
-                last_outcome_kind = 'provider_unavailable',
+                last_outcome_kind = 'provider_failed',
                 metadata = json_patch(coalesce(nullif(metadata, ''), '{}'), ?2),
                 updated_at = CURRENT_TIMESTAMP
             where id = ?3
             ",
             params![
                 truncate(error, 1000),
-                json!({"episodeDistiller": {"providerUnavailableAt": now_timestamp(), "error": truncate(error, 1000), "executor": "rust"}}).to_string(),
+                json!({"episodeDistiller": {"providerFailedAt": now_timestamp(), "error": truncate(error, 1000), "executor": "rust"}}).to_string(),
                 job.id
             ],
         )
-        .map_err(|error| CliError::io(format!("failed to mark provider unavailable: {error}")))?;
+        .map_err(|error| CliError::io(format!("failed to mark provider failure: {error}")))?;
     Ok(())
 }
 
@@ -1979,12 +2009,25 @@ fn table_exists(connection: &Connection, table_name: &str) -> Result<bool, CliEr
 }
 
 fn is_provider_unavailable(error: &str) -> bool {
+    is_provider_terminal_failure(error)
+}
+
+fn is_provider_terminal_failure(error: &str) -> bool {
     let lower = error.to_lowercase();
     lower.contains("http 503")
         || lower.contains("loading model")
         || lower.contains("unavailable_error")
+}
+
+fn is_nonworking_local_llm_error(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    lower.contains("local-llm request failed")
+        || lower.contains("error sending request for url")
         || lower.contains("connection refused")
         || lower.contains("timed out")
+        || lower.contains("transport closed")
+        || lower.contains("connection reset")
+        || lower.contains("connection closed")
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {
@@ -2247,14 +2290,16 @@ mod tests {
     }
 
     #[test]
-    fn rust_episode_distiller_persists_completed_segment_before_provider_retry() {
+    fn rust_episode_distiller_fails_partial_output_when_provider_returns_503() {
         let connection = Connection::open_in_memory().unwrap();
         create_episode_runtime_tables(&connection);
         insert_two_segment_memory(&connection);
         insert_episode_job(&connection, "job-1", json!({}));
-        let server =
-            spawn_response_sequence_server(vec![
-            (200, llm_response_body("First segment saved before retry", "task_episode")),
+        let server = spawn_response_sequence_server(vec![
+            (
+                200,
+                llm_response_body("First segment saved before retry", "task_episode"),
+            ),
             (
                 503,
                 r#"{"error":{"message":"Loading model","type":"unavailable_error","code":503}}"#
@@ -2278,37 +2323,49 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(status, EpisodeExecutionStatus::RetriedProviderUnavailable);
+        assert_eq!(status, EpisodeExecutionStatus::Failed);
         let card_count: i64 = connection
             .query_row("select count(*) from episode_cards", [], |row| row.get(0))
             .unwrap();
         assert_eq!(card_count, 1);
         let row = connection
             .query_row(
-                "select status, attempt_count, last_outcome_kind, metadata from episode_distiller_queue where id = 'job-1'",
+                "select status, attempt_count, last_outcome_kind, completed_at is not null, metadata from episode_distiller_queue where id = 'job-1'",
                 [],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, i64>(1)?,
                         row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, String>(4)?,
                     ))
                 },
             )
             .unwrap();
-        assert_eq!(row.0, "pending");
+        assert_eq!(row.0, "failed");
         assert_eq!(row.1, 0);
-        assert_eq!(row.2, "provider_unavailable");
-        let metadata = parse_json_or_empty(&row.3);
+        assert_eq!(row.2, "provider_failed");
+        assert_eq!(row.3, 1);
+        let metadata = parse_json_or_empty(&row.4);
         assert_eq!(
             metadata
                 .pointer("/episodeDistiller/segmentResults/0/status")
                 .and_then(Value::as_str),
             Some("saved")
         );
+        assert_eq!(
+            metadata
+                .pointer("/episodeDistiller/segmentResults/1/status")
+                .and_then(Value::as_str),
+            Some("failed")
+        );
         assert!(metadata
             .pointer("/episodeDistiller/savedEpisodeIds/0")
+            .and_then(Value::as_str)
+            .is_some());
+        assert!(metadata
+            .pointer("/episodeDistiller/providerFailedAt")
             .and_then(Value::as_str)
             .is_some());
         assert!(metadata
@@ -2425,7 +2482,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_episode_distiller_keeps_loading_model_503_pending_without_attempt_increment() {
+    fn rust_episode_distiller_terminally_fails_when_provider_returns_503() {
         let connection = Connection::open_in_memory().unwrap();
         create_episode_runtime_tables(&connection);
         connection
@@ -2473,10 +2530,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(status, EpisodeExecutionStatus::RetriedProviderUnavailable);
+        assert_eq!(status, EpisodeExecutionStatus::Failed);
         let row = connection
             .query_row(
-                "select status, attempt_count, last_outcome_kind, next_run_at is not null from episode_distiller_queue where id = 'job-1'",
+                "select status, attempt_count, last_outcome_kind, next_run_at is not null, completed_at is not null, metadata from episode_distiller_queue where id = 'job-1'",
                 [],
                 |row| {
                     Ok((
@@ -2484,19 +2541,95 @@ mod tests {
                         row.get::<_, i64>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(5)?,
                     ))
                 },
             )
             .unwrap();
-        assert_eq!(
-            row,
-            (
-                "pending".to_string(),
-                0,
-                "provider_unavailable".to_string(),
-                1
+        assert_eq!(row.0, "failed");
+        assert_eq!(row.1, 0);
+        assert_eq!(row.2, "provider_failed");
+        assert_eq!(row.3, 0);
+        assert_eq!(row.4, 1);
+        let metadata = parse_json_or_empty(&row.5);
+        assert!(metadata
+            .pointer("/episodeDistiller/providerFailedAt")
+            .and_then(Value::as_str)
+            .is_some());
+    }
+
+    #[test]
+    fn rust_episode_distiller_terminally_skips_when_local_llm_cannot_connect() {
+        let connection = Connection::open_in_memory().unwrap();
+        create_episode_runtime_tables(&connection);
+        connection
+            .execute(
+                "
+                insert into vibe_memories (id, session_id, content, metadata, created_at)
+                values ('memory-1', 'session-1', 'LocalLLM transport is down while the Rust executor owns queue processing.', '{}', '2026-06-23T00:00:00.000Z')
+                ",
+                [],
             )
-        );
+            .unwrap();
+        connection
+            .execute(
+                "
+                insert into episode_distiller_queue (
+                  id, source_kind, source_key, status, priority, attempt_count, max_attempts,
+                  locked_by, locked_at, heartbeat_at, created_at, updated_at
+                ) values (
+                  'job-1', 'vibe_memory', 'memory-1', 'running', 10, 0, 2,
+                  'worker-1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                ",
+                [],
+            )
+            .unwrap();
+        let target = LocalLlmTargetConfig {
+            target_id: "local-a".to_string(),
+            api_base_url: "http://127.0.0.1:1".to_string(),
+            api_path: "/v1/chat/completions".to_string(),
+            model: "qwen".to_string(),
+        };
+
+        let status = run_episode_distiller_job_for_connection(
+            &connection,
+            "job-1",
+            "worker-1",
+            &target,
+            Some("test-key"),
+            30,
+        )
+        .unwrap();
+
+        assert_eq!(status, EpisodeExecutionStatus::Skipped);
+        let row = connection
+            .query_row(
+                "select status, attempt_count, last_outcome_kind, next_run_at is not null, completed_at is not null, metadata from episode_distiller_queue where id = 'job-1'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(row.0, "skipped");
+        assert_eq!(row.1, 0);
+        assert_eq!(row.2, "provider_unavailable_skipped");
+        assert_eq!(row.3, 0);
+        assert_eq!(row.4, 1);
+        let metadata = parse_json_or_empty(&row.5);
+        assert!(metadata
+            .pointer("/episodeDistiller/providerUnavailableSkippedAt")
+            .and_then(Value::as_str)
+            .is_some());
     }
 
     #[test]

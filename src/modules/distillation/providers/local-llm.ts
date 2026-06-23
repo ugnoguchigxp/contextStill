@@ -6,10 +6,11 @@ import {
 import type { DistillationChatRequest, DistillationChatResponse } from "../types.js";
 import { parseOpenAiStyleResponse, withRequestTimeout } from "./helpers.js";
 
-function localLlmHeaders(): HeadersInit {
+function localLlmHeaders(apiKey?: string): HeadersInit {
   const headers: HeadersInit = { "content-type": "application/json" };
-  if (groupedConfig.localLlm.apiKey.trim()) {
-    headers.Authorization = `Bearer ${groupedConfig.localLlm.apiKey.trim()}`;
+  const trimmed = apiKey?.trim();
+  if (trimmed) {
+    headers.Authorization = `Bearer ${trimmed}`;
   }
   return headers;
 }
@@ -25,7 +26,7 @@ export async function callLocalLlmChat(
         buildLocalLlmChatCompletionsUrl(config.apiBaseUrl, config.apiPath),
         {
           method: "POST",
-          headers: localLlmHeaders(),
+          headers: localLlmHeaders(config.apiKey),
           body: JSON.stringify({
             model: config.model,
             messages: request.messages,

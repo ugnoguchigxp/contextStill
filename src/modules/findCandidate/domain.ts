@@ -18,7 +18,10 @@ import {
   ensureRuntimeSettingsLoaded,
   resolveFindCandidateRoute,
 } from "../settings/settings.service.js";
-import { parseStorageCandidatesFromLlmOutput } from "./parser.js";
+import {
+  type StorageCandidateParseDiagnostics,
+  parseStorageCandidatesWithDiagnostics,
+} from "./parser.js";
 import {
   type CandidateOrigin,
   type CandidateRecord,
@@ -56,6 +59,7 @@ export type FindCandidateResult = {
   candidates: CandidateRecord[];
   insertedIds?: string[];
   readRanges: Array<{ from: number; toExclusive: number }>;
+  parseDiagnostics?: StorageCandidateParseDiagnostics;
 };
 
 type FindCandidateTargetKind = FindCandidateResult["targetKind"];
@@ -236,11 +240,14 @@ function reusableKnowledgeSignals(): string[] {
     "- 特定の repo/module/tool で繰り返し使える調査順序、コマンド順序、復旧手順",
     "- diff や tool output から確認できる実装上の不変条件、API 契約、設定上の注意",
     "- レビューで見つかった再発しやすい落とし穴と、それを避けるための具体的な判断基準",
+    "- source が完成済み rule/procedure 形式でなくても、作業ログから適用条件・操作順序・検証・回避条件が読み取れるもの",
+    "- source に negative と明示されていなくても、ユーザーが否定した方針、レビューで退けられた実装、再発防止の禁止条件",
     "候補化しないもの:",
     "- 単なる進捗報告、作業中の感想、未検証の仮説、1回限りの成功/失敗",
     "- source に根拠がない一般論、source content をそのまま要約しただけの文書断片",
     "- tool 名、JSON schema、system/user prompt の文言そのもの",
     "会話ログでも、上の signal が source に含まれる場合は [] にせず候補化してください。",
+    "ただし source にない事実は補完せず、形式が未整形な場合でも evidence から読み取れる範囲だけを候補化してください。",
   ];
 }
 
@@ -341,6 +348,12 @@ function normalizeCandidateForPipeline(candidate: CandidateRecord): CandidateRec
   return {
     ...candidate,
   };
+}
+
+function llmOutputPreview(value: string): string | undefined {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return undefined;
+  return normalized.slice(0, 1000);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -541,6 +554,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   try {
     let llmOutput = "";
     let candidates: CandidateRecord[] = [];
+    let parseDiagnostics: StorageCandidateParseDiagnostics | undefined;
     let readerUsedRecorded = false;
 
     const recordReaderUsed = async (metadata: Record<string, unknown> = {}) => {
@@ -656,10 +670,15 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       throw new Error("findCandidate reader tool was not used");
     }
     llmOutput = completion.content.trim();
-    const parsedCandidates = parseStorageCandidatesFromLlmOutput(llmOutput);
-    candidates = parsedCandidates.map(normalizeCandidateForPipeline);
+    const parsed = parseStorageCandidatesWithDiagnostics(llmOutput);
+    parseDiagnostics = parsed.diagnostics;
+    candidates = parsed.candidates.map(normalizeCandidateForPipeline);
 
     await recordReaderUsed();
+    const noCandidateDiagnostics =
+      candidates.length === 0
+        ? { parseDiagnostics, llmOutputPreview: llmOutputPreview(llmOutput) }
+        : undefined;
 
     if (callerMode === "cli_text") {
       await recordAuditLogSafe({
@@ -669,6 +688,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
           targetStateId: target.id,
           candidateCount: candidates.length,
           readCount: readLog.length,
+          ...(noCandidateDiagnostics ? { noCandidateDiagnostics } : {}),
         },
       });
 
@@ -679,6 +699,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         callerMode,
         candidates,
         readRanges: readLog,
+        parseDiagnostics,
       };
     }
 
@@ -707,6 +728,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         targetStateId: target.id,
         candidateCount: candidates.length,
         insertedCount: insertedIds.length,
+        ...(noCandidateDiagnostics ? { noCandidateDiagnostics } : {}),
       },
     });
 
@@ -718,6 +740,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       candidates,
       insertedIds: target.id ? insertedIds : undefined,
       readRanges: readLog,
+      parseDiagnostics,
     };
   } catch (error) {
     const normalizedError = normalizeFindCandidateFailure({

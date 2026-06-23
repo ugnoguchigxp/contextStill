@@ -1,4 +1,3 @@
-import { groupedConfig } from "../../../config.js";
 import type {
   LlmChatRequest,
   LlmChatResponse,
@@ -34,6 +33,7 @@ type LocalLlmProviderOptions = {
   modelConfig?: {
     apiBaseUrl: string;
     apiPath?: string;
+    apiKey?: string;
     model: string;
   };
 };
@@ -43,6 +43,7 @@ function resolveProviderConfig(providerOptions: LocalLlmProviderOptions, model?:
     return {
       apiBaseUrl: providerOptions.modelConfig.apiBaseUrl.replace(/\/+$/, ""),
       apiPath: providerOptions.modelConfig.apiPath?.trim() || "/v1/chat/completions",
+      apiKey: providerOptions.modelConfig.apiKey ?? "",
       model: providerOptions.modelConfig.model,
     };
   }
@@ -54,11 +55,11 @@ function isConfigured(providerOptions: LocalLlmProviderOptions, model?: string):
   return Boolean(config.apiBaseUrl.trim() && config.model.trim());
 }
 
-function headers(): HeadersInit {
+function headers(apiKey?: string): HeadersInit {
   const result: HeadersInit = { "content-type": "application/json" };
-  const apiKey = groupedConfig.localLlm.apiKey.trim();
-  if (apiKey) {
-    result.Authorization = `Bearer ${apiKey}`;
+  const trimmed = apiKey?.trim();
+  if (trimmed) {
+    result.Authorization = `Bearer ${trimmed}`;
   }
   return result;
 }
@@ -107,7 +108,7 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
           buildLocalLlmChatCompletionsUrl(config.apiBaseUrl, config.apiPath),
           {
             method: "POST",
-            headers: headers(),
+            headers: headers(config.apiKey),
             body: JSON.stringify({
               model: config.model,
               messages: request.messages,
@@ -152,7 +153,7 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
       try {
         const health = await fetch(healthUrl(options, requestedModel), {
           method: "GET",
-          headers: headers(),
+          headers: headers(config.apiKey),
           signal: controller.signal,
         });
         if (health.ok) {

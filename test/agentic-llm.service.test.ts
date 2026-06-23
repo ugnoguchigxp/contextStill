@@ -273,12 +273,14 @@ describe("agentic-llm service tests", () => {
         name: "Qwen",
         apiBaseUrl: "http://127.0.0.1:11434",
         apiPath: "/v1/chat/completions",
+        apiKey: "qwen-key",
         model: "qwen3",
       },
       {
         name: "Gemma",
         apiBaseUrl: "http://127.0.0.1:11435",
         apiPath: "/v1/chat/completions",
+        apiKey: "gemma-key",
         model: "gemma4",
       },
     ];
@@ -308,6 +310,7 @@ describe("agentic-llm service tests", () => {
       modelConfig: {
         apiBaseUrl: "http://127.0.0.1:11434",
         apiPath: "/v1/chat/completions",
+        apiKey: "qwen-key",
         model: "qwen3",
       },
     });
@@ -316,6 +319,7 @@ describe("agentic-llm service tests", () => {
       modelConfig: {
         apiBaseUrl: "http://127.0.0.1:11435",
         apiPath: "/v1/chat/completions",
+        apiKey: "gemma-key",
         model: "gemma4",
       },
     });

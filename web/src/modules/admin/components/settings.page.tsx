@@ -52,6 +52,10 @@ function azureOpenAiSecretKey(index: number): RuntimeSecretKey {
   return index === 0 ? "azureOpenAiApiKey" : (`azureOpenAiApiKey${index + 1}` as RuntimeSecretKey);
 }
 
+function localLlmSecretKey(index: number): RuntimeSecretKey {
+  return index === 0 ? "localLlmApiKey" : (`localLlmApiKey${index + 1}` as RuntimeSecretKey);
+}
+
 function emptyRuntimeSecretStatus(): RuntimeSecretStatus {
   return {
     configured: false,
@@ -1872,6 +1876,11 @@ export function SettingsPage() {
 
           {draft.providers["local-llm"].models.map((model, index) => {
             const routeValue = localLlmRouteTargetValue(model);
+            const secretKey = localLlmSecretKey(index);
+            const secretStatus = sourceView
+              ? (sourceView.providers["local-llm"].apiKeySecrets[index] ??
+                emptyRuntimeSecretStatus())
+              : null;
             return (
               <div
                 // biome-ignore lint/suspicious/noArrayIndexKey: Endpoint rows are controlled inputs; value-derived keys remount rows while editing.
@@ -1984,12 +1993,8 @@ export function SettingsPage() {
                     />
                   </label>
                 </div>
-                {index === 0 && sourceView
-                  ? renderSecretEditor(
-                      "localLlmApiKey",
-                      "API Key",
-                      sourceView.providers["local-llm"].apiKeySecret,
-                    )
+                {secretStatus
+                  ? renderSecretEditor(secretKey, `API Key ${index + 1}`, secretStatus)
                   : null}
               </div>
             );

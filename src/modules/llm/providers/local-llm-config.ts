@@ -3,6 +3,7 @@ import { groupedConfig } from "../../../config.js";
 export type ResolvedLocalLlmModelConfig = {
   apiBaseUrl: string;
   apiPath: string;
+  apiKey?: string;
   model: string;
 };
 
@@ -54,6 +55,8 @@ export function resolveLocalLlmModelConfig(model?: string): ResolvedLocalLlmMode
       requestedTarget?.apiPath ||
       groupedConfig.localLlm.apiPath ||
       "/v1/chat/completions",
+    apiKey:
+      selected && "apiKey" in selected ? selected.apiKey : groupedConfig.localLlm.apiKey || "",
     model:
       selected?.model || requestedTarget?.model || requestedModel || groupedConfig.localLlm.model,
   };

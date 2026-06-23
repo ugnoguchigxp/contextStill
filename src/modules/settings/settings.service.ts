@@ -41,6 +41,11 @@ import {
 let runtimeSettingsCache: RuntimeSettingsCache = defaultCache();
 let loadingPromise: Promise<void> | null = null;
 
+function localLlmSecretKey(index: number): RuntimeSecretKey {
+  if (index === 0) return "localLlmApiKey";
+  return `localLlmApiKey${index + 1}`;
+}
+
 async function loadRuntimeSettingsInternal(): Promise<void> {
   const [documentRow, secretRows] = await Promise.all([
     findSettingsRow(SETTINGS_DOCUMENT_NAMESPACE, SETTINGS_DOCUMENT_KEY),
@@ -62,6 +67,10 @@ async function loadRuntimeSettingsInternal(): Promise<void> {
   for (const [index] of settings.providers["azure-openai"].deployments.entries()) {
     const key =
       index === 0 ? "azureOpenAiApiKey" : (`azureOpenAiApiKey${index + 1}` as RuntimeSecretKey);
+    resolvedSecrets[key] = resolveSecretValue(key, secretRowMap[key]);
+  }
+  for (const [index] of settings.providers["local-llm"].models.entries()) {
+    const key = localLlmSecretKey(index);
     resolvedSecrets[key] = resolveSecretValue(key, secretRowMap[key]);
   }
 
@@ -94,6 +103,15 @@ async function loadRuntimeSettingsInternal(): Promise<void> {
       maskedValue: maskSecret(resolvedSecrets.localLlmApiKey?.value),
       updatedAt: resolvedSecrets.localLlmApiKey?.updatedAt ?? null,
     },
+    localLlmApiKeys: settings.providers["local-llm"].models.map((_model, index) => {
+      const key = localLlmSecretKey(index);
+      return {
+        configured: Boolean(resolvedSecrets[key]?.value),
+        source: resolvedSecrets[key]?.source ?? "none",
+        maskedValue: maskSecret(resolvedSecrets[key]?.value),
+        updatedAt: resolvedSecrets[key]?.updatedAt ?? null,
+      };
+    }),
     braveApiKey: {
       configured: Boolean(resolvedSecrets.braveApiKey?.value),
       source: resolvedSecrets.braveApiKey?.source ?? "none",
@@ -192,6 +210,7 @@ export async function reloadRuntimeSettingsCache(): Promise<void> {
 function normalizeSecretKey(value: string): RuntimeSecretKey | null {
   if (secretRowKeys.includes(value as RuntimeSecretKey)) return value as RuntimeSecretKey;
   if (/^azureOpenAiApiKey[1-9]\d*$/.test(value)) return value as RuntimeSecretKey;
+  if (/^localLlmApiKey[1-9]\d*$/.test(value)) return value as RuntimeSecretKey;
   return null;
 }
 

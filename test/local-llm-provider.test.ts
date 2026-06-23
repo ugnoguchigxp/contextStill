@@ -147,6 +147,44 @@ describe("local-llm provider", () => {
     expect(spy.mock.calls[0]?.[0]).toBe("http://127.0.0.1:44448/v1/chat/completions");
   });
 
+  test("chat uses the selected Local LLM endpoint API key", async () => {
+    groupedConfig.localLlm.apiKey = "primary-key";
+    groupedConfig.localLlm.models = [
+      {
+        name: "Primary",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
+        apiKey: "primary-key",
+        model: "gemma-4-e4b-it",
+      },
+      {
+        name: "Qwen",
+        apiBaseUrl: "http://127.0.0.1:50041",
+        apiPath: "/v1/chat/completions",
+        apiKey: "qwen-key",
+        model: "qwen-3.6-27b",
+      },
+    ];
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "pong" }, finish_reason: "stop" }],
+      }),
+    } as unknown as Response);
+
+    await createLocalLlmProvider({ timeoutMs: 1000 }).chat({
+      model: "qwen-3.6-27b",
+      messages: [{ role: "user", content: "ping" }],
+      maxTokens: 8,
+      temperature: 0,
+    });
+
+    expect(spy.mock.calls[0]?.[0]).toBe("http://127.0.0.1:50041/v1/chat/completions");
+    expect(spy.mock.calls[0]?.[1]?.headers).toMatchObject({
+      Authorization: "Bearer qwen-key",
+    });
+  });
+
   test("uses providerOptions.modelConfig when request model is missing", async () => {
     const provider = createLocalLlmProvider({
       modelConfig: {

@@ -42,7 +42,7 @@ function secret(value: string): SecretValueEntry {
   return { value, source: "db", updatedAt: null };
 }
 
-function emptySecrets(): Record<RuntimeSecretKey, SecretValueEntry | null> {
+function emptySecrets(): Partial<Record<RuntimeSecretKey, SecretValueEntry | null>> {
   return {
     openaiApiKey: null,
     azureOpenAiApiKey: null,
@@ -226,20 +226,60 @@ describe("settings runtime cache", () => {
         name: "Primary",
         apiBaseUrl: "http://127.0.0.1:44448",
         apiPath: "/v1/chat/completions",
+        apiKey: "local-key",
         model: "local-primary",
       },
       {
         name: "Coder",
         apiBaseUrl: "http://127.0.0.1:44449",
         apiPath: "/v1/chat/completions",
+        apiKey: "",
         model: "local-coder",
       },
       {
         name: "Reasoner",
         apiBaseUrl: "http://127.0.0.1:44450",
         apiPath: "/v1/chat/completions",
+        apiKey: "",
         model: "local-reasoner",
       },
+    ]);
+  });
+
+  test("assigns Local LLM API keys per endpoint", () => {
+    settings.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: "http://127.0.0.1:44448",
+      apiPath: "/v1/chat/completions",
+      model: "local-primary",
+      models: [
+        {
+          id: "primary",
+          name: "Primary",
+          apiBaseUrl: "http://127.0.0.1:44448",
+          apiPath: "/v1/chat/completions",
+          model: "local-primary",
+        },
+        {
+          id: "qwen",
+          name: "Qwen",
+          apiBaseUrl: "http://127.0.0.1:50041",
+          apiPath: "/v1/chat/completions",
+          model: "qwen-3.6-27b",
+        },
+      ],
+    };
+
+    applyRuntimeSettingsToProcess(settings, {
+      ...emptySecrets(),
+      localLlmApiKey: secret("primary-key"),
+      localLlmApiKey2: secret("qwen-key"),
+    });
+
+    expect(groupedConfig.localLlm.apiKey).toBe("primary-key");
+    expect(groupedConfig.localLlm.models).toEqual([
+      expect.objectContaining({ model: "local-primary", apiKey: "primary-key" }),
+      expect.objectContaining({ model: "qwen-3.6-27b", apiKey: "qwen-key" }),
     ]);
   });
 

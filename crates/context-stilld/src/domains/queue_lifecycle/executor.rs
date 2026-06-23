@@ -152,9 +152,15 @@ pub fn run_executor_tick_report<E: EnvProvider>(
         heartbeat_provider_lease_for_connection(&connection, &job.provider_lease.id)?;
 
         if job.queue_name == "episodeDistiller" {
-            let api_key = load_secret_value(&connection, "localLlmApiKey")
-                .or_else(|| env.var("LOCAL_LLM_API_KEY"));
             let target = local_llm_target_config(&settings, &job.provider_lease.target_id)?;
+            let secret_key = local_llm_target_secret_key(&settings, &job.provider_lease.target_id)?;
+            let api_key = load_secret_value(&connection, &secret_key).or_else(|| {
+                if secret_key == "localLlmApiKey" {
+                    env.var("LOCAL_LLM_API_KEY")
+                } else {
+                    None
+                }
+            });
             match run_episode_distiller_job_for_connection(
                 &connection,
                 &job.id,
@@ -170,14 +176,6 @@ pub fn run_executor_tick_report<E: EnvProvider>(
                         "worker_finished",
                     )?;
                     completed += 1;
-                }
-                EpisodeExecutionStatus::RetriedProviderUnavailable => {
-                    release_provider_lease_for_connection(
-                        &connection,
-                        &job.provider_lease.id,
-                        "provider_unavailable",
-                    )?;
-                    failed += 1;
                 }
                 EpisodeExecutionStatus::Failed => {
                     release_provider_lease_for_connection(
@@ -614,6 +612,24 @@ fn local_llm_target_config(
     })
 }
 
+fn local_llm_target_secret_key(settings: &Value, target_id: &str) -> Result<String, CliError> {
+    let provider = settings
+        .pointer("/providers/local-llm")
+        .ok_or_else(|| CliError::io("local-llm provider settings are missing"))?;
+    let target_index = provider
+        .get("models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .position(|model| local_llm_model_id(model).as_deref() == Some(target_id))
+        .ok_or_else(|| CliError::io(format!("local-llm target not found: {target_id}")))?;
+    Ok(if target_index == 0 {
+        "localLlmApiKey".to_string()
+    } else {
+        format!("localLlmApiKey{}", target_index + 1)
+    })
+}
+
 fn local_llm_model_id(model: &Value) -> Option<String> {
     string_field(model, "id").or_else(|| stable_local_llm_model_id(model))
 }
@@ -810,15 +826,7 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(
-            row,
-            (
-                "pending".to_string(),
-                None,
-                0,
-                0
-            )
-        );
+        assert_eq!(row, ("pending".to_string(), None, 0, 0));
         let active_leases: i64 = connection
             .query_row(
                 "select count(*) from llm_provider_leases where status = 'active'",

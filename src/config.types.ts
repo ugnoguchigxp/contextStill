@@ -42,6 +42,7 @@ export type GroupedConfig = {
       name: string;
       apiBaseUrl: string;
       apiPath: string;
+      apiKey?: string;
       model: string;
     }>;
   };

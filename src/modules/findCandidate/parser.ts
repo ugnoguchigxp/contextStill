@@ -6,11 +6,44 @@ import type {
   CandidateRecord,
 } from "./repository.js";
 
+export type StorageCandidateParseDiagnostics = {
+  rawWasEmptyArray: boolean;
+  rawCandidateLikeCount: number;
+  droppedMissingType: number;
+  droppedMissingPolarity: number;
+  droppedNeutral: number;
+  droppedNegativeProcedure: number;
+  droppedInvalidProcedureShape: number;
+  plainTextFallbackUsed: boolean;
+};
+
+export type StorageCandidateParseResult = {
+  candidates: CandidateRecord[];
+  diagnostics: StorageCandidateParseDiagnostics;
+};
+
+function emptyDiagnostics(): StorageCandidateParseDiagnostics {
+  return {
+    rawWasEmptyArray: false,
+    rawCandidateLikeCount: 0,
+    droppedMissingType: 0,
+    droppedMissingPolarity: 0,
+    droppedNeutral: 0,
+    droppedNegativeProcedure: 0,
+    droppedInvalidProcedureShape: 0,
+    plainTextFallbackUsed: false,
+  };
+}
+
 function toCandidateType(value: unknown): CandidateKnowledgeType | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
   if (normalized === "rule" || normalized === "procedure") return normalized;
   return undefined;
+}
+
+function hasCandidatePolarityValue(value: unknown): boolean {
+  return typeof value === "string" && value.trim().toLowerCase() === "neutral";
 }
 
 function toCandidatePolarity(
@@ -25,6 +58,13 @@ function toCandidatePolarity(
 }
 
 function toCandidateRecord(value: unknown): CandidateRecord | null {
+  return candidateRecordFromValue(value, undefined);
+}
+
+function candidateRecordFromValue(
+  value: unknown,
+  diagnostics: StorageCandidateParseDiagnostics | undefined,
+): CandidateRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as {
     type?: unknown;
@@ -38,7 +78,18 @@ function toCandidateRecord(value: unknown): CandidateRecord | null {
   };
   const type = toCandidateType(record.type ?? record.candidateType);
   const polarity = toCandidatePolarity(record.polarity);
-  if (!type || !polarity) return null;
+  if (!type) {
+    if (diagnostics) diagnostics.droppedMissingType += 1;
+    return null;
+  }
+  if (!polarity) {
+    if (hasCandidatePolarityValue(record.polarity)) {
+      if (diagnostics) diagnostics.droppedNeutral += 1;
+    } else {
+      if (diagnostics) diagnostics.droppedMissingPolarity += 1;
+    }
+    return null;
+  }
   const title =
     typeof record.title === "string"
       ? record.title.trim()
@@ -56,8 +107,14 @@ function toCandidateRecord(value: unknown): CandidateRecord | null {
   const normalizedTitle = title || content.slice(0, 80).replace(/\s+/g, " ").trim();
   const normalizedContent = content || title;
   if (!normalizedTitle || !normalizedContent) return null;
-  if (polarity === "negative" && type === "procedure") return null;
-  if (type === "procedure" && !hasSkillLikeProcedureBody(normalizedContent)) return null;
+  if (polarity === "negative" && type === "procedure") {
+    if (diagnostics) diagnostics.droppedNegativeProcedure += 1;
+    return null;
+  }
+  if (type === "procedure" && !hasSkillLikeProcedureBody(normalizedContent)) {
+    if (diagnostics) diagnostics.droppedInvalidProcedureShape += 1;
+    return null;
+  }
   return {
     type,
     polarity,
@@ -87,6 +144,13 @@ function collectCandidateValues(value: unknown): unknown[] {
   if (record.candidate && typeof record.candidate === "object") return [record.candidate];
   if (hasCandidateFields(value as Record<string, unknown>)) return [value];
   return [];
+}
+
+function isEmptyCandidateArrayPayload(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length === 0;
+  if (!value || typeof value !== "object") return false;
+  const record = value as { candidates?: unknown };
+  return Array.isArray(record.candidates) && record.candidates.length === 0;
 }
 
 function parsePlainTextCandidates(llmOutput: string): CandidateRecord[] {
@@ -123,15 +187,32 @@ function parsePlainTextCandidates(llmOutput: string): CandidateRecord[] {
     .filter((candidate): candidate is CandidateRecord => Boolean(candidate));
 }
 
-export function parseStorageCandidatesFromLlmOutput(llmOutput: string): CandidateRecord[] {
+export function parseStorageCandidatesWithDiagnostics(
+  llmOutput: string,
+): StorageCandidateParseResult {
+  const diagnostics = emptyDiagnostics();
   const parsed = parseLlmJsonLike(llmOutput)?.value;
   if (parsed === undefined || parsed === null) {
-    return parsePlainTextCandidates(llmOutput);
+    diagnostics.plainTextFallbackUsed = true;
+    return { candidates: parsePlainTextCandidates(llmOutput), diagnostics };
   }
 
-  const candidates = collectCandidateValues(parsed)
-    .map(toCandidateRecord)
+  diagnostics.rawWasEmptyArray = isEmptyCandidateArrayPayload(parsed);
+  const rawCandidates = collectCandidateValues(parsed);
+  diagnostics.rawCandidateLikeCount = rawCandidates.filter(
+    (value) => value && typeof value === "object" && !Array.isArray(value),
+  ).length;
+  if (diagnostics.rawWasEmptyArray && rawCandidates.length === 0) {
+    return { candidates: [], diagnostics };
+  }
+  const candidates = rawCandidates
+    .map((value) => candidateRecordFromValue(value, diagnostics))
     .filter((candidate): candidate is CandidateRecord => Boolean(candidate));
-  if (candidates.length > 0) return candidates;
-  return parsePlainTextCandidates(llmOutput);
+  if (candidates.length > 0) return { candidates, diagnostics };
+  diagnostics.plainTextFallbackUsed = true;
+  return { candidates: parsePlainTextCandidates(llmOutput), diagnostics };
+}
+
+export function parseStorageCandidatesFromLlmOutput(llmOutput: string): CandidateRecord[] {
+  return parseStorageCandidatesWithDiagnostics(llmOutput).candidates;
 }

@@ -999,6 +999,13 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
       queueJobId: job.id,
       eventType: "completed",
       message: "no candidate found",
+      metadata: findResult.parseDiagnostics
+        ? {
+            noCandidateDiagnostics: {
+              parseDiagnostics: findResult.parseDiagnostics,
+            },
+          }
+        : undefined,
     });
     return;
   }

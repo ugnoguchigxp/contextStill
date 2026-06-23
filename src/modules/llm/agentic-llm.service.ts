@@ -230,6 +230,7 @@ export async function checkLlmProviderHealthMatrix(
           modelConfig: {
             apiBaseUrl: model.apiBaseUrl,
             apiPath: model.apiPath,
+            ...(model.apiKey?.trim() ? { apiKey: model.apiKey } : {}),
             model: model.model,
           },
         }),

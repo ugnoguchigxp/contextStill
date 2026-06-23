@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { groupedConfig } from "../src/config.js";
 import { runFindCandidate } from "../src/modules/findCandidate/domain.js";
-import { parseStorageCandidatesFromLlmOutput } from "../src/modules/findCandidate/parser.js";
+import {
+  parseStorageCandidatesFromLlmOutput,
+  parseStorageCandidatesWithDiagnostics,
+} from "../src/modules/findCandidate/parser.js";
 
 type RuntimeProviderName = "openai" | "azure-openai" | "bedrock" | "local-llm" | "codex";
 type RuntimeRouteMock = {
@@ -176,6 +179,14 @@ describe("runFindCandidate", () => {
           expect.objectContaining({
             role: "system",
             content: expect.stringContaining("negative の rule 候補として出す"),
+          }),
+          expect.objectContaining({
+            role: "system",
+            content: expect.stringContaining("完成済み rule/procedure 形式でなくても"),
+          }),
+          expect.objectContaining({
+            role: "system",
+            content: expect.stringContaining("source にない事実は補完せず"),
           }),
           expect.objectContaining({
             role: "user",
@@ -753,6 +764,25 @@ describe("runFindCandidate", () => {
       { from: 0, toExclusive: 50 },
       { from: 50, toExclusive: 100 },
     ]);
+    expect(result.parseDiagnostics).toMatchObject({
+      rawWasEmptyArray: true,
+      rawCandidateLikeCount: 0,
+      plainTextFallbackUsed: false,
+    });
+    expect(mocks.recordAuditLogSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "FIND_CANDIDATE_COMPLETED",
+        payload: expect.objectContaining({
+          candidateCount: 0,
+          noCandidateDiagnostics: expect.objectContaining({
+            llmOutputPreview: expect.stringContaining("candidates"),
+            parseDiagnostics: expect.objectContaining({
+              rawCandidateLikeCount: 0,
+            }),
+          }),
+        }),
+      }),
+    );
   });
 });
 
@@ -967,5 +997,112 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
     );
 
     expect(candidates).toEqual([]);
+  });
+
+  test("reports no-candidate parser diagnostics for rejected candidate-like output", () => {
+    const result = parseStorageCandidatesWithDiagnostics(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            title: "Missing polarity",
+            content: "This candidate has no polarity.",
+          },
+          {
+            type: "procedure",
+            polarity: "negative",
+            title: "Negative procedure",
+            content: validProcedureBody,
+          },
+          {
+            type: "procedure",
+            polarity: "positive",
+            title: "Loose procedure",
+            content: "First run tests, then inspect output.",
+          },
+        ],
+      }),
+    );
+
+    expect(result.candidates).toEqual([]);
+    expect(result.diagnostics).toMatchObject({
+      rawWasEmptyArray: false,
+      rawCandidateLikeCount: 3,
+      droppedMissingPolarity: 1,
+      droppedNegativeProcedure: 1,
+      droppedInvalidProcedureShape: 1,
+      plainTextFallbackUsed: true,
+    });
+  });
+
+  test("distinguishes a real empty JSON array from parser rejection", () => {
+    const result = parseStorageCandidatesWithDiagnostics("[]");
+
+    expect(result.candidates).toEqual([]);
+    expect(result.diagnostics).toMatchObject({
+      rawWasEmptyArray: true,
+      rawCandidateLikeCount: 0,
+      plainTextFallbackUsed: false,
+    });
+  });
+
+  test("treats an empty candidates container as a real empty result", () => {
+    const result = parseStorageCandidatesWithDiagnostics(JSON.stringify({ candidates: [] }));
+
+    expect(result.candidates).toEqual([]);
+    expect(result.diagnostics).toMatchObject({
+      rawWasEmptyArray: true,
+      rawCandidateLikeCount: 0,
+      plainTextFallbackUsed: false,
+    });
+  });
+
+  test("accepts rule, procedure, and negative rule outputs from unformatted work-log signals", () => {
+    const candidates = parseStorageCandidatesFromLlmOutput(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            polarity: "positive",
+            title: "Check live runtime truth before status summaries",
+            content:
+              "When diagnosing queue or daemon state, verify live DB rows, LaunchAgent/process ownership, and recent events instead of relying on a stale status summary.",
+          },
+          {
+            type: "procedure",
+            polarity: "positive",
+            title: "Recover a stale queue worker from runtime evidence",
+            content: [
+              "Use when:",
+              "- Queue work appears stuck and there is runtime evidence available.",
+              "",
+              "Workflow:",
+              "1. Back up the database or confirm a rollback point.",
+              "2. Compare queue rows, recent events, worker heartbeat, and process ownership.",
+              "3. Restart only the stale worker or lease owner identified by the evidence.",
+              "",
+              "Verification:",
+              "- New heartbeat and queue event rows appear for the intended target.",
+              "",
+              "Avoid:",
+              "- Treating old status output as current truth without live DB or process checks.",
+            ].join("\n"),
+          },
+          {
+            type: "rule",
+            polarity: "negative",
+            title: "Do not force task routing to one target for convenience",
+            content:
+              "Do not pin task routing to a single Local LLM target merely to prioritize findCandidate or coverEvidence; preserve the configured pool unless evidence shows the route is wrong.",
+          },
+        ],
+      }),
+    );
+
+    expect(candidates.map((candidate) => [candidate.type, candidate.polarity])).toEqual([
+      ["rule", "positive"],
+      ["procedure", "positive"],
+      ["rule", "negative"],
+    ]);
   });
 });
