@@ -452,8 +452,11 @@ impl QueueInspectReport {
 
     pub fn to_text(&self) -> String {
         format!(
-            "queue-supervisor inspect: {} sqlite={} activeLeases={}",
-            self.status, self.sqlite_status, self.active_lease_count
+            "queue-supervisor inspect: {} sqlite={} activeLeases={} internalChunkedDistillation={}",
+            self.status,
+            self.sqlite_status,
+            self.active_lease_count,
+            self.feature_flags.internal_chunked_distillation
         )
     }
 }
@@ -712,6 +715,9 @@ mod tests {
         let report = inspect_report(&env, &supervisor).unwrap();
 
         assert!(report.feature_flags.internal_chunked_distillation);
+        assert!(report
+            .to_text()
+            .contains("internalChunkedDistillation=true"));
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }

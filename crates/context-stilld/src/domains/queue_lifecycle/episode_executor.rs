@@ -1509,13 +1509,14 @@ fn episode_progress_metadata(
     skipped_value_reviews: &[Value],
     completed_at: Option<&str>,
 ) -> Value {
+    let internal_chunked = internal_chunked_distillation_enabled();
     let mut metadata = json!({
         "episodeDistiller": {
             "executor": "rust",
-            "pipelineVersion": if internal_chunked_distillation_enabled() { "internal-chunked-v1" } else { "deterministic-segment-v1" },
-            "chunkStage": if internal_chunked_distillation_enabled() { "deterministic_window_fallback" } else { "deterministic_segment" },
-            "sourceWindowCount": if internal_chunked_distillation_enabled() { segment_count } else { 0 },
-            "semanticChunkCount": if internal_chunked_distillation_enabled() { segment_count } else { 0 },
+            "pipelineVersion": if internal_chunked { "internal-chunked-v1" } else { "deterministic-segment-v1" },
+            "chunkStage": if internal_chunked { "deterministic_window_fallback" } else { "deterministic_segment" },
+            "sourceWindowCount": if internal_chunked { segment_count } else { 0 },
+            "semanticChunkCount": if internal_chunked { segment_count } else { 0 },
             "generated": counters.generated,
             "deduped": counters.deduped,
             "skipped": counters.skipped,
@@ -2309,7 +2310,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_episode_distiller_fails_partial_output_when_provider_returns_503() {
+    fn rust_episode_distiller_retries_partial_output_when_provider_returns_503() {
         let connection = Connection::open_in_memory().unwrap();
         create_episode_runtime_tables(&connection);
         insert_two_segment_memory(&connection);
@@ -2503,7 +2504,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_episode_distiller_terminally_fails_when_provider_returns_503() {
+    fn rust_episode_distiller_retries_when_provider_returns_503() {
         let connection = Connection::open_in_memory().unwrap();
         create_episode_runtime_tables(&connection);
         connection
@@ -2581,7 +2582,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_episode_distiller_terminally_skips_when_local_llm_cannot_connect() {
+    fn rust_episode_distiller_retries_when_local_llm_cannot_connect() {
         let connection = Connection::open_in_memory().unwrap();
         create_episode_runtime_tables(&connection);
         connection
