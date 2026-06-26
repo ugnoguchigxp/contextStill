@@ -259,6 +259,9 @@ function buildSettingsView(): RuntimeSettingsView {
       failureRetryDelaySeconds: 90,
       readerMaxReads: 12,
       readerMaxCharsPerRead: 12000,
+      llmContextWindowTokens: 128000,
+      llmMaxInputTokens: 80000,
+      llmInputSafetyMarginTokens: 4096,
       lowImportanceRejectThreshold: 40,
     },
     advanced: {
@@ -438,6 +441,9 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText("Finding Queue Task Interval (seconds)")).toHaveValue(30);
     expect(screen.getByLabelText("Covering Queue Task Interval (seconds)")).toHaveValue(10);
     expect(screen.getByLabelText("Cover Evidence Search Calls")).toBeInTheDocument();
+    expect(screen.getByLabelText("LLM Context Window Tokens")).toHaveValue(128000);
+    expect(screen.getByLabelText("LLM Max Input Tokens")).toHaveValue(80000);
+    expect(screen.getByLabelText("LLM Input Safety Margin Tokens")).toHaveValue(4096);
     expect(screen.getByText("Agentic Compile")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Distillation Runtime" })).not.toBeInTheDocument();
 
@@ -527,6 +533,15 @@ describe("SettingsPage", () => {
     fireEvent.change(screen.getByLabelText("Cover Evidence Fetch Calls"), {
       target: { value: "2" },
     });
+    fireEvent.change(screen.getByLabelText("LLM Context Window Tokens"), {
+      target: { value: "128000" },
+    });
+    fireEvent.change(screen.getByLabelText("LLM Max Input Tokens"), {
+      target: { value: "80000" },
+    });
+    fireEvent.change(screen.getByLabelText("LLM Input Safety Margin Tokens"), {
+      target: { value: "4096" },
+    });
     fireEvent.change(screen.getByLabelText("Finding Queue Task Interval (seconds)"), {
       target: { value: "45" },
     });
@@ -560,6 +575,9 @@ describe("SettingsPage", () => {
     expect(payload.settings.distillationRuntime.findCandidateTimeoutMs).toBe(45_000);
     expect(payload.settings.distillationRuntime.findCandidateMaxToolCalls).toBe(6);
     expect(payload.settings.distillationRuntime.coverEvidenceFetchMaxCalls).toBe(2);
+    expect(payload.settings.distillationRuntime.llmContextWindowTokens).toBe(128000);
+    expect(payload.settings.distillationRuntime.llmMaxInputTokens).toBe(80000);
+    expect(payload.settings.distillationRuntime.llmInputSafetyMarginTokens).toBe(4096);
     expect(payload.settings.advanced.findingQueueTaskIntervalSeconds).toBe(45);
     expect(payload.settings.advanced.coveringQueueTaskIntervalSeconds).toBe(10);
   });
@@ -928,6 +946,74 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("saves Local LLM queue pool targets and concurrency from Task Routing", async () => {
+    const settings = buildSettingsView();
+    settings.providerPools = [
+      {
+        id: "local-llm-default",
+        label: "Local LLM pool",
+        targets: [{ provider: "local-llm", localLlmModelId: "local-primary" }],
+        maxConcurrent: 1,
+        staleLeaseSeconds: 600,
+        enabled: true,
+        lowPriorityAgingSeconds: 1800,
+      },
+    ];
+    settings.providers["local-llm"].models = [
+      {
+        id: "local-primary",
+        name: "Primary",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
+        model: "gemma-4-e4b-it",
+      },
+      {
+        id: "local-qwen",
+        name: "Qwen",
+        apiBaseUrl: "http://127.0.0.1:44449",
+        apiPath: "/v1/chat/completions",
+        model: "qwen-3.6-14b-it",
+      },
+      {
+        id: "local-reasoner",
+        name: "Reasoner",
+        apiBaseUrl: "http://127.0.0.1:44450",
+        apiPath: "/v1/chat/completions",
+        model: "reasoner-32b",
+      },
+    ];
+    repositoryMocks.fetchRuntimeSettings.mockResolvedValue({
+      ...buildSnapshot(),
+      settings,
+      effective: settings,
+    });
+    routerState.pathname = "/setting/taskrouting";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(/Use Qwen .* for Queue Pool/));
+    fireEvent.click(screen.getByLabelText(/Use Reasoner .* for Queue Pool/));
+    fireEvent.change(screen.getByLabelText("Queue Pool Concurrent Jobs"), {
+      target: { value: "3" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.providerPools[0]).toMatchObject({
+      id: "local-llm-default",
+      maxConcurrent: 3,
+      targets: [
+        { provider: "local-llm", localLlmModelId: "local-primary" },
+        { provider: "local-llm", localLlmModelId: "local-qwen" },
+        { provider: "local-llm", localLlmModelId: "local-reasoner" },
+      ],
+    });
+    expect(
+      payload.settings.providers["local-llm"].models.map((model: { id?: string }) => model.id),
+    ).toEqual(["local-primary", "local-qwen", "local-reasoner"]);
+  });
+
   it("saves added Azure OpenAI deployments and separate legacy API keys", async () => {
     routerState.pathname = "/setting/llmprovider";
     renderPage();
@@ -985,6 +1071,9 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Agent Log Synchronization" })).toBeInTheDocument();
     expect(screen.getByLabelText("Continuous Idle Sleep (seconds)")).toHaveValue(5);
+    expect(screen.getByLabelText("LLM Context Window Tokens")).toHaveValue(128000);
+    expect(screen.getByLabelText("LLM Max Input Tokens")).toHaveValue(80000);
+    expect(screen.getByLabelText("LLM Input Safety Margin Tokens")).toHaveValue(4096);
     expect(
       screen.queryByLabelText("Finding Queue Task Interval (seconds)"),
     ).not.toBeInTheDocument();
@@ -1005,6 +1094,15 @@ describe("SettingsPage", () => {
     fireEvent.change(screen.getByLabelText("Continuous Idle Sleep (seconds)"), {
       target: { value: "7.5" },
     });
+    fireEvent.change(screen.getByLabelText("LLM Context Window Tokens"), {
+      target: { value: "128000" },
+    });
+    fireEvent.change(screen.getByLabelText("LLM Max Input Tokens"), {
+      target: { value: "80000" },
+    });
+    fireEvent.change(screen.getByLabelText("LLM Input Safety Margin Tokens"), {
+      target: { value: "4096" },
+    });
     const saveButton = screen.getByRole("button", { name: "Save Settings" });
     expect(saveButton).toBeEnabled();
     fireEvent.click(saveButton);
@@ -1013,5 +1111,8 @@ describe("SettingsPage", () => {
     const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
     expect(payload.settings.advanced.claudeLogSyncEnabled).toBe(false);
     expect(payload.settings.advanced.continuousIdleSleepMs).toBe(7500);
+    expect(payload.settings.distillationRuntime.llmContextWindowTokens).toBe(128000);
+    expect(payload.settings.distillationRuntime.llmMaxInputTokens).toBe(80000);
+    expect(payload.settings.distillationRuntime.llmInputSafetyMarginTokens).toBe(4096);
   });
 });

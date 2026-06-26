@@ -4,6 +4,7 @@ import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.
 import { recordLlmUsage } from "../llm/llm-usage-logger.js";
 import { createCodexProvider } from "../llm/providers/codex.provider.js";
 import { resolveLocalLlmModelConfig } from "../llm/providers/local-llm-config.js";
+import { estimateTextTokens } from "../llm/token-estimator.js";
 import { ensureRuntimeSettingsLoaded } from "../settings/settings.service.js";
 import {
   type DistillationToolCall,
@@ -76,6 +77,20 @@ type MessageSizeSummary = {
   maxMessageChars: number;
 };
 
+type InputBudgetSummary = {
+  estimatedInputTokens: number;
+  effectiveMaxInputTokens: number;
+  inputTruncated: boolean;
+  droppedOrTruncatedMessageCount: number;
+  llmContextWindowTokens: number;
+  llmMaxInputTokens: number;
+  llmInputSafetyMarginTokens: number;
+};
+
+type InputBudgetApplication = InputBudgetSummary & {
+  messages: DistillationMessage[];
+};
+
 export function resolveRouteModelForProvider(params: {
   provider: DistillationProviderSetting;
   routeModel?: string | null;
@@ -143,6 +158,144 @@ function summarizeMessages(messages: DistillationMessage[]): MessageSizeSummary 
   return summary;
 }
 
+function messageContentTokens(content: DistillationMessage["content"]): number {
+  if (content === null || content === undefined) return 0;
+  return estimateTextTokens(content);
+}
+
+function estimateMessageTokens(message: DistillationMessage): number {
+  return (
+    4 +
+    estimateTextTokens(message.role) +
+    estimateTextTokens(message.name) +
+    messageContentTokens(message.content) +
+    estimateTextTokens(message.tool_calls)
+  );
+}
+
+function estimateInputTokens(messages: DistillationMessage[]): number {
+  return messages.reduce((total, message) => total + estimateMessageTokens(message), 0);
+}
+
+function truncateToEstimatedTokens(value: string, tokenBudget: number): string {
+  if (tokenBudget <= 0) return "";
+  if (estimateTextTokens(value) <= tokenBudget) return value;
+  const suffix = "\n...[truncated to LLM input budget]";
+  const suffixTokens = estimateTextTokens(suffix);
+  const contentBudget = Math.max(0, tokenBudget - suffixTokens);
+  if (contentBudget <= 0) return suffix.trim();
+
+  let low = 0;
+  let high = value.length;
+  let best = "";
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = `${value.slice(0, mid)}${suffix}`;
+    if (estimateTextTokens(candidate) <= tokenBudget) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return best || suffix.trim();
+}
+
+function lastUserMessageIndex(messages: DistillationMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") return index;
+  }
+  return -1;
+}
+
+function truncationPriority(
+  message: DistillationMessage,
+  index: number,
+  lastUserIndex: number,
+): number {
+  if (message.role === "tool") return 0;
+  if (message.role === "assistant") return 1;
+  if (message.role === "user" && index === lastUserIndex) return 3;
+  if (message.role === "user") return 2;
+  return 4;
+}
+
+function effectiveMaxInputTokens(completionMaxTokens: number): InputBudgetSummary {
+  const llmContextWindowTokens = Math.max(1, groupedConfig.distillation.llmContextWindowTokens);
+  const llmMaxInputTokens = Math.max(1, groupedConfig.distillation.llmMaxInputTokens);
+  const llmInputSafetyMarginTokens = Math.max(
+    0,
+    groupedConfig.distillation.llmInputSafetyMarginTokens,
+  );
+  const maxByWindow =
+    llmContextWindowTokens - Math.max(0, completionMaxTokens) - llmInputSafetyMarginTokens;
+  return {
+    estimatedInputTokens: 0,
+    effectiveMaxInputTokens: Math.max(1, Math.min(llmMaxInputTokens, maxByWindow)),
+    inputTruncated: false,
+    droppedOrTruncatedMessageCount: 0,
+    llmContextWindowTokens,
+    llmMaxInputTokens,
+    llmInputSafetyMarginTokens,
+  };
+}
+
+function applyInputTokenBudget(params: {
+  messages: DistillationMessage[];
+  completionMaxTokens: number;
+}): InputBudgetApplication {
+  const budget = effectiveMaxInputTokens(params.completionMaxTokens);
+  const messages = params.messages.map((message) => ({ ...message }));
+  let estimatedInputTokens = estimateInputTokens(messages);
+  if (estimatedInputTokens <= budget.effectiveMaxInputTokens) {
+    return { ...budget, messages, estimatedInputTokens };
+  }
+
+  const lastUserIndex = lastUserMessageIndex(messages);
+  const candidates = messages
+    .map((message, index) => ({ message, index }))
+    .filter(({ message, index }) => {
+      if (message.role === "system") return false;
+      return typeof message.content === "string" && message.content.length > 0;
+    })
+    .sort((left, right) => {
+      const priorityDiff =
+        truncationPriority(left.message, left.index, lastUserIndex) -
+        truncationPriority(right.message, right.index, lastUserIndex);
+      if (priorityDiff !== 0) return priorityDiff;
+      return left.index - right.index;
+    });
+
+  let droppedOrTruncatedMessageCount = 0;
+  for (const { index } of candidates) {
+    if (estimatedInputTokens <= budget.effectiveMaxInputTokens) break;
+    const message = messages[index];
+    if (!message || typeof message.content !== "string" || !message.content) continue;
+    const contentTokens = estimateTextTokens(message.content);
+    const overage = estimatedInputTokens - budget.effectiveMaxInputTokens;
+    const nextBudget = Math.max(0, contentTokens - overage);
+    const nextContent = truncateToEstimatedTokens(message.content, nextBudget);
+    if (nextContent === message.content) continue;
+    messages[index] = { ...message, content: nextContent };
+    droppedOrTruncatedMessageCount += 1;
+    estimatedInputTokens = estimateInputTokens(messages);
+  }
+
+  if (estimatedInputTokens > budget.effectiveMaxInputTokens) {
+    throw new Error(
+      `distillation input exceeds configured LLM max input tokens: estimated=${estimatedInputTokens}, limit=${budget.effectiveMaxInputTokens}`,
+    );
+  }
+
+  return {
+    ...budget,
+    messages,
+    estimatedInputTokens,
+    inputTruncated: droppedOrTruncatedMessageCount > 0,
+    droppedOrTruncatedMessageCount,
+  };
+}
+
 function shouldRecordCoverEvidenceLlmAudit(auditContext: Record<string, unknown> | undefined) {
   return auditContext?.domain === "coverEvidence";
 }
@@ -178,6 +331,7 @@ function coverEvidenceLlmBasePayload(params: {
   toolChoice: "auto" | "none" | "required";
   toolDefinitions: DistillationRuntimeToolDefinition[];
   requestAuditId: string;
+  inputBudget: InputBudgetSummary;
 }): Record<string, unknown> {
   const providerSetting = params.providerSetting ?? groupedConfig.distillation.provider;
   const providerOrder = resolveDistillationProviderOrder(
@@ -197,6 +351,13 @@ function coverEvidenceLlmBasePayload(params: {
     model: params.request.model,
     maxTokens: params.request.maxTokens,
     timeoutMs: params.timeoutMs,
+    estimatedInputTokens: params.inputBudget.estimatedInputTokens,
+    effectiveMaxInputTokens: params.inputBudget.effectiveMaxInputTokens,
+    inputTruncated: params.inputBudget.inputTruncated,
+    droppedOrTruncatedMessageCount: params.inputBudget.droppedOrTruncatedMessageCount,
+    llmContextWindowTokens: params.inputBudget.llmContextWindowTokens,
+    llmMaxInputTokens: params.inputBudget.llmMaxInputTokens,
+    llmInputSafetyMarginTokens: params.inputBudget.llmInputSafetyMarginTokens,
     enableTools: params.enableTools,
     allowTools: params.allowTools,
     toolChoice: params.toolChoice,
@@ -574,6 +735,10 @@ export async function runDistillationCompletion(
           : "auto"
         : "none";
       chatRound += 1;
+      const inputBudget = applyInputTokenBudget({
+        messages,
+        completionMaxTokens: request.maxTokens,
+      });
       const requestAuditId = randomUUID();
       const auditContext = options.auditContext;
       const shouldAudit =
@@ -583,7 +748,7 @@ export async function runDistillationCompletion(
           ? coverEvidenceLlmBasePayload({
               auditContext,
               request,
-              messages,
+              messages: inputBudget.messages,
               round: chatRound,
               toolRounds,
               providerSetting: options.providerSetting,
@@ -594,6 +759,7 @@ export async function runDistillationCompletion(
               toolChoice,
               toolDefinitions: roundToolDefinitions,
               requestAuditId,
+              inputBudget,
             })
           : undefined;
       if (auditBase) {
@@ -608,7 +774,7 @@ export async function runDistillationCompletion(
       try {
         response = await chatClient({
           ...request,
-          messages,
+          messages: inputBudget.messages,
           tools: allowTools ? roundToolDefinitions : undefined,
           toolChoice,
           timeoutMs: options.timeoutMs,

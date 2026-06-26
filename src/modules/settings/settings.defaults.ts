@@ -546,6 +546,9 @@ export const bootstrap: BootstrapConfig = {
     failureRetryDelaySeconds: groupedConfig.distillationTools.failureRetryDelaySeconds,
     readerMaxReads: groupedConfig.distillationTools.readerMaxReads,
     readerMaxCharsPerRead: groupedConfig.distillationTools.readerMaxCharsPerRead,
+    llmContextWindowTokens: groupedConfig.distillation.llmContextWindowTokens,
+    llmMaxInputTokens: groupedConfig.distillation.llmMaxInputTokens,
+    llmInputSafetyMarginTokens: groupedConfig.distillation.llmInputSafetyMarginTokens,
     lowImportanceRejectThreshold: groupedConfig.distillation.lowImportanceRejectThreshold,
   },
   advanced: {
@@ -847,16 +850,6 @@ function sanitizeRoute(
   };
 }
 
-function ensureLocalLlmAzureFallback(route: RuntimeSettingsRoute): RuntimeSettingsRoute {
-  if (route.provider !== "local-llm" || route.fallback.includes("azure-openai")) {
-    return route;
-  }
-  return {
-    ...route,
-    fallback: [...route.fallback, "azure-openai"],
-  };
-}
-
 function cloneRoute(route: RuntimeSettingsRoute): RuntimeSettingsRoute {
   return {
     ...route,
@@ -1027,39 +1020,21 @@ function mergeRuntimeSettings(
     merged,
     merged.taskRouting.webSourceResearch,
   );
-  merged.taskRouting.webSourceResearch = ensureLocalLlmAzureFallback(
-    merged.taskRouting.webSourceResearch,
-  );
   merged.taskRouting.episodeDistiller = sanitizeRoute(merged, merged.taskRouting.episodeDistiller);
-  merged.taskRouting.episodeDistiller = ensureLocalLlmAzureFallback(
-    merged.taskRouting.episodeDistiller,
-  );
   merged.taskRouting.coverEvidence.sourceSupport = sanitizeRoute(
     merged,
-    merged.taskRouting.coverEvidence.sourceSupport,
-  );
-  merged.taskRouting.coverEvidence.sourceSupport = ensureLocalLlmAzureFallback(
     merged.taskRouting.coverEvidence.sourceSupport,
   );
   merged.taskRouting.coverEvidence.externalEvidence = sanitizeRoute(
     merged,
     merged.taskRouting.coverEvidence.externalEvidence,
   );
-  merged.taskRouting.coverEvidence.externalEvidence = ensureLocalLlmAzureFallback(
-    merged.taskRouting.coverEvidence.externalEvidence,
-  );
   const coverEvidenceRoute = cloneRoute(merged.taskRouting.coverEvidence.externalEvidence);
   merged.taskRouting.coverEvidence.sourceSupport = cloneRoute(coverEvidenceRoute);
   merged.taskRouting.coverEvidence.mcpEvidence = cloneRoute(coverEvidenceRoute);
   merged.taskRouting.finalizeDistille = sanitizeRoute(merged, merged.taskRouting.finalizeDistille);
-  merged.taskRouting.finalizeDistille = ensureLocalLlmAzureFallback(
-    merged.taskRouting.finalizeDistille,
-  );
   merged.taskRouting.mergeActivationFinalize = sanitizeRoute(
     merged,
-    merged.taskRouting.mergeActivationFinalize,
-  );
-  merged.taskRouting.mergeActivationFinalize = ensureLocalLlmAzureFallback(
     merged.taskRouting.mergeActivationFinalize,
   );
   merged.taskRouting.deadZoneMergeReview = sanitizeRoute(

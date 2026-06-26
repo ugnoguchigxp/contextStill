@@ -98,6 +98,15 @@ function coverEvidenceFailureReason(params: {
   return `${params.prefix}_provider_failed`;
 }
 
+function coverEvidenceLlmRequestTimeoutMs(): number {
+  const jobTimeout = Math.max(1_000, groupedConfig.distillation.coverEvidenceTimeoutMs);
+  const fallbackReserve = 30_000;
+  if (jobTimeout <= fallbackReserve * 2) {
+    return Math.max(1_000, Math.floor(jobTimeout / 2));
+  }
+  return Math.min(180_000, jobTimeout - fallbackReserve);
+}
+
 function hasFacet(values: string[] | undefined): boolean {
   if (!values || values.length === 0) return false;
   return values.some((value) => value.trim().length > 0);
@@ -161,7 +170,7 @@ async function enrichApplicabilityFacets(params: {
         chatClient: params.chatClient,
         usageSource: "cover-evidence:applicability-refinement",
         enableTools: false,
-        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+        timeoutMs: coverEvidenceLlmRequestTimeoutMs(),
         blankResponseReminder: applicabilityBlankResponseReminderLines(
           "final",
           "knowledge_ready|insufficient",
@@ -538,7 +547,7 @@ export async function runValueAssessment(params: {
         chatClient: params.chatClient,
         usageSource: "cover-evidence:value-assessment",
         enableTools: false,
-        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+        timeoutMs: coverEvidenceLlmRequestTimeoutMs(),
         blankResponseReminder: applicabilityBlankResponseReminderLines(
           "final",
           "knowledge_ready|insufficient",
@@ -599,7 +608,7 @@ export async function runValueAssessment(params: {
       localLlmModel: params.localLlmModel,
       chatClient: params.chatClient,
       signal: params.signal,
-      timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+      timeoutMs: coverEvidenceLlmRequestTimeoutMs(),
     });
   } catch (error) {
     if (isAbortError(error)) {
@@ -1031,7 +1040,7 @@ export async function runExternalEvidence(params: {
         usageSource: "cover-evidence:external-search-query",
         enableTools: false,
         fallbackToolCallArguments: true,
-        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+        timeoutMs: coverEvidenceLlmRequestTimeoutMs(),
         blankResponseReminder: [
           "直前の応答は空でした。",
           "検索語だけを1行で返してください。形式: `| keyword | keyword |`",
@@ -1137,7 +1146,7 @@ export async function runExternalEvidence(params: {
         usageSource: "cover-evidence:external-fetch-selection",
         enableTools: false,
         fallbackToolCallArguments: true,
-        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+        timeoutMs: coverEvidenceLlmRequestTimeoutMs(),
         blankResponseReminder: [
           "直前の応答は空でした。",
           "読む候補番号だけを返してください。形式: `2,3,4`",
@@ -1233,7 +1242,7 @@ export async function runExternalEvidence(params: {
           chatClient: params.chatClient,
           usageSource: "cover-evidence:external-final",
           enableTools: false,
-          timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+          timeoutMs: coverEvidenceLlmRequestTimeoutMs(),
           blankResponseReminder: applicabilityBlankResponseReminderLines(
             "web",
             "knowledge_ready|insufficient|duplicate|near_duplicate",
@@ -1285,7 +1294,7 @@ export async function runExternalEvidence(params: {
         localLlmModel: params.localLlmModel,
         chatClient: params.chatClient,
         signal: params.signal,
-        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+        timeoutMs: coverEvidenceLlmRequestTimeoutMs(),
       });
     }
     const completion = {
@@ -1343,7 +1352,7 @@ export async function runExternalEvidence(params: {
           localLlmModel: params.localLlmModel,
           chatClient: params.chatClient,
           signal: params.signal,
-          timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+          timeoutMs: coverEvidenceLlmRequestTimeoutMs(),
         });
       }
       return makeResult({
@@ -1392,7 +1401,7 @@ export async function runExternalEvidence(params: {
       localLlmModel: params.localLlmModel,
       chatClient: params.chatClient,
       signal: params.signal,
-      timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+      timeoutMs: coverEvidenceLlmRequestTimeoutMs(),
     });
   } catch (error) {
     if (isAbortError(error)) {
@@ -1451,7 +1460,7 @@ export async function runOptionalMcpEvidence(params: {
         usageSource: "cover-evidence:mcp-evidence",
         enableTools: true,
         maxToolRounds: 2,
-        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+        timeoutMs: coverEvidenceLlmRequestTimeoutMs(),
         requireToolCall: true,
         toolNames,
         requireToolCallReminder: [

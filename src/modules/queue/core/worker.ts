@@ -55,8 +55,6 @@ type QueueRunResult = {
 
 type FindingSourceKind = "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
 
-const legacyAgentLogSyncChunkOutcome = "legacy_agent_log_sync_chunk_retired";
-
 type ProvidedCandidatePayload = {
   title: string;
   body: string;
@@ -578,28 +576,6 @@ function isQueueWorkerUnavailableError(message: string): boolean {
   );
 }
 
-function hasChunkIndex(record: Record<string, unknown>): boolean {
-  return (
-    typeof record.chunkIndex === "number" ||
-    typeof record.chunkIndex === "string" ||
-    typeof record.chunk_index === "number" ||
-    typeof record.chunk_index === "string"
-  );
-}
-
-function isLegacyAgentLogSyncChunkFindingJob(params: {
-  inputKind?: unknown;
-  sourceKind?: unknown;
-  metadata?: unknown;
-  payload?: unknown;
-}): boolean {
-  if (params.inputKind !== "source_target" || params.sourceKind !== "vibe_memory") return false;
-  const metadata = asRecord(params.metadata);
-  const payload = asRecord(params.payload);
-  const sourceType = metadata.sourceType ?? payload.sourceType;
-  return sourceType === "agent_log_sync" && (hasChunkIndex(metadata) || hasChunkIndex(payload));
-}
-
 function parseProvidedCandidatePayload(value: unknown): ProvidedCandidatePayload | null {
   const record = asRecord(value);
   const title = asNonEmptyString(record.title);
@@ -986,26 +962,6 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
       eventType: "completed",
       message: "provided candidate moved to covering queue",
       metadata: { foundCandidateId },
-    });
-    return;
-  }
-
-  if (isLegacyAgentLogSyncChunkFindingJob(job)) {
-    await markFindingCompleted({
-      jobId: job.id,
-      status: "skipped",
-      outcome: legacyAgentLogSyncChunkOutcome,
-    });
-    await appendQueueEvent({
-      queueName: "findingCandidate",
-      queueJobId: job.id,
-      eventType: "completed",
-      message: "legacy agent-log-sync vibe memory chunk finding job skipped",
-      metadata: {
-        sourceKind: job.sourceKind,
-        sourceKey: job.sourceKey,
-        outcome: legacyAgentLogSyncChunkOutcome,
-      },
     });
     return;
   }
@@ -1975,9 +1931,6 @@ export async function enqueueFindingJob(params: {
   metadata?: Record<string, unknown>;
   priority?: number;
 }): Promise<typeof findingCandidateQueue.$inferSelect | null> {
-  if (isLegacyAgentLogSyncChunkFindingJob(params)) {
-    return null;
-  }
   if (params.sourceKind === "vibe_memory" && !(await vibeMemorySourceExists(params.sourceKey))) {
     return null;
   }

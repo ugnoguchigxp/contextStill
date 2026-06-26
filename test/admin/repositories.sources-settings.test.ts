@@ -410,6 +410,9 @@ describe("Admin Repository sources/settings", () => {
             failureRetryDelaySeconds: 90,
             readerMaxReads: 12,
             readerMaxCharsPerRead: 12000,
+            llmContextWindowTokens: 128000,
+            llmMaxInputTokens: 80000,
+            llmInputSafetyMarginTokens: 4096,
             lowImportanceRejectThreshold: 40,
           },
           advanced: {

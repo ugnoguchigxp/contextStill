@@ -39,6 +39,9 @@ const originalConfig = {
   azureOpenAiDeployments: groupedConfig.azureOpenAi.deployments,
   bedrockRegion: groupedConfig.bedrock.region,
   bedrockModel: groupedConfig.bedrock.model,
+  llmContextWindowTokens: groupedConfig.distillation.llmContextWindowTokens,
+  llmMaxInputTokens: groupedConfig.distillation.llmMaxInputTokens,
+  llmInputSafetyMarginTokens: groupedConfig.distillation.llmInputSafetyMarginTokens,
 };
 
 describe("Distillation Runtime Service", () => {
@@ -49,6 +52,9 @@ describe("Distillation Runtime Service", () => {
 
     groupedConfig.distillation.provider = "local-llm";
     groupedConfig.distillation.timeoutMs = 300_000;
+    groupedConfig.distillation.llmContextWindowTokens = 128_000;
+    groupedConfig.distillation.llmMaxInputTokens = 80_000;
+    groupedConfig.distillation.llmInputSafetyMarginTokens = 4096;
     groupedConfig.openAi.apiKey = "";
     groupedConfig.openAi.apiBaseUrl = "https://api.openai.com/v1";
     groupedConfig.openAi.model = "gpt-5-4-mini";
@@ -81,6 +87,101 @@ describe("Distillation Runtime Service", () => {
 
     expect(result.content).toBe("Hello result");
     expect(chatClient).toHaveBeenCalledTimes(1);
+  });
+
+  test("truncates oversized distillation input before calling the provider", async () => {
+    groupedConfig.distillation.llmContextWindowTokens = 128;
+    groupedConfig.distillation.llmMaxInputTokens = 80;
+    groupedConfig.distillation.llmInputSafetyMarginTokens = 10;
+    const longToolResult = "provider evidence ".repeat(400);
+    const chatClient = vi.fn().mockResolvedValue({
+      content: "trimmed result",
+      toolCalls: [],
+    });
+
+    await runDistillationCompletion(
+      {
+        model: "test",
+        maxTokens: 10,
+        messages: [
+          { role: "system", content: "Keep system guidance." },
+          {
+            role: "tool",
+            tool_call_id: "read-1",
+            name: "memory_reader",
+            content: longToolResult,
+          },
+          { role: "user", content: "Use the evidence and return JSON." },
+        ],
+      },
+      { chatClient, enableTools: false },
+    );
+
+    const sentMessages = (chatClient.mock.calls[0]?.[0]?.messages ?? []) as Array<{
+      role: string;
+      content?: unknown;
+    }>;
+    expect(sentMessages[0]).toMatchObject({ role: "system", content: "Keep system guidance." });
+    expect(sentMessages.at(-1)).toMatchObject({
+      role: "user",
+      content: "Use the evidence and return JSON.",
+    });
+    const sentTool = sentMessages.find((message) => message.role === "tool");
+    expect(String(sentTool?.content)).toContain("truncated to LLM input budget");
+    expect(String(sentTool?.content).length).toBeLessThan(longToolResult.length);
+  });
+
+  test("truncates oversized last user input as a last resort", async () => {
+    groupedConfig.distillation.llmContextWindowTokens = 64;
+    groupedConfig.distillation.llmMaxInputTokens = 32;
+    groupedConfig.distillation.llmInputSafetyMarginTokens = 8;
+    const chatClient = vi.fn().mockResolvedValue({
+      content: "trimmed last user",
+      toolCalls: [],
+    });
+
+    await runDistillationCompletion(
+      {
+        model: "test",
+        maxTokens: 8,
+        messages: [{ role: "user", content: "large evidence payload ".repeat(300) }],
+      },
+      { chatClient, enableTools: false },
+    );
+
+    const sentMessages = (chatClient.mock.calls[0]?.[0]?.messages ?? []) as Array<{
+      role: string;
+      content?: unknown;
+    }>;
+    expect(String(sentMessages[0]?.content)).toContain("truncated to LLM input budget");
+    expect(String(sentMessages[0]?.content).length).toBeLessThan(
+      "large evidence payload ".repeat(300).length,
+    );
+  });
+
+  test("rejects distillation input that cannot fit after truncating non-system messages", async () => {
+    groupedConfig.distillation.llmContextWindowTokens = 64;
+    groupedConfig.distillation.llmMaxInputTokens = 32;
+    groupedConfig.distillation.llmInputSafetyMarginTokens = 8;
+    const chatClient = vi.fn().mockResolvedValue({
+      content: "unreachable",
+      toolCalls: [],
+    });
+
+    await expect(
+      runDistillationCompletion(
+        {
+          model: "test",
+          maxTokens: 8,
+          messages: [
+            { role: "system", content: "protected system guidance ".repeat(300) },
+            { role: "user", content: "short task" },
+          ],
+        },
+        { chatClient, enableTools: false },
+      ),
+    ).rejects.toThrow("distillation input exceeds configured LLM max input tokens");
+    expect(chatClient).not.toHaveBeenCalled();
   });
 
   test("runDistillationCompletion can treat unexpected no-tools tool call arguments as content", async () => {
@@ -176,6 +277,13 @@ describe("Distillation Runtime Service", () => {
           timeoutMs: 12_345,
           messageCount: 2,
           inputChars: "Return JSON.Verify candidate.".length,
+          estimatedInputTokens: expect.any(Number),
+          effectiveMaxInputTokens: expect.any(Number),
+          inputTruncated: false,
+          droppedOrTruncatedMessageCount: 0,
+          llmContextWindowTokens: 128_000,
+          llmMaxInputTokens: 80_000,
+          llmInputSafetyMarginTokens: 4096,
           toolChoice: "auto",
           allowTools: true,
         }),
@@ -1112,6 +1220,10 @@ describe("Distillation Runtime Service", () => {
   afterAll(() => {
     groupedConfig.distillation.provider = originalConfig.distillationProvider;
     groupedConfig.distillation.timeoutMs = originalConfig.distillationTimeoutMs;
+    groupedConfig.distillation.llmContextWindowTokens = originalConfig.llmContextWindowTokens;
+    groupedConfig.distillation.llmMaxInputTokens = originalConfig.llmMaxInputTokens;
+    groupedConfig.distillation.llmInputSafetyMarginTokens =
+      originalConfig.llmInputSafetyMarginTokens;
     groupedConfig.openAi.apiKey = originalConfig.openAiApiKey;
     groupedConfig.openAi.apiBaseUrl = originalConfig.openAiApiBaseUrl;
     groupedConfig.openAi.model = originalConfig.openAiModel;

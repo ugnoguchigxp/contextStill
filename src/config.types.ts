@@ -169,6 +169,9 @@ export type GroupedConfig = {
     coveringQueueTaskIntervalSeconds: number;
     promotionBacklogThresholdCount: number;
     lowImportanceRejectThreshold: number;
+    llmContextWindowTokens: number;
+    llmMaxInputTokens: number;
+    llmInputSafetyMarginTokens: number;
     circuitBreakerEnabled: boolean;
     circuitBreakerHealthTimeoutMs: number;
     circuitBreakerPauseSeconds: number;

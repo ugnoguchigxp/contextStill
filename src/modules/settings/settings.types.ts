@@ -213,6 +213,9 @@ export type RuntimeSettingsEditable = {
     failureRetryDelaySeconds: number;
     readerMaxReads: number;
     readerMaxCharsPerRead: number;
+    llmContextWindowTokens: number;
+    llmMaxInputTokens: number;
+    llmInputSafetyMarginTokens: number;
     lowImportanceRejectThreshold: number;
   };
   advanced: {
@@ -319,134 +322,150 @@ const runtimeProviderPoolSchema = z.object({
   lowPriorityAgingSeconds: z.number().int().min(60).max(604_800).default(1800),
 });
 
-export const runtimeSettingsEditableSchema = z.object({
-  general: z.object({
-    distillationPriority: z.object({
-      targetPriorityOrder: z.array(z.enum(distillationPriorityTargetKindValues)).min(1).max(4),
-    }),
-  }),
-  providerPools: z.array(runtimeProviderPoolSchema).default([]),
-  providers: z.object({
-    openai: z.object({
-      enabled: z.boolean().default(true),
-      apiBaseUrl: z.string().trim().url(),
-      model: z.string().trim().min(1),
-    }),
-    "azure-openai": z.object({
-      enabled: z.boolean().default(false),
-      apiBaseUrl: z.string().trim().url().or(z.literal("")),
-      apiPath: z.string().trim().min(1),
-      apiVersion: z.string().trim().min(1),
-      model: z.string().trim().min(1).or(z.literal("")),
-      deployments: z.array(azureOpenAiDeploymentSchema).default([]),
-    }),
-    bedrock: z.object({
-      enabled: z.boolean().default(false),
-      region: z.string().trim().min(1),
-      profile: z.string().trim(),
-      model: z.string().trim().min(1).or(z.literal("")),
-    }),
-    "local-llm": z.object({
-      enabled: z.boolean().default(true),
-      apiBaseUrl: z.string().trim().url().or(z.literal("")),
-      apiPath: z.string().trim().min(1).default("/v1/chat/completions"),
-      model: z.string().trim().min(1).or(z.literal("")),
-      models: z.array(localLlmModelSchema).default([]),
-    }),
-    codex: z.object({
-      enabled: z.boolean().default(false),
-      model: z.string().trim().min(1).default("codex-sdk-agent"),
-    }),
-  }),
-  taskRouting: z.object({
-    findCandidate: z.object({
-      source: runtimeRouteSchema,
-      vibe: runtimeRouteSchema,
-      throttling: z.object({
-        backgroundEnabled: z.boolean().default(true),
-        interactiveWindowSeconds: z.number().int().min(30).max(3_600).default(180),
-        recentBlockSeconds: z.number().int().min(0).max(600).default(30),
-        minIntervalSeconds: z.number().int().min(1).max(3_600).default(30),
-        mediumIntervalSeconds: z.number().int().min(1).max(7_200).default(90),
-        busyIntervalSeconds: z.number().int().min(1).max(21_600).default(180),
-        maxIntervalSeconds: z.number().int().min(1).max(86_400).default(300),
-        rateLimitCooldownSeconds: z.number().int().min(30).max(172_800).default(600),
-        jitterSeconds: z.number().int().min(0).max(600).default(10),
+export const runtimeSettingsEditableSchema = z
+  .object({
+    general: z.object({
+      distillationPriority: z.object({
+        targetPriorityOrder: z.array(z.enum(distillationPriorityTargetKindValues)).min(1).max(4),
       }),
     }),
-    webSourceResearch: runtimeRouteSchema,
-    episodeDistiller: runtimeRouteSchema,
-    coverEvidence: z.object({
-      sourceSupport: runtimeRouteSchema,
-      externalEvidence: runtimeRouteSchema,
-      mcpEvidence: runtimeRouteSchema,
-    }),
-    deadZoneMergeReview: runtimeRouteSchema,
-    finalizeDistille: runtimeRouteSchema,
-    mergeActivationFinalize: runtimeRouteSchema,
-    agenticCompile: z.object({
-      enabled: z.boolean().default(true),
-      provider: z.enum(runtimeAgenticProviderNames),
-      model: z.string().trim().min(1),
-      localLlmModel: z.string().trim().min(1).optional(),
-      fallback: z.array(runtimeProviderSchema).max(8).default([]),
-      azureDeploymentSlots: z.array(z.number().int().min(1)).optional(),
-      timeoutMs: z.number().int().min(1000).max(3_600_000),
-      maxTokens: z.number().int().min(128).max(16_384),
-    }),
-  }),
-  search: z.object({
-    providerOrder: z.array(searchProviderSchema).min(1).max(3),
-    maxProviderAttempts: z.number().int().min(1).max(3),
-    resultCount: z.number().int().min(1).max(10),
-    timeoutMs: z.number().int().min(1000).max(120_000),
-    rateLimitCooldownSeconds: z.number().int().min(30).max(172_800),
+    providerPools: z.array(runtimeProviderPoolSchema).default([]),
     providers: z.object({
-      brave: z.object({ enabled: z.boolean().default(true) }),
-      exa: z.object({ enabled: z.boolean().default(true) }),
-      duckduckgo: z.object({ enabled: z.boolean().default(true) }),
+      openai: z.object({
+        enabled: z.boolean().default(true),
+        apiBaseUrl: z.string().trim().url(),
+        model: z.string().trim().min(1),
+      }),
+      "azure-openai": z.object({
+        enabled: z.boolean().default(false),
+        apiBaseUrl: z.string().trim().url().or(z.literal("")),
+        apiPath: z.string().trim().min(1),
+        apiVersion: z.string().trim().min(1),
+        model: z.string().trim().min(1).or(z.literal("")),
+        deployments: z.array(azureOpenAiDeploymentSchema).default([]),
+      }),
+      bedrock: z.object({
+        enabled: z.boolean().default(false),
+        region: z.string().trim().min(1),
+        profile: z.string().trim(),
+        model: z.string().trim().min(1).or(z.literal("")),
+      }),
+      "local-llm": z.object({
+        enabled: z.boolean().default(true),
+        apiBaseUrl: z.string().trim().url().or(z.literal("")),
+        apiPath: z.string().trim().min(1).default("/v1/chat/completions"),
+        model: z.string().trim().min(1).or(z.literal("")),
+        models: z.array(localLlmModelSchema).default([]),
+      }),
+      codex: z.object({
+        enabled: z.boolean().default(false),
+        model: z.string().trim().min(1).default("codex-sdk-agent"),
+      }),
     }),
-  }),
-  embedding: z.object({
-    provider: z.enum(["auto", "daemon", "cli", "openai", "disabled"] as const),
-    daemonUrl: z.string().trim().url(),
-    openaiModel: z.string().trim().min(1),
-    timeoutMs: z.number().int().min(1000).max(120_000),
-  }),
-  distillationRuntime: z.object({
-    timeoutMs: z.number().int().min(1000).max(3_600_000),
-    candidateTimeoutMs: z.number().int().min(1000).max(3_600_000),
-    maxToolRounds: z.number().int().min(0).max(64),
-    findCandidateTimeoutMs: z.number().int().min(1000).max(3_600_000),
-    findCandidateMaxToolCalls: z.number().int().min(1).max(64),
-    coverEvidenceTimeoutMs: z.number().int().min(1000).max(3_600_000),
-    coverEvidenceSearchMaxCalls: z.number().int().min(0).max(16),
-    coverEvidenceFetchMaxCalls: z.number().int().min(0).max(16),
-    coverEvidenceFetchMaxTokensPerSite: z.number().int().min(128).max(50_000),
-    toolTimeoutMs: z.number().int().min(1000).max(120_000),
-    toolResultMaxChars: z.number().int().min(512).max(200_000),
-    failureRetryDelaySeconds: z.number().int().min(1).max(604_800),
-    readerMaxReads: z.number().int().min(1).max(64),
-    readerMaxCharsPerRead: z.number().int().min(128).max(200_000),
-    lowImportanceRejectThreshold: z.number().min(0).max(100),
-  }),
-  advanced: z.object({
-    pipelineLockStaleSeconds: z.number().int().min(30).max(604_800),
-    lockTtlSeconds: z.number().int().min(30).max(604_800),
-    pipelineClaimLimit: z.number().int().min(1).max(1000),
-    findingQueueTaskIntervalSeconds: z.number().int().min(0).max(3_600),
-    coveringQueueTaskIntervalSeconds: z.number().int().min(0).max(3_600),
-    continuousIdleSleepMs: z.number().int().min(100).max(3_600_000),
-    continuousErrorSleepMs: z.number().int().min(100).max(3_600_000),
-    inventoryRefreshIntervalMs: z.number().int().min(100).max(3_600_000),
-    doctorFreshnessThresholdMinutes: z.number().int().min(1).max(43_200),
-    doctorDegradedRateThreshold: z.number().min(0).max(1),
-    doctorKnowledgeZeroUseWarningMinActiveCount: z.number().int().min(1).max(100_000),
-    codexLogSyncEnabled: z.boolean().default(true),
-    antigravityLogSyncEnabled: z.boolean().default(true),
-    claudeLogSyncEnabled: z.boolean().default(true),
-  }),
-});
+    taskRouting: z.object({
+      findCandidate: z.object({
+        source: runtimeRouteSchema,
+        vibe: runtimeRouteSchema,
+        throttling: z.object({
+          backgroundEnabled: z.boolean().default(true),
+          interactiveWindowSeconds: z.number().int().min(30).max(3_600).default(180),
+          recentBlockSeconds: z.number().int().min(0).max(600).default(30),
+          minIntervalSeconds: z.number().int().min(1).max(3_600).default(30),
+          mediumIntervalSeconds: z.number().int().min(1).max(7_200).default(90),
+          busyIntervalSeconds: z.number().int().min(1).max(21_600).default(180),
+          maxIntervalSeconds: z.number().int().min(1).max(86_400).default(300),
+          rateLimitCooldownSeconds: z.number().int().min(30).max(172_800).default(600),
+          jitterSeconds: z.number().int().min(0).max(600).default(10),
+        }),
+      }),
+      webSourceResearch: runtimeRouteSchema,
+      episodeDistiller: runtimeRouteSchema,
+      coverEvidence: z.object({
+        sourceSupport: runtimeRouteSchema,
+        externalEvidence: runtimeRouteSchema,
+        mcpEvidence: runtimeRouteSchema,
+      }),
+      deadZoneMergeReview: runtimeRouteSchema,
+      finalizeDistille: runtimeRouteSchema,
+      mergeActivationFinalize: runtimeRouteSchema,
+      agenticCompile: z.object({
+        enabled: z.boolean().default(true),
+        provider: z.enum(runtimeAgenticProviderNames),
+        model: z.string().trim().min(1),
+        localLlmModel: z.string().trim().min(1).optional(),
+        fallback: z.array(runtimeProviderSchema).max(8).default([]),
+        azureDeploymentSlots: z.array(z.number().int().min(1)).optional(),
+        timeoutMs: z.number().int().min(1000).max(3_600_000),
+        maxTokens: z.number().int().min(128).max(16_384),
+      }),
+    }),
+    search: z.object({
+      providerOrder: z.array(searchProviderSchema).min(1).max(3),
+      maxProviderAttempts: z.number().int().min(1).max(3),
+      resultCount: z.number().int().min(1).max(10),
+      timeoutMs: z.number().int().min(1000).max(120_000),
+      rateLimitCooldownSeconds: z.number().int().min(30).max(172_800),
+      providers: z.object({
+        brave: z.object({ enabled: z.boolean().default(true) }),
+        exa: z.object({ enabled: z.boolean().default(true) }),
+        duckduckgo: z.object({ enabled: z.boolean().default(true) }),
+      }),
+    }),
+    embedding: z.object({
+      provider: z.enum(["auto", "daemon", "cli", "openai", "disabled"] as const),
+      daemonUrl: z.string().trim().url(),
+      openaiModel: z.string().trim().min(1),
+      timeoutMs: z.number().int().min(1000).max(120_000),
+    }),
+    distillationRuntime: z.object({
+      timeoutMs: z.number().int().min(1000).max(3_600_000),
+      candidateTimeoutMs: z.number().int().min(1000).max(3_600_000),
+      maxToolRounds: z.number().int().min(0).max(64),
+      findCandidateTimeoutMs: z.number().int().min(1000).max(3_600_000),
+      findCandidateMaxToolCalls: z.number().int().min(1).max(64),
+      coverEvidenceTimeoutMs: z.number().int().min(1000).max(3_600_000),
+      coverEvidenceSearchMaxCalls: z.number().int().min(0).max(16),
+      coverEvidenceFetchMaxCalls: z.number().int().min(0).max(16),
+      coverEvidenceFetchMaxTokensPerSite: z.number().int().min(128).max(50_000),
+      toolTimeoutMs: z.number().int().min(1000).max(120_000),
+      toolResultMaxChars: z.number().int().min(512).max(200_000),
+      failureRetryDelaySeconds: z.number().int().min(1).max(604_800),
+      readerMaxReads: z.number().int().min(1).max(64),
+      readerMaxCharsPerRead: z.number().int().min(128).max(200_000),
+      llmContextWindowTokens: z.number().int().min(4096).max(1_000_000),
+      llmMaxInputTokens: z.number().int().min(1024).max(1_000_000),
+      llmInputSafetyMarginTokens: z.number().int().min(0).max(200_000),
+      lowImportanceRejectThreshold: z.number().min(0).max(100),
+    }),
+    advanced: z.object({
+      pipelineLockStaleSeconds: z.number().int().min(30).max(604_800),
+      lockTtlSeconds: z.number().int().min(30).max(604_800),
+      pipelineClaimLimit: z.number().int().min(1).max(1000),
+      findingQueueTaskIntervalSeconds: z.number().int().min(0).max(3_600),
+      coveringQueueTaskIntervalSeconds: z.number().int().min(0).max(3_600),
+      continuousIdleSleepMs: z.number().int().min(100).max(3_600_000),
+      continuousErrorSleepMs: z.number().int().min(100).max(3_600_000),
+      inventoryRefreshIntervalMs: z.number().int().min(100).max(3_600_000),
+      doctorFreshnessThresholdMinutes: z.number().int().min(1).max(43_200),
+      doctorDegradedRateThreshold: z.number().min(0).max(1),
+      doctorKnowledgeZeroUseWarningMinActiveCount: z.number().int().min(1).max(100_000),
+      codexLogSyncEnabled: z.boolean().default(true),
+      antigravityLogSyncEnabled: z.boolean().default(true),
+      claudeLogSyncEnabled: z.boolean().default(true),
+    }),
+  })
+  .superRefine((settings, ctx) => {
+    const { llmContextWindowTokens, llmInputSafetyMarginTokens, llmMaxInputTokens } =
+      settings.distillationRuntime;
+    if (llmMaxInputTokens + llmInputSafetyMarginTokens > llmContextWindowTokens) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["distillationRuntime", "llmMaxInputTokens"],
+        message:
+          "llmMaxInputTokens と llmInputSafetyMarginTokens の合計は llmContextWindowTokens 以下にしてください",
+      });
+    }
+  });
 
 export const runtimeSecretUpdateSchema = z
   .object({

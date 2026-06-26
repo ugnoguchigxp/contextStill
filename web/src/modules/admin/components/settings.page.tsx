@@ -18,6 +18,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   type RuntimeProviderHealth,
   type RuntimeProviderName,
+  type RuntimeProviderPool,
+  type RuntimeProviderPoolTarget,
   type RuntimeProviderSetting,
   type RuntimeSearchProvider,
   type RuntimeSecretKey,
@@ -82,6 +84,7 @@ const runtimeProviders: RuntimeProviderName[] = [
   "codex",
 ];
 const runtimeSearchProviders: RuntimeSearchProvider[] = ["brave", "exa", "duckduckgo"];
+const localLlmDefaultProviderPoolId = "local-llm-default";
 const distillationPriorityTargetKinds = [
   "knowledge_candidate",
   "web_ingest",
@@ -564,6 +567,7 @@ function normalizeLocalLlmModelsForForm(
         },
       ];
   return models.map((model, index) => ({
+    id: model.id,
     name: model.name || (index === 0 ? "Primary" : `Local LLM ${index + 1}`),
     apiBaseUrl: model.apiBaseUrl ?? (index === 0 ? provider.apiBaseUrl : ""),
     apiPath: model.apiPath || provider.apiPath || "/v1/chat/completions",
@@ -591,12 +595,70 @@ function normalizeLocalLlmModelsForSave(
 ): RuntimeSettingsEditable["providers"]["local-llm"]["models"] {
   return provider.models
     .map((model, index) => ({
+      id: model.id,
       name: model.name.trim() || (index === 0 ? "Primary" : `Local LLM ${index + 1}`),
       apiBaseUrl: model.apiBaseUrl.trim(),
       apiPath: model.apiPath.trim() || "/v1/chat/completions",
       model: model.model.trim(),
     }))
     .filter((model) => model.apiBaseUrl && model.model);
+}
+
+function isLocalLlmPoolTarget(
+  target: RuntimeProviderPoolTarget,
+): target is Extract<RuntimeProviderPoolTarget, { provider: "local-llm" }> {
+  return target.provider === "local-llm";
+}
+
+function localLlmPoolTargetId(
+  model: RuntimeSettingsEditable["providers"]["local-llm"]["models"][number],
+): string | null {
+  const id = model.id?.trim();
+  return id || null;
+}
+
+function localLlmPoolTargetLabel(
+  model: RuntimeSettingsEditable["providers"]["local-llm"]["models"][number],
+  index: number,
+): string {
+  return localLlmRouteOptionLabel(
+    {
+      ...model,
+      name: model.name.trim() || (index === 0 ? "Primary" : `Local LLM ${index + 1}`),
+      apiBaseUrl: model.apiBaseUrl.trim(),
+      apiPath: model.apiPath.trim() || "/v1/chat/completions",
+      model: model.model.trim(),
+    },
+    true,
+  );
+}
+
+function localLlmProviderPool(settings: RuntimeSettingsEditable): RuntimeProviderPool {
+  const existing = settings.providerPools.find((pool) => pool.id === localLlmDefaultProviderPoolId);
+  if (existing) return existing;
+  const targets = settings.providers["local-llm"].models
+    .map(localLlmPoolTargetId)
+    .filter((id): id is string => Boolean(id))
+    .map((localLlmModelId) => ({ provider: "local-llm" as const, localLlmModelId }));
+  return {
+    id: localLlmDefaultProviderPoolId,
+    label: "Local LLM Pool",
+    targets,
+    maxConcurrent: Math.max(1, targets.length),
+    staleLeaseSeconds: 660,
+    enabled: true,
+    lowPriorityAgingSeconds: 1800,
+  };
+}
+
+function withLocalLlmProviderPool(
+  settings: RuntimeSettingsEditable,
+  nextPool: RuntimeProviderPool,
+): RuntimeSettingsEditable {
+  const providerPools = settings.providerPools.some((pool) => pool.id === nextPool.id)
+    ? settings.providerPools.map((pool) => (pool.id === nextPool.id ? nextPool : pool))
+    : [...settings.providerPools, nextPool];
+  return { ...settings, providerPools };
 }
 
 function prepareSettingsForSave(settings: RuntimeSettingsEditable): RuntimeSettingsEditable {
@@ -749,6 +811,9 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
       failureRetryDelaySeconds: view.distillationRuntime.failureRetryDelaySeconds,
       readerMaxReads: view.distillationRuntime.readerMaxReads,
       readerMaxCharsPerRead: view.distillationRuntime.readerMaxCharsPerRead,
+      llmContextWindowTokens: view.distillationRuntime.llmContextWindowTokens,
+      llmMaxInputTokens: view.distillationRuntime.llmMaxInputTokens,
+      llmInputSafetyMarginTokens: view.distillationRuntime.llmInputSafetyMarginTokens,
       lowImportanceRejectThreshold: view.distillationRuntime.lowImportanceRejectThreshold,
     },
     advanced: {
@@ -1168,6 +1233,122 @@ export function SettingsPage() {
       />
     </label>
   );
+
+  const renderLocalLlmProviderPoolControls = () => {
+    if (!draft) return null;
+    const pool = localLlmProviderPool(draft);
+    const selectedTargetIds = new Set(
+      pool.targets.filter(isLocalLlmPoolTarget).map((target) => target.localLlmModelId),
+    );
+    const localModels = draft.providers["local-llm"].models
+      .map((model, index) => ({
+        id: localLlmPoolTargetId(model),
+        index,
+        label: localLlmPoolTargetLabel(model, index),
+        complete: Boolean(model.apiBaseUrl.trim() && model.model.trim()),
+      }))
+      .filter((model) => model.complete);
+    const selectedCount = localModels.filter(
+      (model) => model.id && selectedTargetIds.has(model.id),
+    ).length;
+    const concurrencyLimit = Math.max(1, selectedCount);
+    const displayedMaxConcurrent = Math.min(Math.max(1, pool.maxConcurrent), concurrencyLimit);
+
+    const patchLocalLlmPool = (nextPool: RuntimeProviderPool) =>
+      patchDraft((current) => withLocalLlmProviderPool(current, nextPool));
+
+    const setTargetEnabled = (targetId: string, enabled: boolean) =>
+      patchDraft((current) => {
+        const currentPool = localLlmProviderPool(current);
+        const ids = new Set(
+          currentPool.targets.filter(isLocalLlmPoolTarget).map((target) => target.localLlmModelId),
+        );
+        if (enabled) {
+          ids.add(targetId);
+        } else if (ids.size > 1) {
+          ids.delete(targetId);
+        }
+        const targets = [...ids].map((localLlmModelId) => ({
+          provider: "local-llm" as const,
+          localLlmModelId,
+        }));
+        return withLocalLlmProviderPool(current, {
+          ...currentPool,
+          label: currentPool.label.trim() || "Local LLM Pool",
+          targets,
+          maxConcurrent: Math.min(Math.max(1, currentPool.maxConcurrent), targets.length),
+        });
+      });
+
+    return (
+      <section className="settings-route-section">
+        <div className="settings-route-section-header">
+          <h3>Local LLM Queue Pool</h3>
+          <p>Provider lease targets and concurrency for queue-backed Local LLM work.</p>
+        </div>
+        <div className="settings-route-row">
+          <div className="settings-route-header">
+            <div className="settings-route-label">local-llm-default</div>
+            <p className="settings-route-description">
+              Active endpoints define the maximum number of concurrent queue leases.
+            </p>
+          </div>
+          <div className="settings-route-fields settings-route-fields-pool">
+            <label className="settings-field">
+              <span>Queue Pool Concurrent Jobs</span>
+              <Input
+                type="number"
+                min={1}
+                max={concurrencyLimit}
+                value={displayedMaxConcurrent}
+                disabled={selectedCount === 0}
+                onChange={(event) => {
+                  const next = parseIntegerInput(event.target.value, pool.maxConcurrent);
+                  patchLocalLlmPool({
+                    ...pool,
+                    maxConcurrent: Math.max(1, Math.min(concurrencyLimit, next)),
+                  });
+                }}
+              />
+            </label>
+          </div>
+          <div className="settings-provider-pool-targets">
+            {localModels.map((model) => {
+              const checked = Boolean(model.id && selectedTargetIds.has(model.id));
+              const disabled = !model.id || (checked && selectedCount <= 1);
+              return (
+                <label
+                  key={`${model.index}:${model.label}`}
+                  className="settings-provider-pool-target"
+                >
+                  <Checkbox
+                    aria-label={`Use ${model.label} for Queue Pool`}
+                    checked={checked}
+                    disabled={disabled}
+                    onChange={(event) => {
+                      if (!model.id) return;
+                      setTargetEnabled(model.id, event.target.checked);
+                    }}
+                  />
+                  <span>{model.label}</span>
+                </label>
+              );
+            })}
+          </div>
+          <div className="settings-route-chain" aria-label="Local LLM Queue Pool capacity">
+            <span className="settings-route-chain-item">
+              <strong>Targets</strong>
+              {selectedCount}
+            </span>
+            <span className="settings-route-chain-item">
+              <strong>Concurrent</strong>
+              {displayedMaxConcurrent}
+            </span>
+          </div>
+        </div>
+      </section>
+    );
+  };
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -2996,6 +3177,24 @@ export function SettingsPage() {
                           max: 200_000,
                         })}
                         {renderDistillationRuntimeNumberField({
+                          label: "LLM Context Window Tokens",
+                          settingKey: "llmContextWindowTokens",
+                          min: 4096,
+                          max: 1_000_000,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "LLM Max Input Tokens",
+                          settingKey: "llmMaxInputTokens",
+                          min: 1024,
+                          max: 1_000_000,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "LLM Input Safety Margin Tokens",
+                          settingKey: "llmInputSafetyMarginTokens",
+                          min: 0,
+                          max: 200_000,
+                        })}
+                        {renderDistillationRuntimeNumberField({
                           label: "Low Importance Reject Threshold",
                           settingKey: "lowImportanceRejectThreshold",
                           min: 0,
@@ -3093,6 +3292,7 @@ export function SettingsPage() {
                       </div>
                     </div>
                   </section>
+                  {renderLocalLlmProviderPoolControls()}
                 </CardContent>
               </Card>
             ) : null}
@@ -3459,6 +3659,24 @@ export function SettingsPage() {
                         }
                       />
                     </label>
+                    {renderDistillationRuntimeNumberField({
+                      label: "LLM Context Window Tokens",
+                      settingKey: "llmContextWindowTokens",
+                      min: 4096,
+                      max: 1_000_000,
+                    })}
+                    {renderDistillationRuntimeNumberField({
+                      label: "LLM Max Input Tokens",
+                      settingKey: "llmMaxInputTokens",
+                      min: 1024,
+                      max: 1_000_000,
+                    })}
+                    {renderDistillationRuntimeNumberField({
+                      label: "LLM Input Safety Margin Tokens",
+                      settingKey: "llmInputSafetyMarginTokens",
+                      min: 0,
+                      max: 200_000,
+                    })}
                     <label className="settings-field">
                       <span>Continuous Idle Sleep (seconds)</span>
                       <Input

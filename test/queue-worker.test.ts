@@ -567,7 +567,9 @@ describe("runQueueWorkerOnce", () => {
     expect(mocks.insertCalls.map((call) => call.table)).toContain(findingCandidateQueue);
   });
 
-  test("does not enqueue legacy agent log sync vibe memory chunk jobs", async () => {
+  test("enqueues legacy agent log sync vibe memory chunk jobs", async () => {
+    mocks.selectRows = [[{ id: "memory-1" }]];
+
     const result = await enqueueFindingJob({
       inputKind: "source_target",
       sourceKind: "vibe_memory",
@@ -579,8 +581,8 @@ describe("runQueueWorkerOnce", () => {
       },
     });
 
-    expect(result).toBeNull();
-    expect(mocks.insertCalls.map((call) => call.table)).not.toContain(findingCandidateQueue);
+    expect(result).toEqual({ id: "evidence-1" });
+    expect(mocks.insertCalls.map((call) => call.table)).toContain(findingCandidateQueue);
   });
 
   test("returns idle when lane is paused", async () => {
@@ -721,7 +723,7 @@ describe("runQueueWorkerOnce", () => {
     );
   });
 
-  test("skips legacy agent log sync vibe memory chunk jobs without running findCandidate", async () => {
+  test("processes legacy agent log sync vibe memory chunk jobs through findCandidate", async () => {
     mocks.claimNextQueueJob.mockResolvedValue({ id: "finding-job-legacy" });
     mocks.selectRows = [
       [
@@ -741,6 +743,14 @@ describe("runQueueWorkerOnce", () => {
         },
       ],
     ];
+    mocks.runFindCandidate.mockResolvedValue({
+      targetStateId: null,
+      targetKind: "vibe_memory",
+      targetKey: "memory-1",
+      callerMode: "cli_text",
+      candidates: [],
+      readRanges: [{ from: 0, toExclusive: 120 }],
+    });
 
     const result = await runQueueWorkerOnce({
       queueName: "findingCandidate",
@@ -748,13 +758,20 @@ describe("runQueueWorkerOnce", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(mocks.runFindCandidate).not.toHaveBeenCalled();
+    expect(mocks.runFindCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceInput: expect.objectContaining({
+          targetKind: "vibe_memory",
+          targetKey: "memory-1",
+        }),
+      }),
+    );
     expect(mocks.updateCalls).toContainEqual(
       expect.objectContaining({
         table: findingCandidateQueue,
         values: expect.objectContaining({
           status: "skipped",
-          lastOutcomeKind: "legacy_agent_log_sync_chunk_retired",
+          lastOutcomeKind: "no_candidate",
         }),
       }),
     );
@@ -763,12 +780,12 @@ describe("runQueueWorkerOnce", () => {
         queueName: "findingCandidate",
         queueJobId: "finding-job-legacy",
         eventType: "completed",
-        message: "legacy agent-log-sync vibe memory chunk finding job skipped",
+        message: "no candidate found",
       }),
     );
   });
 
-  test("skips legacy agent log sync chunk jobs when legacy markers are in payload", async () => {
+  test("processes legacy agent log sync chunk jobs when legacy markers are in payload", async () => {
     mocks.claimNextQueueJob.mockResolvedValue({ id: "finding-job-legacy-payload" });
     mocks.selectRows = [
       [
@@ -788,19 +805,27 @@ describe("runQueueWorkerOnce", () => {
         },
       ],
     ];
+    mocks.runFindCandidate.mockResolvedValue({
+      targetStateId: null,
+      targetKind: "vibe_memory",
+      targetKey: "memory-1",
+      callerMode: "cli_text",
+      candidates: [],
+      readRanges: [],
+    });
 
     await runQueueWorkerOnce({
       queueName: "findingCandidate",
       workerId: "worker-1",
     });
 
-    expect(mocks.runFindCandidate).not.toHaveBeenCalled();
+    expect(mocks.runFindCandidate).toHaveBeenCalled();
     expect(mocks.updateCalls).toContainEqual(
       expect.objectContaining({
         table: findingCandidateQueue,
         values: expect.objectContaining({
           status: "skipped",
-          lastOutcomeKind: "legacy_agent_log_sync_chunk_retired",
+          lastOutcomeKind: "no_candidate",
         }),
       }),
     );

@@ -462,6 +462,7 @@ describe("runCoverEvidence", () => {
     expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(1);
     expect(mocks.runDistillationCompletion.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
+        timeoutMs: 180_000,
         usageSource: "cover-evidence:value-assessment",
       }),
     );

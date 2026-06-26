@@ -2356,6 +2356,9 @@ export type RuntimeSettingsEditable = {
     failureRetryDelaySeconds: number;
     readerMaxReads: number;
     readerMaxCharsPerRead: number;
+    llmContextWindowTokens: number;
+    llmMaxInputTokens: number;
+    llmInputSafetyMarginTokens: number;
     lowImportanceRejectThreshold: number;
   };
   advanced: {

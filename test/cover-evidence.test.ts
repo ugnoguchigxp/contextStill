@@ -676,6 +676,15 @@ describe("coverEvidence prompts", () => {
     expect(prompt).not.toContain("TITLE\n<タイトル>");
     expect(prompt).not.toContain("BODY\n<本文");
   });
+
+  test("asks external evidence final pass to enrich supported candidates", () => {
+    const prompt = externalEvidenceFinalSystemPrompt();
+
+    expect(prompt).toContain("候補の title/body を肉付け・補完・清書");
+    expect(prompt).toContain("再利用可能な knowledge_ready 候補へ補正");
+    expect(prompt).toContain("insufficient にせず知識として再構成");
+    expect(prompt).toContain("推測で足してはいけません");
+  });
 });
 
 describe("runCoverEvidence", () => {

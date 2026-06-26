@@ -219,6 +219,11 @@ export function applyRuntimeSettingsToProcess(
   groupedConfig.distillation.coverEvidenceTimeoutMs =
     settings.distillationRuntime.coverEvidenceTimeoutMs;
   groupedConfig.distillation.candidateTimeoutMs = settings.distillationRuntime.candidateTimeoutMs;
+  groupedConfig.distillation.llmContextWindowTokens =
+    settings.distillationRuntime.llmContextWindowTokens;
+  groupedConfig.distillation.llmMaxInputTokens = settings.distillationRuntime.llmMaxInputTokens;
+  groupedConfig.distillation.llmInputSafetyMarginTokens =
+    settings.distillationRuntime.llmInputSafetyMarginTokens;
   groupedConfig.distillation.lowImportanceRejectThreshold =
     settings.distillationRuntime.lowImportanceRejectThreshold;
   groupedConfig.distillation.lockTtlSeconds = settings.advanced.lockTtlSeconds;

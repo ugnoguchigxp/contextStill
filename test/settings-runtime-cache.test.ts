@@ -18,6 +18,7 @@ type ProviderConfigSnapshot = {
   azureOpenAi: typeof groupedConfig.azureOpenAi;
   bedrock: typeof groupedConfig.bedrock;
   localLlm: typeof groupedConfig.localLlm;
+  distillation: typeof groupedConfig.distillation;
 };
 
 function cloneProviderConfig(): ProviderConfigSnapshot {
@@ -27,6 +28,7 @@ function cloneProviderConfig(): ProviderConfigSnapshot {
       azureOpenAi: groupedConfig.azureOpenAi,
       bedrock: groupedConfig.bedrock,
       localLlm: groupedConfig.localLlm,
+      distillation: groupedConfig.distillation,
     }),
   ) as ProviderConfigSnapshot;
 }
@@ -36,6 +38,7 @@ function restoreProviderConfig(snapshot: ProviderConfigSnapshot): void {
   groupedConfig.azureOpenAi = snapshot.azureOpenAi;
   groupedConfig.bedrock = snapshot.bedrock;
   groupedConfig.localLlm = snapshot.localLlm;
+  groupedConfig.distillation = snapshot.distillation;
 }
 
 function secret(value: string): SecretValueEntry {
@@ -133,6 +136,18 @@ describe("settings runtime cache", () => {
     expect(groupedConfig.localLlm.model).toBe("");
     expect(groupedConfig.localLlm.models).toEqual([]);
     expect(groupedConfig.localLlm.apiKey).toBe("");
+  });
+
+  test("applies distillation LLM input budget settings to runtime config", () => {
+    settings.distillationRuntime.llmContextWindowTokens = 128_000;
+    settings.distillationRuntime.llmMaxInputTokens = 80_000;
+    settings.distillationRuntime.llmInputSafetyMarginTokens = 4096;
+
+    applyRuntimeSettingsToProcess(settings, emptySecrets());
+
+    expect(groupedConfig.distillation.llmContextWindowTokens).toBe(128_000);
+    expect(groupedConfig.distillation.llmMaxInputTokens).toBe(80_000);
+    expect(groupedConfig.distillation.llmInputSafetyMarginTokens).toBe(4096);
   });
 
   test("keeps multiple Azure OpenAI deployments active when the provider is enabled", () => {
@@ -343,6 +358,73 @@ describe("settings runtime cache", () => {
       model: "gemma-4-e4b-it",
       fallback: ["azure-openai"],
     });
+  });
+
+  test("preserves an explicitly empty Local LLM route fallback", () => {
+    const row = {
+      id: "settings-row-empty-fallback",
+      namespace: "runtime",
+      key: "runtime_settings",
+      value: {
+        ...settings,
+        taskRouting: {
+          ...settings.taskRouting,
+          episodeDistiller: {
+            provider: "local-llm",
+            model: "gemma-4-e4b-it",
+            localLlmModel: "gemma-4-e4b-it",
+            fallback: [],
+          },
+          coverEvidence: {
+            sourceSupport: {
+              provider: "local-llm",
+              model: "gemma-4-e4b-it",
+              localLlmModel: "gemma-4-e4b-it",
+              fallback: [],
+            },
+            externalEvidence: {
+              provider: "local-llm",
+              model: "gemma-4-e4b-it",
+              localLlmModel: "gemma-4-e4b-it",
+              fallback: [],
+            },
+            mcpEvidence: {
+              provider: "local-llm",
+              model: "gemma-4-e4b-it",
+              localLlmModel: "gemma-4-e4b-it",
+              fallback: [],
+            },
+          },
+          finalizeDistille: {
+            provider: "local-llm",
+            model: "gemma-4-e4b-it",
+            localLlmModel: "gemma-4-e4b-it",
+            fallback: [],
+          },
+          mergeActivationFinalize: {
+            provider: "local-llm",
+            model: "gemma-4-e4b-it",
+            localLlmModel: "gemma-4-e4b-it",
+            fallback: [],
+          },
+        },
+      },
+      valueKind: "json",
+      secretRef: null,
+      isSecret: false,
+      description: null,
+      schemaVersion: 1,
+      updatedBy: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const parsed = parseDocumentValue(row);
+
+    expect(parsed.taskRouting.episodeDistiller.fallback).toEqual([]);
+    expect(parsed.taskRouting.coverEvidence.externalEvidence.fallback).toEqual([]);
+    expect(parsed.taskRouting.finalizeDistille.fallback).toEqual([]);
+    expect(parsed.taskRouting.mergeActivationFinalize.fallback).toEqual([]);
   });
 
   test("preserves separate Find Candidate source and vibe processing routes", () => {
