@@ -144,6 +144,13 @@ function toIsoTimestamp(value: Date | string | number | null): string | null {
   }
   if (typeof value === "string") {
     const trimmed = value.trim();
+    const unixMillis = trimmed.startsWith("unix-ms:")
+      ? Number(trimmed.slice("unix-ms:".length))
+      : Number.NaN;
+    if (Number.isFinite(unixMillis)) {
+      const parsedUnix = new Date(unixMillis);
+      return Number.isNaN(parsedUnix.getTime()) ? null : parsedUnix.toISOString();
+    }
     // PostgreSQL timestamp (without timezone) should be treated as UTC to avoid local offset drift.
     if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)) {
       const parsedUtc = new Date(`${trimmed.replace(" ", "T")}Z`);

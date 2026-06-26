@@ -2,10 +2,6 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { resolveDatabaseBackendConfig } from "../../../src/db/backend.js";
 import { db } from "../../../src/db/index.js";
 import {
-  sqliteKnowledgeCommunityLabels,
-  sqliteKnowledgeItems,
-} from "../../../src/db/sqlite/schema.js";
-import {
   knowledgeCommunityLabels,
   knowledgeItems,
   knowledgeSourceLinks,
@@ -13,6 +9,10 @@ import {
   sources,
   vibeMemories,
 } from "../../../src/db/schema.js";
+import {
+  sqliteKnowledgeCommunityLabels,
+  sqliteKnowledgeItems,
+} from "../../../src/db/sqlite/schema.js";
 import { normalizeKnowledgeScore, toUnitKnowledgeScore } from "../../../src/lib/score-scale.js";
 import { normalizeRepoKey } from "../../../src/modules/context-compiler/query-context.js";
 import {
@@ -144,6 +144,28 @@ type CommunityLabelRecord = {
   note: string | null;
   updatedAt: Date;
 };
+
+function parseTimestamp(value: string | Date | null | undefined): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const trimmed = value.trim();
+  const unixMillis = trimmed.startsWith("unix-ms:")
+    ? Number(trimmed.slice("unix-ms:".length))
+    : Number.NaN;
+  if (Number.isFinite(unixMillis)) {
+    const date = new Date(unixMillis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function timestampMs(value: string | Date | null | undefined): number {
+  return parseTimestamp(value)?.getTime() ?? 0;
+}
 
 type EvidenceLinkRow = {
   knowledge_id: string;
@@ -660,7 +682,7 @@ async function listCommunityLabelsByKeys(
         communityKey: row.community_key,
         label: row.label,
         note: row.note,
-        updatedAt: new Date(row.updated_at),
+        updatedAt: parseTimestamp(row.updated_at) ?? new Date(0),
       });
     }
     return result;
@@ -896,7 +918,7 @@ async function buildSqliteGraphSnapshot(params: GraphSnapshotParams): Promise<{
       (left, right) =>
         normalizeKnowledgeScore(right.importance, 50) -
           normalizeKnowledgeScore(left.importance, 50) ||
-        Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+        timestampMs(right.updatedAt) - timestampMs(left.updatedAt),
     )
     .slice(0, Math.max(1, params.limit));
   const embeddedRows = sqlite.db
@@ -931,8 +953,8 @@ async function buildSqliteGraphSnapshot(params: GraphSnapshotParams): Promise<{
       computeDecayFactor({
         type: normalizeKnowledgeType(row.type),
         scope: normalizeKnowledgeScope(row.scope),
-        lastVerifiedAt: row.lastVerifiedAt ? new Date(row.lastVerifiedAt) : null,
-        updatedAt: new Date(row.updatedAt),
+        lastVerifiedAt: parseTimestamp(row.lastVerifiedAt),
+        updatedAt: parseTimestamp(row.updatedAt) ?? new Date(0),
       }),
     );
     relationNodeContexts.push({

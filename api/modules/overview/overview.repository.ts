@@ -61,7 +61,16 @@ function isSqliteBackend(): boolean {
 }
 
 function timezoneDateString(value: string | Date, timezone: string): string {
-  const date = value instanceof Date ? value : new Date(value);
+  const date =
+    value instanceof Date
+      ? value
+      : new Date(
+          value.startsWith("unix-ms:")
+            ? Number(value.slice("unix-ms:".length))
+            : /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(value.trim())
+              ? `${value.trim().replace(" ", "T")}Z`
+              : value,
+        );
   if (Number.isNaN(date.getTime())) return "";
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,

@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
-import { formatDateTimeShort, useTimezone } from "@/lib/timezone";
+import { formatDateTimeShort, parseTimestamp, useTimezone } from "@/lib/timezone";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -123,7 +123,9 @@ const queueCardVisuals: Record<
 
 function formatRelativeTime(iso: string | null, timezone: string): string {
   if (!iso) return "-";
-  const delta = Date.now() - Date.parse(iso);
+  const parsed = parseTimestamp(iso);
+  if (!parsed) return "-";
+  const delta = Date.now() - parsed.getTime();
   if (!Number.isFinite(delta)) return "-";
   const seconds = Math.floor(delta / 1000);
   if (seconds < 60) return `${seconds}s ago`;
@@ -136,8 +138,9 @@ function formatRelativeTime(iso: string | null, timezone: string): string {
 
 function formatElapsed(startedAt: string | null, nowMs: number): string {
   if (!startedAt) return "-";
-  const startedMs = Date.parse(startedAt);
-  if (!Number.isFinite(startedMs)) return "-";
+  const started = parseTimestamp(startedAt);
+  if (!started) return "-";
+  const startedMs = started.getTime();
   const elapsedSec = Math.max(0, Math.floor((nowMs - startedMs) / 1000));
   const hours = Math.floor(elapsedSec / 3600);
   const minutes = Math.floor((elapsedSec % 3600) / 60);

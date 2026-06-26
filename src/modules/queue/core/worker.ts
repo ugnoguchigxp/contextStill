@@ -129,7 +129,18 @@ function parseStringArray(value: unknown): string[] {
 
 function sqliteDate(value: unknown): Date | null {
   if (!value) return null;
-  const date = new Date(String(value));
+  const trimmed = String(value).trim();
+  const unixMillis = trimmed.startsWith("unix-ms:")
+    ? Number(trimmed.slice("unix-ms:".length))
+    : Number.NaN;
+  if (Number.isFinite(unixMillis)) {
+    const date = new Date(unixMillis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -151,16 +162,16 @@ function sqliteFindingJobRow(
     status: String(row.status),
     priority: Number(row.priority ?? 0),
     attemptCount: Number(row.attempt_count ?? 0),
-    nextRunAt: row.next_run_at ? new Date(String(row.next_run_at)) : null,
+    nextRunAt: sqliteDate(row.next_run_at),
     lockedBy: row.locked_by ? String(row.locked_by) : null,
-    lockedAt: row.locked_at ? new Date(String(row.locked_at)) : null,
-    heartbeatAt: row.heartbeat_at ? new Date(String(row.heartbeat_at)) : null,
+    lockedAt: sqliteDate(row.locked_at),
+    heartbeatAt: sqliteDate(row.heartbeat_at),
     lastError: row.last_error ? String(row.last_error) : null,
     lastOutcomeKind: row.last_outcome_kind ? String(row.last_outcome_kind) : null,
     metadata: parseJsonRecord(row.metadata),
-    createdAt: new Date(String(row.created_at)),
-    updatedAt: new Date(String(row.updated_at)),
-    completedAt: row.completed_at ? new Date(String(row.completed_at)) : null,
+    createdAt: sqliteRequiredDate(row.created_at),
+    updatedAt: sqliteRequiredDate(row.updated_at),
+    completedAt: sqliteDate(row.completed_at),
   };
 }
 

@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCheckedAt, formatNumber } from "@/lib/admin-formatters";
-import { useTimezone } from "@/lib/timezone";
+import { parseTimestamp, useTimezone } from "@/lib/timezone";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Cpu, Database } from "lucide-react";
 import type { ReactNode } from "react";
@@ -266,9 +266,12 @@ function combineDoctorStatus(reports: DoctorDomainReport[], hasError: boolean): 
 
 function latestCheckedAt(reports: DoctorDomainReport[]): string | undefined {
   return reports
-    .map((report) => report.checkedAt)
-    .filter((checkedAt) => !Number.isNaN(new Date(checkedAt).getTime()))
-    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+    .flatMap((report) => {
+      const parsed = parseTimestamp(report.checkedAt);
+      return parsed ? [parsed] : [];
+    })
+    .sort((a, b) => b.getTime() - a.getTime())[0]
+    ?.toISOString();
 }
 
 function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDomain }) {

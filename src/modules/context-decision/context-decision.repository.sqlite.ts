@@ -185,12 +185,20 @@ function asObjectArray(value: unknown): Array<Record<string, unknown>> {
 
 function toIso(value: string | null): string {
   if (!value) return new Date(0).toISOString();
-  if (value.startsWith("unix-ms:")) {
-    const millis = Number(value.slice("unix-ms:".length));
+  const trimmed = value.trim();
+  if (trimmed.startsWith("unix-ms:")) {
+    const millis = Number(trimmed.slice("unix-ms:".length));
     if (Number.isFinite(millis)) return new Date(millis).toISOString();
   }
-  const date = new Date(value);
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString();
+}
+
+function toTime(value: string | null): number {
+  return new Date(toIso(value)).getTime();
 }
 
 function normalizeDecision(value: string): ContextDecisionValue {
@@ -895,7 +903,7 @@ export async function listContextDecisionPrScanCandidatesSqlite(params: {
     `,
     )
     .all()
-    .filter((row) => !params.since || new Date(row.created_at) >= params.since)
+    .filter((row) => !params.since || toTime(row.created_at) >= params.since.getTime())
     .filter((row) => {
       const metadata = asRecord(row.metadata);
       return "prUrl" in metadata || "prNumber" in metadata || "branch" in metadata;
@@ -941,7 +949,9 @@ export async function listContextDecisionMlTrainingRowsSqlite(params: {
     `,
     )
     .all()
-    .filter((row) => !params.minCreatedAt || new Date(row.created_at) >= params.minCreatedAt)
+    .filter(
+      (row) => !params.minCreatedAt || toTime(row.created_at) >= params.minCreatedAt.getTime(),
+    )
     .slice(0, params.limit)
     .map((row) => {
       const outcomes = sqlite.db

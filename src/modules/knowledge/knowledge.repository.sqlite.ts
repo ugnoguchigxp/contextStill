@@ -1,11 +1,11 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { SqliteCoreRepository } from "../../db/sqlite/core-repository.js";
 import {
   sqliteKnowledgeItems,
   sqliteKnowledgeSourceLinks,
   sqliteSourceFragments,
   sqliteSources,
 } from "../../db/sqlite/schema.js";
-import { SqliteCoreRepository } from "../../db/sqlite/core-repository.js";
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import type { KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
 import { computeDecayFactor } from "./knowledge-value.service.js";
@@ -39,7 +39,18 @@ function nowIso(): string {
 
 function normalizeDate(value: string | null): Date | null {
   if (!value) return null;
-  const date = new Date(value);
+  const trimmed = value.trim();
+  const unixMillis = trimmed.startsWith("unix-ms:")
+    ? Number(trimmed.slice("unix-ms:".length))
+    : Number.NaN;
+  if (Number.isFinite(unixMillis)) {
+    const date = new Date(unixMillis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -262,7 +273,9 @@ export async function searchKnowledgeSqlite(
     .filter((row) => matchesApplicability(row, applicabilityQuery))
     .sort(
       (a, b) =>
-        b.score - a.score || b.importance - a.importance || b.updatedAt.localeCompare(a.updatedAt),
+        b.score - a.score ||
+        b.importance - a.importance ||
+        (normalizeDate(b.updatedAt)?.getTime() ?? 0) - (normalizeDate(a.updatedAt)?.getTime() ?? 0),
     )
     .slice(0, input.limit);
 

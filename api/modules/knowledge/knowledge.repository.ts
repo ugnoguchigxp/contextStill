@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import { type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { resolveDatabaseBackendConfig } from "../../../src/db/backend.js";
 import { db } from "../../../src/db/index.js";
+import { contextPackItems, knowledgeItems } from "../../../src/db/schema.js";
 import { SqliteCoreRepository } from "../../../src/db/sqlite/core-repository.js";
 import { sqliteKnowledgeItems } from "../../../src/db/sqlite/schema.js";
-import { contextPackItems, knowledgeItems } from "../../../src/db/schema.js";
 import { normalizeKnowledgeScore } from "../../../src/lib/score-scale.js";
 import {
   auditEventTypes,
@@ -73,7 +73,18 @@ type SqliteKnowledgeApiRow = typeof sqliteKnowledgeItems.$inferSelect;
 function toDate(value: string | Date | null | undefined): Date | null {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  const date = new Date(value);
+  const trimmed = value.trim();
+  const unixMillis = trimmed.startsWith("unix-ms:")
+    ? Number(trimmed.slice("unix-ms:".length))
+    : Number.NaN;
+  if (Number.isFinite(unixMillis)) {
+    const date = new Date(unixMillis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -136,7 +147,7 @@ function compareKnowledgeApiRows(
   };
   const numberValue = (row: SqliteKnowledgeApiRow): number => {
     if (sortBy === "qualityScore") return Math.max(row.importance, row.confidence);
-    return Date.parse(row.updatedAt);
+    return toDate(row.updatedAt)?.getTime() ?? 0;
   };
   const primary =
     sortBy === "qualityScore" || sortBy === "updatedAt"
@@ -147,7 +158,7 @@ function compareKnowledgeApiRows(
           : -1
       : stringValue(left).localeCompare(stringValue(right));
   if (primary !== 0) return primary * direction;
-  return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+  return (toDate(right.updatedAt)?.getTime() ?? 0) - (toDate(left.updatedAt)?.getTime() ?? 0);
 }
 
 function mapSqliteKnowledgeApiRow(row: SqliteKnowledgeApiRow): KnowledgeListItem {

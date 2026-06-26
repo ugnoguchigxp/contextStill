@@ -88,10 +88,24 @@ export function checkedAt(): string {
   return new Date().toISOString();
 }
 
+function timestampMs(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const unixMillis = trimmed.startsWith("unix-ms:")
+    ? Number(trimmed.slice("unix-ms:".length))
+    : Number.NaN;
+  if (Number.isFinite(unixMillis)) return unixMillis;
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function latestCheckedAt(values: string[]): string {
   const latest = values
-    .map((value) => Date.parse(value))
-    .filter((value) => Number.isFinite(value))
+    .map((value) => timestampMs(value))
+    .filter((value): value is number => value !== null)
     .sort((a, b) => b - a)[0];
   return latest === undefined ? checkedAt() : new Date(latest).toISOString();
 }
@@ -125,16 +139,16 @@ function hasUnknownCooldownSignal(entry: Record<string, unknown>): boolean {
 function isoDateTimeValue(value: unknown): string | null {
   const raw = stringValue(value);
   if (!raw) return null;
-  const timestamp = Date.parse(raw);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+  const timestamp = timestampMs(raw);
+  return timestamp !== null ? new Date(timestamp).toISOString() : null;
 }
 
 function latestFutureIso(values: Array<string | null>, now: number): string | null {
   const futureTimes = values
     .flatMap((value) => {
       if (!value) return [];
-      const parsed = Date.parse(value);
-      return Number.isFinite(parsed) && parsed > now ? [parsed] : [];
+      const parsed = timestampMs(value);
+      return parsed !== null && parsed > now ? [parsed] : [];
     })
     .sort((a, b) => b - a);
   return futureTimes[0] ? new Date(futureTimes[0]).toISOString() : null;

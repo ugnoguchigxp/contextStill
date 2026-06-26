@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
-  type CompileRunEpisodeFeedbackResult,
   type CompileRunDetail,
+  type CompileRunEpisodeFeedbackResult,
   type CompileRunRankingTrace,
   compileRunDetailSchema,
   compileRunRankingTraceSchema,
@@ -1375,7 +1375,19 @@ export async function listRecentContextCompileTaskTracesSqlite(input: {
 
 function normalizeIsoString(value: unknown): string | null {
   if (typeof value !== "string" || value.trim().length === 0) return null;
-  const parsed = new Date(value);
+  const trimmed = value.trim();
+  const unixMs = trimmed.match(/^unix-ms:(\d+)$/);
+  if (unixMs) {
+    const parsedMillis = Number(unixMs[1]);
+    if (Number.isSafeInteger(parsedMillis)) {
+      const parsedUnix = new Date(parsedMillis);
+      return Number.isNaN(parsedUnix.getTime()) ? null : parsedUnix.toISOString();
+    }
+  }
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const parsed = new Date(normalized);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 

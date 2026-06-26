@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { formatCheckedAt } from "@/lib/admin-formatters";
-import { useTimezone } from "@/lib/timezone";
+import { parseTimestamp, useTimezone } from "@/lib/timezone";
 import { useQuery } from "@tanstack/react-query";
 import React from "react";
 import {
@@ -21,9 +21,8 @@ type OverviewAccent = "emerald" | "cyan" | "violet";
 function latestCheckedAt(values: Array<string | undefined>): string | undefined {
   const latest = values
     .flatMap((value) => {
-      if (!value) return [];
-      const parsed = Date.parse(value);
-      return Number.isFinite(parsed) ? [parsed] : [];
+      const parsed = parseTimestamp(value);
+      return parsed ? [parsed.getTime()] : [];
     })
     .sort((a, b) => b - a)[0];
   return latest === undefined ? undefined : new Date(latest).toISOString();

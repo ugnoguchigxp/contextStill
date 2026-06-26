@@ -237,6 +237,13 @@ function toIso(value: unknown): string {
   }
   if (typeof value === "string") {
     let str = value.trim();
+    const unixMillis = str.startsWith("unix-ms:")
+      ? Number(str.slice("unix-ms:".length))
+      : Number.NaN;
+    if (Number.isFinite(unixMillis)) {
+      const parsedUnix = new Date(unixMillis);
+      if (!Number.isNaN(parsedUnix.getTime())) return parsedUnix.toISOString();
+    }
     if (!str.endsWith("Z") && !str.includes("+") && !/[-+]\d{2}:?\d{2}$/.test(str)) {
       str = str.replace(" ", "T");
       if (!str.includes("T")) {

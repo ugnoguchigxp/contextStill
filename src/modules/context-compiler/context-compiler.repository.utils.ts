@@ -22,13 +22,21 @@ export function normalizeCompileRunSource(value: unknown): CompileRunSource {
 
 export function normalizeDate(value: unknown): Date {
   if (value instanceof Date) return value;
+  if (typeof value === "number") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
   if (typeof value === "string") {
-    const unixMs = value.match(/^unix-ms:(\d+)$/);
+    const trimmed = value.trim();
+    const unixMs = trimmed.match(/^unix-ms:(\d+)$/);
     if (unixMs) {
       const parsedMillis = Number(unixMs[1]);
       if (Number.isSafeInteger(parsedMillis)) return new Date(parsedMillis);
     }
-    const parsed = new Date(value);
+    const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+      ? `${trimmed.replace(" ", "T")}Z`
+      : trimmed;
+    const parsed = new Date(normalized);
     if (!Number.isNaN(parsed.getTime())) return parsed;
   }
   return new Date(0);
