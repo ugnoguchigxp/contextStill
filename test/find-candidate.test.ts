@@ -17,8 +17,7 @@ type RuntimeRouteMock = {
 const mocks = vi.hoisted(() => ({
   getDistillationTargetStateById: vi.fn(),
   readFileDomain: vi.fn(),
-  readVibeMemoryByTokenWindow: vi.fn(),
-  getVibeMemoryDescriptor: vi.fn(),
+  readFilteredVibeMemoryForCandidateWindow: vi.fn(),
   runDistillationCompletion: vi.fn(),
   resolveDistillationModel: vi.fn(() => "test-model"),
   resolveRouteModelForProvider: vi.fn(
@@ -62,9 +61,8 @@ vi.mock("../src/modules/readFile/domain.js", () => ({
   readFileDomain: mocks.readFileDomain,
 }));
 
-vi.mock("../src/modules/memoryReader/reader.service.js", () => ({
-  readVibeMemoryByTokenWindow: mocks.readVibeMemoryByTokenWindow,
-  getVibeMemoryDescriptor: mocks.getVibeMemoryDescriptor,
+vi.mock("../src/modules/findCandidate/vibe-memory-filter.js", () => ({
+  readFilteredVibeMemoryForCandidateWindow: mocks.readFilteredVibeMemoryForCandidateWindow,
 }));
 
 vi.mock("../src/modules/distillation/distillation-runtime.service.js", () => ({
@@ -152,7 +150,6 @@ describe("runFindCandidate", () => {
     mocks.insertFindCandidateResult.mockResolvedValue({ id: "candidate-1" });
     mocks.getEpisodeCardBySource.mockResolvedValue(null);
     mocks.createEpisodeCard.mockResolvedValue({ id: "episode-1" });
-    mocks.getVibeMemoryDescriptor.mockResolvedValue(null);
   });
 
   test("provides only the target reader tool and records reads through the executor", async () => {
@@ -479,14 +476,7 @@ describe("runFindCandidate", () => {
       sourceUri: "vibe_memory:memory-1",
       metadata: { sessionTitle: "Rust daemon migration workbook" },
     });
-    mocks.getVibeMemoryDescriptor.mockResolvedValue({
-      id: "memory-1",
-      sessionId: "session-1",
-      metadata: { title: "Lower priority memory title" },
-      subject: "Lower priority subject",
-      intent: null,
-    });
-    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+    mocks.readFilteredVibeMemoryForCandidateWindow.mockResolvedValue({
       content:
         "ASSISTANT: For memoryRouter distillation checks, inspect launchd, logs, queue, and DB before changing code.",
       totalTokens: 24,
@@ -519,18 +509,17 @@ describe("runFindCandidate", () => {
       memoryReaderMode: "original",
     });
 
-    expect(mocks.readVibeMemoryByTokenWindow).toHaveBeenCalledWith({
+    expect(mocks.readFilteredVibeMemoryForCandidateWindow).toHaveBeenCalledWith({
       vibeMemoryId: "memory-1",
       fromToken: 0,
       readTokens: 50,
-      mode: "original",
     });
     expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
       expect.objectContaining({
         messages: expect.arrayContaining([
           expect.objectContaining({
             role: "system",
-            content: expect.stringContaining("vibe memory の content"),
+            content: expect.stringContaining("filtered vibe memory content"),
           }),
           expect.objectContaining({
             role: "system",
@@ -559,13 +548,64 @@ describe("runFindCandidate", () => {
     expect(mocks.createEpisodeCard).not.toHaveBeenCalled();
   });
 
+  test("does not use chunked candidate generation for vibe memory even when internal chunking is enabled", async () => {
+    groupedConfig.distillation.internalChunkedDistillationEnabled = true;
+    mocks.getDistillationTargetStateById.mockResolvedValue({
+      id: "target-vibe",
+      targetKind: "vibe_memory",
+      targetKey: "memory-1",
+    });
+    mocks.readFilteredVibeMemoryForCandidateWindow.mockResolvedValue({
+      content:
+        "[filtered_vibe_memory]\n[messages]\nASSISTANT: Queue stalled because the stale worker held a lease.",
+      totalTokens: 18,
+      from: 0,
+      toExclusive: 18,
+      returnedTokens: 18,
+    });
+    mocks.runDistillationCompletion.mockResolvedValue({
+      content: JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            polarity: "negative",
+            title: "Do not trust queue counts without worker ownership",
+            content:
+              "When queue processing stalls, verify live worker ownership and stale leases before treating queue counts as progress.",
+          },
+        ],
+      }),
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runFindCandidate({
+      targetStateId: "target-vibe",
+      callerMode: "storage",
+      provider: "local-llm",
+    });
+
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(1);
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        usageSource: "find-candidate",
+      }),
+    );
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        title: "Do not trust queue counts without worker ownership",
+      }),
+    ]);
+  });
+
   test("does not write a vibe memory episode for cli_text unless requested", async () => {
     mocks.getDistillationTargetStateById.mockResolvedValue({
       id: "target-vibe",
       targetKind: "vibe_memory",
       targetKey: "memory-1",
     });
-    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+    mocks.readFilteredVibeMemoryForCandidateWindow.mockResolvedValue({
       content: "ASSISTANT: task completed with no durable candidate.",
       totalTokens: 12,
       from: 0,
@@ -594,7 +634,7 @@ describe("runFindCandidate", () => {
       targetKind: "vibe_memory",
       targetKey: "memory-1",
     });
-    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+    mocks.readFilteredVibeMemoryForCandidateWindow.mockResolvedValue({
       content: "ASSISTANT: inspect logs and DB before changing queue code.",
       totalTokens: 12,
       from: 0,
@@ -624,14 +664,7 @@ describe("runFindCandidate", () => {
       targetKind: "vibe_memory",
       targetKey: "memory-1",
     });
-    mocks.getVibeMemoryDescriptor.mockResolvedValue({
-      id: "memory-1",
-      sessionId: "session-1",
-      metadata: { title: "Queue recovery investigation" },
-      subject: null,
-      intent: null,
-    });
-    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+    mocks.readFilteredVibeMemoryForCandidateWindow.mockResolvedValue({
       content: "ASSISTANT: inspect logs and DB before changing queue code.",
       totalTokens: 12,
       from: 0,
@@ -661,7 +694,7 @@ describe("runFindCandidate", () => {
       targetKey: "memory-1",
     });
     mocks.getEpisodeCardBySource.mockResolvedValue({ id: "episode-existing" });
-    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+    mocks.readFilteredVibeMemoryForCandidateWindow.mockResolvedValue({
       content: "ASSISTANT: existing task episode should be reused.",
       totalTokens: 12,
       from: 0,
@@ -695,7 +728,7 @@ describe("runFindCandidate", () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: "episode-concurrent" });
     mocks.createEpisodeCard.mockRejectedValueOnce(new Error("duplicate key value"));
-    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+    mocks.readFilteredVibeMemoryForCandidateWindow.mockResolvedValue({
       content: "ASSISTANT: concurrent task episode should be reused after insert race.",
       totalTokens: 12,
       from: 0,
@@ -719,213 +752,13 @@ describe("runFindCandidate", () => {
     expect(mocks.getEpisodeCardBySource).not.toHaveBeenCalled();
   });
 
-  test("uses internal chunked candidate generation for vibe memory when enabled", async () => {
-    groupedConfig.distillation.internalChunkedDistillationEnabled = true;
-    mocks.getDistillationTargetStateById.mockResolvedValue({
-      id: "target-vibe",
-      targetKind: "vibe_memory",
-      targetKey: "memory-1",
-    });
-    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
-      content: "Queue stalled because the stale worker held a lease. Restart fixed processing.",
-      totalTokens: 18,
-      from: 0,
-      toExclusive: 18,
-      returnedTokens: 18,
-    });
-    mocks.runDistillationCompletion.mockImplementation(async (_request, options) => {
-      if (options.usageSource === "find-candidate:semantic-chunk") {
-        return {
-          content: JSON.stringify([
-            {
-              chunkIndex: 0,
-              sourceStartOffset: 0,
-              sourceEndOffset: 74,
-              eventIds: ["memory_reader:initial"],
-              taskBoundaryKind: "failure_resolution",
-              title: "Queue stale worker recovery",
-              boundaryReason: "The chunk contains cause and recovery.",
-              expectedOutputs: ["candidate"],
-              openBoundary: false,
-            },
-          ]),
-          toolEvents: [],
-          messages: [],
-        };
-      }
-      return {
-        content: JSON.stringify({
-          candidates: [
-            {
-              type: "rule",
-              polarity: "negative",
-              title: "Do not trust queue counts without worker ownership",
-              content:
-                "When queue processing stalls, verify live worker ownership and stale leases before treating queue counts as progress.",
-            },
-          ],
-        }),
-        toolEvents: [],
-        messages: [],
-      };
-    });
-
-    const result = await runFindCandidate({
-      targetStateId: "target-vibe",
-      callerMode: "storage",
-      provider: "local-llm",
-    });
-
-    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(2);
-    expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        messages: expect.arrayContaining([
-          expect.objectContaining({
-            content: expect.stringContaining("findCandidate chunk planner"),
-          }),
-        ]),
-      }),
-      expect.objectContaining({
-        usageSource: "find-candidate:semantic-chunk",
-        enableTools: false,
-      }),
-    );
-    expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        messages: expect.arrayContaining([
-          expect.objectContaining({
-            content: expect.stringContaining("Source chunk:"),
-          }),
-        ]),
-      }),
-      expect.objectContaining({
-        usageSource: "find-candidate:chunk-generation",
-        enableTools: false,
-      }),
-    );
-    expect(result.candidates).toEqual([
-      expect.objectContaining({
-        type: "rule",
-        polarity: "negative",
-        title: "Do not trust queue counts without worker ownership",
-      }),
-    ]);
-    expect(result.insertedIds).toEqual(["candidate-1"]);
-    expect(result.readRanges).toEqual([{ from: 0, toExclusive: 18 }]);
-    expect(mocks.recordAuditLogSafe).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventType: "FIND_CANDIDATE_COMPLETED",
-        payload: expect.objectContaining({
-          findCandidate: expect.objectContaining({
-            pipelineVersion: "internal-chunked-v1",
-            semanticChunkCount: 1,
-            dedupedCandidateCount: 1,
-          }),
-        }),
-      }),
-    );
-  });
-
-  test("reads multiple vibe memory windows before internal chunked candidate generation", async () => {
-    groupedConfig.distillation.internalChunkedDistillationEnabled = true;
-    mocks.getDistillationTargetStateById.mockResolvedValue({
-      id: "target-vibe",
-      targetKind: "vibe_memory",
-      targetKey: "memory-1",
-    });
-    mocks.readVibeMemoryByTokenWindow
-      .mockResolvedValueOnce({
-        content: "The first queue phase selected a worker and left an active lease.",
-        totalTokens: 100,
-        from: 0,
-        toExclusive: 50,
-        returnedTokens: 50,
-      })
-      .mockResolvedValueOnce({
-        content: "The later phase proved that the lease was stale and required requeue.",
-        totalTokens: 100,
-        from: 50,
-        toExclusive: 100,
-        returnedTokens: 50,
-      });
-    mocks.runDistillationCompletion.mockImplementation(async (_request, options) => {
-      if (options.usageSource === "find-candidate:semantic-chunk") {
-        return { content: "[]", toolEvents: [], messages: [] };
-      }
-      return {
-        content: JSON.stringify({
-          candidates: [
-            {
-              type: "rule",
-              polarity: "negative",
-              title: "Stale leases must be verified",
-              content:
-                "When a later queue phase proves an active lease is stale, requeue instead of treating the first worker claim as progress.",
-            },
-          ],
-        }),
-        toolEvents: [],
-        messages: [],
-      };
-    });
-
-    const result = await runFindCandidate({
-      targetStateId: "target-vibe",
-      callerMode: "storage",
-      provider: "local-llm",
-      readTokens: 50,
-      maxReads: 2,
-    });
-
-    expect(mocks.readVibeMemoryByTokenWindow).toHaveBeenCalledTimes(2);
-    expect(mocks.readVibeMemoryByTokenWindow).toHaveBeenNthCalledWith(1, {
-      vibeMemoryId: "memory-1",
-      fromToken: 0,
-      readTokens: 50,
-      mode: "compressed",
-    });
-    expect(mocks.readVibeMemoryByTokenWindow).toHaveBeenNthCalledWith(2, {
-      vibeMemoryId: "memory-1",
-      fromToken: 50,
-      readTokens: 50,
-      mode: "compressed",
-    });
-    expect(result.readRanges).toEqual([
-      { from: 0, toExclusive: 50 },
-      { from: 50, toExclusive: 100 },
-    ]);
-    expect(result.candidates).toEqual([
-      expect.objectContaining({
-        title: "Stale leases must be verified",
-        polarity: "negative",
-      }),
-    ]);
-    expect(mocks.recordAuditLogSafe).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventType: "FIND_CANDIDATE_COMPLETED",
-        payload: expect.objectContaining({
-          findCandidate: expect.objectContaining({
-            pipelineVersion: "internal-chunked-v1",
-            readWindowCount: 2,
-            readRanges: [
-              { from: 0, toExclusive: 50 },
-              { from: 50, toExclusive: 100 },
-            ],
-          }),
-        }),
-      }),
-    );
-  });
-
   test("allows additional vibe memory reads after the deterministic first read", async () => {
     mocks.getDistillationTargetStateById.mockResolvedValue({
       id: "target-vibe",
       targetKind: "vibe_memory",
       targetKey: "memory-1",
     });
-    mocks.readVibeMemoryByTokenWindow
+    mocks.readFilteredVibeMemoryForCandidateWindow
       .mockResolvedValueOnce({
         content: "first memory window",
         totalTokens: 100,
@@ -967,7 +800,7 @@ describe("runFindCandidate", () => {
       maxReads: 2,
     });
 
-    expect(mocks.readVibeMemoryByTokenWindow).toHaveBeenCalledTimes(2);
+    expect(mocks.readFilteredVibeMemoryForCandidateWindow).toHaveBeenCalledTimes(2);
     expect(result.readRanges).toEqual([
       { from: 0, toExclusive: 50 },
       { from: 50, toExclusive: 100 },

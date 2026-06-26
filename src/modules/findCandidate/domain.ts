@@ -11,15 +11,7 @@ import {
   runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationToolCall } from "../distillation/distillation-tools.service.js";
-import {
-  buildBoundedSourceWindows,
-  deterministicSemanticChunksFromWindows,
-  type BoundedSourceWindow,
-  type SemanticChunk,
-  validateSemanticChunks,
-} from "../distillation/source-window.js";
 import { getDistillationTargetStateById } from "../distillationTarget/repository.js";
-import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
 import { readFileDomain } from "../readFile/domain.js";
 import {
   ensureRuntimeSettingsLoaded,
@@ -34,6 +26,10 @@ import {
   type CandidateRecord,
   insertFindCandidateResult,
 } from "./repository.js";
+import {
+  type FilteredVibeMemoryStats,
+  readFilteredVibeMemoryForCandidateWindow,
+} from "./vibe-memory-filter.js";
 
 export type FindCandidateCallerMode = "cli_text" | "storage";
 
@@ -83,6 +79,7 @@ type ReaderWindowMetadata = {
   from: number;
   toExclusive: number;
   returnedTokens: number;
+  filterStats?: FilteredVibeMemoryStats;
 };
 
 function parseToolArgs(raw: string): Record<string, unknown> {
@@ -136,20 +133,15 @@ function readerWindowMetadata(value: unknown): ReaderWindowMetadata | null {
   const toExclusive = asInt(metadata.toExclusive, -1);
   const returnedTokens = asInt(metadata.returnedTokens, -1);
   if (totalTokens < 0 || from < 0 || toExclusive < from || returnedTokens < 0) return null;
-  return { totalTokens, from, toExclusive, returnedTokens };
-}
-
-function joinVibeMemoryWindowsForChunking(
-  windows: Array<{ content: string; metadata: ReaderWindowMetadata }>,
-): string {
-  return windows
-    .map((window, index) =>
-      [
-        `[memory_reader window ${index + 1}: tokens ${window.metadata.from}-${window.metadata.toExclusive}]`,
-        window.content,
-      ].join("\n"),
-    )
-    .join("\n\n");
+  const filterStats = asRecord(metadata.filterStats);
+  return {
+    totalTokens,
+    from,
+    toExclusive,
+    returnedTokens,
+    filterStats:
+      Object.keys(filterStats).length > 0 ? (filterStats as FilteredVibeMemoryStats) : undefined,
+  };
 }
 
 function isToolLoopMaxRoundsError(error: unknown): boolean {
@@ -228,7 +220,7 @@ function buildToolDefinitionForTarget(
     function: {
       name: "memory_reader",
       description:
-        "Read more content from the current vibe memory by token window. Use only when additional content is required.",
+        "Read more filtered content from the current vibe memory by token window. Use only when additional content is required.",
       parameters: {
         type: "object",
         properties: {
@@ -239,7 +231,8 @@ function buildToolDefinitionForTarget(
           readTokens: { type: "number", description: "Token length to read." },
           mode: {
             type: "string",
-            description: "Reader mode: compressed or original.",
+            description:
+              "Ignored for findCandidate vibe memory reads; content is always deterministically filtered.",
             enum: ["compressed", "original"],
           },
         },
@@ -312,13 +305,14 @@ function wikiSystemPrompt(): string {
 
 function vibeMemorySystemPrompt(): string {
   return [
-    "あなたの仕事は vibe memory の content と agent diff だけを見て、再利用可能な知識候補を選ぶことです。",
+    "あなたの仕事は filtered vibe memory content と agent diff だけを見て、再利用可能な知識候補を選ぶことです。",
+    "filtered content は機械的に不要部分を削った transcript です。source にない intent、summary、decision、task boundary を補完しないでください。",
     "system/user prompt、tool 名、JSON schema、進行報告だけの会話文は知識候補にしないでください。",
     "vibe memory は作業ログなので、永続的なルール、再利用できる手順、レビュー観点、復旧手順、リポジトリ固有の運用知だけを候補にしてください。",
     "単なる一回限りの実行結果、途中経過、感想、明らかに古い仮説、未確認の推測は候補にしないでください。",
     "agent diff がある場合は、diff から読み取れる実装上の不変条件や手順だけを候補にしてください。",
     "ただし、会話が進捗報告中心でも、最終的に原因・修正・検証・ユーザーの継続的な preference が確認できる場合は候補化してください。",
-    "追加情報が必要な場合だけ memory_reader tool を使って次の token window を読んでください。",
+    "追加情報が必要な場合だけ memory_reader tool を使って次の filtered token window を読んでください。",
     ...reusableKnowledgeSignals(),
     ...commonCandidateRules(),
   ].join("\n");
@@ -339,8 +333,8 @@ function wikiUserPrompt(): string {
 
 function vibeMemoryInitialUserPrompt(): string {
   return [
-    "これから memory_reader tool で最初の vibe memory window を読みます。",
-    "tool result に含まれる memory content と diff だけを source として扱ってください。",
+    "これから memory_reader tool で最初の filtered vibe memory window を読みます。",
+    "tool result に含まれる filtered memory content と diff だけを source として扱ってください。",
     "この user prompt や system prompt の文言を候補化しないでください。",
   ].join("\n");
 }
@@ -410,292 +404,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function textForByteRange(content: string, startOffset: number, endOffset: number): string {
-  return Buffer.from(content, "utf8").subarray(startOffset, endOffset).toString("utf8");
-}
-
-function emptyCandidateDiagnostics(): StorageCandidateParseDiagnostics {
-  return {
-    rawWasEmptyArray: false,
-    rawCandidateLikeCount: 0,
-    droppedMissingType: 0,
-    droppedMissingPolarity: 0,
-    droppedNeutral: 0,
-    droppedNegativeProcedure: 0,
-    droppedInvalidProcedureShape: 0,
-    plainTextFallbackUsed: false,
-  };
-}
-
-function mergeCandidateDiagnostics(
-  target: StorageCandidateParseDiagnostics,
-  next: StorageCandidateParseDiagnostics,
-): StorageCandidateParseDiagnostics {
-  return {
-    rawWasEmptyArray: target.rawWasEmptyArray && next.rawWasEmptyArray,
-    rawCandidateLikeCount: target.rawCandidateLikeCount + next.rawCandidateLikeCount,
-    droppedMissingType: target.droppedMissingType + next.droppedMissingType,
-    droppedMissingPolarity: target.droppedMissingPolarity + next.droppedMissingPolarity,
-    droppedNeutral: target.droppedNeutral + next.droppedNeutral,
-    droppedNegativeProcedure: target.droppedNegativeProcedure + next.droppedNegativeProcedure,
-    droppedInvalidProcedureShape:
-      target.droppedInvalidProcedureShape + next.droppedInvalidProcedureShape,
-    plainTextFallbackUsed: target.plainTextFallbackUsed || next.plainTextFallbackUsed,
-  };
-}
-
-function dedupeCandidates(candidates: CandidateRecord[]): CandidateRecord[] {
-  const seen = new Set<string>();
-  const deduped: CandidateRecord[] = [];
-  for (const candidate of candidates) {
-    const key = [
-      candidate.type,
-      candidate.polarity,
-      candidate.title.trim().toLowerCase(),
-      candidate.content.trim().toLowerCase(),
-    ].join("\n");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(candidate);
-  }
-  return deduped;
-}
-
-function buildCandidateSemanticChunkMessages(params: {
-  target: FindCandidateTarget;
-  windows: BoundedSourceWindow[];
-}): DistillationMessage[] {
-  return [
-    {
-      role: "system",
-      content: [
-        "あなたは ContextStill の findCandidate chunk planner です。",
-        "vibe memory の source window を、再利用可能な knowledge candidate を見つけやすい semantic chunk に分割します。",
-        "CandidateRecord は作らず、境界情報だけを JSON array で返してください。",
-        "固定長分割ではなく、依頼から結果、調査、実装、検証、失敗解消、判断転換のまとまりを優先してください。",
-        "chunk は必ず提示された source window の byte range 内に収めてください。",
-        "JSON 以外の説明文や Markdown は返さないでください。",
-      ].join("\n"),
-    },
-    {
-      role: "user",
-      content: [
-        `Target key: ${params.target.targetKey}`,
-        `Source URI: ${params.target.sourceUri}`,
-        "",
-        "次の shape の JSON array を返してください:",
-        "{",
-        '  "chunkIndex": 0,',
-        '  "sourceStartOffset": 0,',
-        '  "sourceEndOffset": 100,',
-        '  "eventIds": ["..."],',
-        '  "taskBoundaryKind": "request_to_result|investigation|implementation|verification|failure_resolution|decision_turn|misc",',
-        '  "title": "...",',
-        '  "boundaryReason": "...",',
-        '  "expectedOutputs": ["candidate"],',
-        '  "openBoundary": false',
-        "}",
-        "",
-        "Source windows:",
-        JSON.stringify(
-          params.windows.map((window) => ({
-            windowIndex: window.windowIndex,
-            sourceStartOffset: window.sourceStartOffset,
-            sourceEndOffset: window.sourceEndOffset,
-            eventIds: window.eventIds,
-            text: window.text,
-          })),
-        ),
-      ].join("\n"),
-    },
-  ];
-}
-
-function buildCandidateGenerationMessages(params: {
-  target: FindCandidateTarget;
-  chunk: SemanticChunk;
-  chunkText: string;
-}): DistillationMessage[] {
-  return [
-    {
-      role: "system",
-      content: systemPromptForTarget(params.target.targetKind),
-    },
-    {
-      role: "user",
-      content: [
-        "次の semantic chunk だけを source として、再利用可能な knowledge candidate を抽出してください。",
-        "source にない事実は補完しないでください。",
-        "追加 reader tool は使えません。候補 JSON だけを返してください。",
-        "",
-        `Chunk title: ${params.chunk.title}`,
-        `Boundary kind: ${params.chunk.taskBoundaryKind}`,
-        `Boundary reason: ${params.chunk.boundaryReason}`,
-        `Source byte range: ${params.chunk.sourceStartOffset}-${params.chunk.sourceEndOffset}`,
-        "",
-        "Source chunk:",
-        params.chunkText,
-      ].join("\n"),
-    },
-  ];
-}
-
-async function createFindCandidateSemanticChunks(params: {
-  target: FindCandidateTarget;
-  windows: BoundedSourceWindow[];
-  model: string;
-  provider: DistillationProviderSetting;
-  fallbackOrder: Array<Exclude<DistillationProviderSetting, "auto">>;
-  azureDeploymentSlots?: number[];
-  localLlmModel?: string;
-  signal?: AbortSignal;
-}): Promise<SemanticChunk[]> {
-  if (params.windows.length === 0) return [];
-  try {
-    const completion = await runDistillationCompletion(
-      {
-        model: params.model,
-        maxTokens: 2000,
-        messages: buildCandidateSemanticChunkMessages({
-          target: params.target,
-          windows: params.windows,
-        }),
-      },
-      {
-        providerSetting: params.provider,
-        fallbackOrder: params.fallbackOrder,
-        azureDeploymentSlots: params.azureDeploymentSlots,
-        localLlmModel: params.localLlmModel,
-        enableTools: false,
-        maxToolRounds: 0,
-        usageSource: "find-candidate:semantic-chunk",
-        timeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
-        blankResponseReminder: [
-          "空の応答です。semantic chunk の JSON array だけを返してください。",
-        ],
-        signal: params.signal,
-      },
-    );
-    const parsed = parseLlmJsonLike(completion.content)?.value;
-    const validated = validateSemanticChunks({
-      windows: params.windows,
-      chunks: parsed,
-    });
-    return validated.length > 0
-      ? validated
-      : deterministicSemanticChunksFromWindows(params.windows);
-  } catch (error) {
-    if (params.signal?.aborted) throw error;
-    return deterministicSemanticChunksFromWindows(params.windows);
-  }
-}
-
-async function runChunkedVibeMemoryFindCandidate(params: {
-  target: FindCandidateTarget;
-  content: string;
-  model: string;
-  provider: DistillationProviderSetting;
-  fallbackOrder: Array<Exclude<DistillationProviderSetting, "auto">>;
-  azureDeploymentSlots?: number[];
-  localLlmModel?: string;
-  signal?: AbortSignal;
-  readWindowCount?: number;
-  readRanges?: Array<{ from: number; toExclusive: number }>;
-}): Promise<{
-  candidates: CandidateRecord[];
-  parseDiagnostics: StorageCandidateParseDiagnostics;
-  llmOutput: string;
-  metadata: Record<string, unknown>;
-}> {
-  const sourceBytes = Buffer.byteLength(params.content, "utf8");
-  const windows = buildBoundedSourceWindows({
-    content: params.content,
-    events:
-      sourceBytes > 0
-        ? [
-            {
-              id: "memory_reader:initial",
-              startOffset: 0,
-              endOffset: sourceBytes,
-              createdAt: new Date(0).toISOString(),
-            },
-          ]
-        : [],
-  });
-  const chunks = await createFindCandidateSemanticChunks({
-    target: params.target,
-    windows,
-    model: params.model,
-    provider: params.provider,
-    fallbackOrder: params.fallbackOrder,
-    azureDeploymentSlots: params.azureDeploymentSlots,
-    localLlmModel: params.localLlmModel,
-    signal: params.signal,
-  });
-  let diagnostics: StorageCandidateParseDiagnostics | null = null;
-  const outputs: string[] = [];
-  const candidates: CandidateRecord[] = [];
-  for (const chunk of chunks) {
-    if (!chunk.expectedOutputs.some((output) => output === "candidate" || output === "both")) {
-      continue;
-    }
-    const chunkText = textForByteRange(
-      params.content,
-      chunk.sourceStartOffset,
-      chunk.sourceEndOffset,
-    );
-    if (chunkText.trim().length === 0) continue;
-    const completion = await runDistillationCompletion(
-      {
-        model: params.model,
-        maxTokens: candidateOutputMaxTokens(),
-        messages: buildCandidateGenerationMessages({
-          target: params.target,
-          chunk,
-          chunkText,
-        }),
-      },
-      {
-        providerSetting: params.provider,
-        fallbackOrder: params.fallbackOrder,
-        azureDeploymentSlots: params.azureDeploymentSlots,
-        localLlmModel: params.localLlmModel,
-        enableTools: false,
-        maxToolRounds: 0,
-        usageSource: "find-candidate:chunk-generation",
-        timeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
-        blankResponseReminder: [
-          '空の応答です。[] または {"type":"rule|procedure","polarity":"positive|negative","title":"...","content":"..."} を返してください。',
-        ],
-        signal: params.signal,
-      },
-    );
-    const output = completion.content.trim();
-    outputs.push(output);
-    const parsed = parseStorageCandidatesWithDiagnostics(output);
-    diagnostics = diagnostics
-      ? mergeCandidateDiagnostics(diagnostics, parsed.diagnostics)
-      : parsed.diagnostics;
-    candidates.push(...parsed.candidates.map(normalizeCandidateForPipeline));
-  }
-  const deduped = dedupeCandidates(candidates);
-  return {
-    candidates: deduped,
-    parseDiagnostics: diagnostics ?? emptyCandidateDiagnostics(),
-    llmOutput: outputs.join("\n"),
-    metadata: {
-      pipelineVersion: "internal-chunked-v1",
-      stage: "findCandidate",
-      sourceWindowCount: windows.length,
-      semanticChunkCount: chunks.length,
-      readWindowCount: params.readWindowCount ?? 1,
-      readRanges: params.readRanges ?? [],
-      generatedCandidateCount: candidates.length,
-      dedupedCandidateCount: deduped.length,
-    },
-  };
 }
 
 function buildInitialVibeMemoryToolCall(input: FindCandidateInput): DistillationToolCall {
@@ -860,16 +568,10 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       };
     }
 
-    const modeRaw = typeof args.mode === "string" ? args.mode.trim() : "";
-    const mode =
-      modeRaw === "original" || modeRaw === "compressed"
-        ? modeRaw
-        : (input.memoryReaderMode ?? "compressed");
-    const result = await readVibeMemoryByTokenWindow({
+    const result = await readFilteredVibeMemoryForCandidateWindow({
       vibeMemoryId: target.targetKey,
       fromToken: Math.max(0, asInt(args.fromToken, asInt(input.fromToken, 0))),
       readTokens: Math.max(1, asInt(args.readTokens, readTokens(input))),
-      mode,
     });
     reads += 1;
     readLog.push({ from: result.from, toExclusive: result.toExclusive });
@@ -883,6 +585,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         from: result.from,
         toExclusive: result.toExclusive,
         returnedTokens: result.returnedTokens,
+        filterStats: result.stats,
       },
     };
   };
@@ -904,7 +607,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
     let candidates: CandidateRecord[] = [];
     let parseDiagnostics: StorageCandidateParseDiagnostics | undefined;
     let readerUsedRecorded = false;
-    let chunkedPipelineMetadata: Record<string, unknown> | undefined;
+    let latestFilterStats: FilteredVibeMemoryStats | undefined;
 
     const recordReaderUsed = async (metadata: Record<string, unknown> = {}) => {
       if (readerUsedRecorded || readLog.length === 0) return;
@@ -966,129 +669,67 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       if (!initialToolResult.ok) {
         throw new Error(initialToolResult.error ?? "initial memory_reader failed");
       }
-      if (groupedConfig.distillation.internalChunkedDistillationEnabled) {
-        const windowMetadata = readerWindowMetadata(initialToolResult.metadata);
-        const chunkWindows =
-          windowMetadata !== null
-            ? [{ content: initialToolResult.content, metadata: windowMetadata }]
-            : [];
-        while (chunkWindows.length > 0 && reads < readLimit) {
-          const previous = chunkWindows[chunkWindows.length - 1]?.metadata;
-          if (
-            !previous ||
-            previous.returnedTokens <= 0 ||
-            previous.toExclusive >= previous.totalTokens
-          ) {
-            break;
-          }
-          const nextToolCall: DistillationToolCall = {
-            id: `chunk-memory-reader-${chunkWindows.length + 1}`,
-            type: "function",
-            function: {
-              name: "memory_reader",
-              arguments: JSON.stringify({
-                fromToken: previous.toExclusive,
-                readTokens: readTokens(input),
-                mode: input.memoryReaderMode ?? "compressed",
-              }),
-            },
-          };
-          const nextToolResult = await toolExecutor(nextToolCall);
-          if (!nextToolResult.ok) {
-            throw new Error(nextToolResult.error ?? "chunk memory_reader failed");
-          }
-          const nextMetadata = readerWindowMetadata(nextToolResult.metadata);
-          if (!nextMetadata || nextMetadata.toExclusive <= previous.toExclusive) break;
-          chunkWindows.push({
-            content: nextToolResult.content,
-            metadata: nextMetadata,
-          });
-        }
-        const chunkedContent =
-          chunkWindows.length > 0
-            ? joinVibeMemoryWindowsForChunking(chunkWindows)
-            : initialToolResult.content;
-        const chunked = await runChunkedVibeMemoryFindCandidate({
-          target,
-          content: chunkedContent,
-          model,
-          provider,
-          fallbackOrder,
-          azureDeploymentSlots,
-          localLlmModel,
-          signal: input.signal,
-          readWindowCount: Math.max(1, chunkWindows.length),
-          readRanges: readLog,
-        });
-        llmOutput = chunked.llmOutput;
-        candidates = chunked.candidates;
-        parseDiagnostics = chunked.parseDiagnostics;
-        chunkedPipelineMetadata = chunked.metadata;
-        await recordReaderUsed({
-          initialRead: true,
-          reader: "memory_reader",
-          findCandidate: chunkedPipelineMetadata,
-        });
-      } else {
-        messages.push(
-          {
-            role: "assistant",
-            content: null,
-            tool_calls: [initialToolCall],
-          },
-          {
-            role: "tool",
-            tool_call_id: initialToolCall.id,
-            name: initialToolResult.name,
-            content: initialToolResult.content,
-          },
-          {
-            role: "user",
-            content: vibeMemoryAfterInitialReadPrompt(),
-          },
-        );
-        await recordReaderUsed({ initialRead: true, reader: "memory_reader" });
-      }
-    }
-
-    if (!chunkedPipelineMetadata) {
-      const completion = await runDistillationCompletion(
+      latestFilterStats = readerWindowMetadata(initialToolResult.metadata)?.filterStats;
+      messages.push(
         {
-          model,
-          maxTokens: candidateOutputMaxTokens(),
-          messages,
+          role: "assistant",
+          content: null,
+          tool_calls: [initialToolCall],
         },
         {
-          providerSetting: provider,
-          fallbackOrder,
-          azureDeploymentSlots,
-          localLlmModel,
-          toolDefinitions: [toolDefinition],
-          toolExecutor,
-          usageSource: "find-candidate",
-          enableTools: reads < readLimit,
-          maxToolRounds: Math.max(0, readLimit - reads),
-          timeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
-          requireToolCall:
-            (target.targetKind === "wiki_file" || target.targetKind === "web_ingest") &&
-            !deterministicInitialRead,
-          requireToolCallReminder: [
-            "まだ本文を読んでいません。",
-            "まず提供された reader tool を呼び出して本文 content を読んでください。",
-            "その後に候補のみを返してください。",
-          ],
-          blankResponseReminder: [
-            '空の応答です。[] または {"type":"rule|procedure","polarity":"positive|negative","title":"...","content":"..."} を返してください。',
-          ],
-          signal: input.signal,
+          role: "tool",
+          tool_call_id: initialToolCall.id,
+          name: initialToolResult.name,
+          content: initialToolResult.content,
+        },
+        {
+          role: "user",
+          content: vibeMemoryAfterInitialReadPrompt(),
         },
       );
-
-      llmOutput = completion.content.trim();
-      const parsed = parseStorageCandidatesWithDiagnostics(llmOutput);
-      parseDiagnostics = parsed.diagnostics;
-      candidates = parsed.candidates.map(normalizeCandidateForPipeline);
+      await recordReaderUsed({
+        initialRead: true,
+        reader: "memory_reader",
+        ...(latestFilterStats ? { filterStats: latestFilterStats } : {}),
+      });
     }
+
+    const completion = await runDistillationCompletion(
+      {
+        model,
+        maxTokens: candidateOutputMaxTokens(),
+        messages,
+      },
+      {
+        providerSetting: provider,
+        fallbackOrder,
+        azureDeploymentSlots,
+        localLlmModel,
+        toolDefinitions: [toolDefinition],
+        toolExecutor,
+        usageSource: "find-candidate",
+        enableTools: reads < readLimit,
+        maxToolRounds: Math.max(0, readLimit - reads),
+        timeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
+        requireToolCall:
+          (target.targetKind === "wiki_file" || target.targetKind === "web_ingest") &&
+          !deterministicInitialRead,
+        requireToolCallReminder: [
+          "まだ本文を読んでいません。",
+          "まず提供された reader tool を呼び出して本文 content を読んでください。",
+          "その後に候補のみを返してください。",
+        ],
+        blankResponseReminder: [
+          '空の応答です。[] または {"type":"rule|procedure","polarity":"positive|negative","title":"...","content":"..."} を返してください。',
+        ],
+        signal: input.signal,
+      },
+    );
+
+    llmOutput = completion.content.trim();
+    const parsed = parseStorageCandidatesWithDiagnostics(llmOutput);
+    parseDiagnostics = parsed.diagnostics;
+    candidates = parsed.candidates.map(normalizeCandidateForPipeline);
 
     if (readLog.length === 0) {
       throw new Error("findCandidate reader tool was not used");
@@ -1097,7 +738,11 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
     await recordReaderUsed();
     const noCandidateDiagnostics =
       candidates.length === 0
-        ? { parseDiagnostics, llmOutputPreview: llmOutputPreview(llmOutput) }
+        ? {
+            parseDiagnostics,
+            llmOutputPreview: llmOutputPreview(llmOutput),
+            ...(latestFilterStats ? { filterStats: latestFilterStats } : {}),
+          }
         : undefined;
 
     if (callerMode === "cli_text") {
@@ -1108,7 +753,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
           targetStateId: target.id,
           candidateCount: candidates.length,
           readCount: readLog.length,
-          ...(chunkedPipelineMetadata ? { findCandidate: chunkedPipelineMetadata } : {}),
+          ...(latestFilterStats ? { filterStats: latestFilterStats } : {}),
           ...(noCandidateDiagnostics ? { noCandidateDiagnostics } : {}),
         },
       });
@@ -1149,7 +794,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         targetStateId: target.id,
         candidateCount: candidates.length,
         insertedCount: insertedIds.length,
-        ...(chunkedPipelineMetadata ? { findCandidate: chunkedPipelineMetadata } : {}),
+        ...(latestFilterStats ? { filterStats: latestFilterStats } : {}),
         ...(noCandidateDiagnostics ? { noCandidateDiagnostics } : {}),
       },
     });

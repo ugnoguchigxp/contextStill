@@ -63,12 +63,18 @@ fn rust_agent_log_sync_imports_codex_jsonl_into_sqlite() {
         .query_row("select count(*) from vibe_memories", [], |row| row.get(0))
         .unwrap();
     assert_eq!(count, 1);
-    let queue_count: i64 = connection
+    let finding_queue_count: i64 = connection
         .query_row("select count(*) from finding_candidate_queue", [], |row| {
             row.get(0)
         })
         .unwrap();
-    assert_eq!(queue_count, 1);
+    assert_eq!(finding_queue_count, 0);
+    let episode_queue_count: i64 = connection
+        .query_row("select count(*) from episode_distiller_queue", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(episode_queue_count, 1);
 
     std::fs::remove_dir_all(&app_dir).unwrap();
 }

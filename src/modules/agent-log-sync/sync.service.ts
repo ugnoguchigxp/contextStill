@@ -6,7 +6,6 @@ import { db } from "../../db/client.js";
 import {
   agentDiffEntries,
   episodeDistillerQueue,
-  findingCandidateQueue,
   syncStates,
   vibeMemories,
 } from "../../db/schema.js";
@@ -233,7 +232,6 @@ async function syncAllAgentLogsSqlite(params: {
 
     let insertedMemories = 0;
     let insertedDiffs = 0;
-    const enqueuedFindingJobs: Array<{ id: string; sourceKey: string }> = [];
     const enqueuedEpisodeJobs: Array<{ id: string; sourceKey: string }> = [];
 
     sqlite.db.query("BEGIN IMMEDIATE").run();
@@ -298,52 +296,6 @@ async function syncAllAgentLogsSqlite(params: {
               now,
             );
           insertedMemories += 1;
-
-          const findingJobId = crypto.randomUUID();
-          sqlite.db
-            .query(
-              `
-              insert into finding_candidate_queue (
-                id, input_kind, source_kind, source_key, source_uri,
-                distillation_version, payload, metadata, priority, status, created_at, updated_at
-              ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `,
-            )
-            .run(
-              findingJobId,
-              "source_target",
-              "vibe_memory",
-              memoryId,
-              `vibe_memory:${memoryId}`,
-              APP_CONSTANTS.distillationTargetVersion,
-              JSON.stringify({
-                sourceType: "agent_log_sync",
-                sourceId: source.id,
-                memorySessionId,
-                chunkIndex,
-                dedupeKey,
-              }),
-              JSON.stringify({
-                sourceType: "agent_log_sync",
-                sourceId: source.id,
-                memorySessionId,
-                chunkIndex,
-                dedupeKey,
-                sessionTitle:
-                  typeof memoryMetadata.sessionTitle === "string"
-                    ? memoryMetadata.sessionTitle
-                    : undefined,
-                projectName:
-                  typeof memoryMetadata.projectName === "string"
-                    ? memoryMetadata.projectName
-                    : undefined,
-              }),
-              50,
-              "pending",
-              now,
-              now,
-            );
-          enqueuedFindingJobs.push({ id: findingJobId, sourceKey: memoryId });
 
           const episodeJobId = crypto.randomUUID();
           sqlite.db
@@ -475,19 +427,6 @@ async function syncAllAgentLogsSqlite(params: {
 
     params.summary.imported += insertedMemories;
     params.summary.insertedDiffs += insertedDiffs;
-    for (const job of enqueuedFindingJobs) {
-      await appendQueueEvent({
-        queueName: "findingCandidate",
-        queueJobId: job.id,
-        eventType: "enqueued",
-        message: "finding candidate enqueued from agent log sync",
-        metadata: {
-          sourceKind: "vibe_memory",
-          sourceKey: job.sourceKey,
-          inputKind: "source_target",
-        },
-      });
-    }
     for (const job of enqueuedEpisodeJobs) {
       await appendQueueEvent({
         queueName: "episodeDistiller",
@@ -650,7 +589,6 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
 
       let insertedMemories = 0;
       let insertedDiffs = 0;
-      const enqueuedFindingJobs: Array<{ id: string; sourceKey: string }> = [];
       const enqueuedEpisodeJobs: Array<{ id: string; sourceKey: string }> = [];
 
       await db.transaction(async (tx) => {
@@ -722,53 +660,6 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
             }
 
             insertedMemories += 1;
-
-            const [findingJob] = await tx
-              .insert(findingCandidateQueue)
-              .values({
-                inputKind: "source_target",
-                sourceKind: "vibe_memory",
-                sourceKey: inserted.id,
-                sourceUri: `vibe_memory:${inserted.id}`,
-                distillationVersion: APP_CONSTANTS.distillationTargetVersion,
-                payload: {
-                  sourceType: "agent_log_sync",
-                  sourceId: source.id,
-                  memorySessionId,
-                  chunkIndex,
-                  dedupeKey,
-                },
-                metadata: {
-                  sourceType: "agent_log_sync",
-                  sourceId: source.id,
-                  memorySessionId,
-                  chunkIndex,
-                  dedupeKey,
-                  sessionTitle:
-                    typeof memoryMetadata.sessionTitle === "string"
-                      ? memoryMetadata.sessionTitle
-                      : undefined,
-                  projectName:
-                    typeof memoryMetadata.projectName === "string"
-                      ? memoryMetadata.projectName
-                      : undefined,
-                },
-                priority: 50,
-                status: "pending",
-                updatedAt: new Date(),
-              })
-              .onConflictDoNothing({
-                target: [
-                  findingCandidateQueue.inputKind,
-                  findingCandidateQueue.sourceKind,
-                  findingCandidateQueue.sourceKey,
-                  findingCandidateQueue.distillationVersion,
-                ],
-              })
-              .returning({ id: findingCandidateQueue.id });
-            if (findingJob) {
-              enqueuedFindingJobs.push({ id: findingJob.id, sourceKey: inserted.id });
-            }
 
             const [episodeJob] = await tx
               .insert(episodeDistillerQueue)
@@ -868,19 +759,6 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
 
       summary.imported += insertedMemories;
       summary.insertedDiffs += insertedDiffs;
-      for (const job of enqueuedFindingJobs) {
-        await appendQueueEvent({
-          queueName: "findingCandidate",
-          queueJobId: job.id,
-          eventType: "enqueued",
-          message: "finding candidate enqueued from agent log sync",
-          metadata: {
-            sourceKind: "vibe_memory",
-            sourceKey: job.sourceKey,
-            inputKind: "source_target",
-          },
-        });
-      }
       for (const job of enqueuedEpisodeJobs) {
         await appendQueueEvent({
           queueName: "episodeDistiller",

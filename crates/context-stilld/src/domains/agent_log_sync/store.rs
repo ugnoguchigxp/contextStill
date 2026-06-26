@@ -111,14 +111,6 @@ pub(crate) fn store_source_result(
                 params![memory_id, content],
             )
             .ok();
-            enqueue_finding_candidate(
-                &tx,
-                &memory_id,
-                source_id,
-                &memory_session_id,
-                chunk_index,
-                &dedupe_key,
-            )?;
             enqueue_episode_distiller(
                 &tx,
                 &memory_id,
@@ -167,43 +159,6 @@ pub(crate) fn store_source_result(
         inserted_diffs: 0,
         last_synced_at: Some(synced_at),
     })
-}
-
-fn enqueue_finding_candidate(
-    tx: &rusqlite::Transaction<'_>,
-    memory_id: &str,
-    source_id: &str,
-    memory_session_id: &str,
-    chunk_index: usize,
-    dedupe_key: &str,
-) -> Result<(), CliError> {
-    let id = next_id("finding-job");
-    let now = now_timestamp();
-    tx.execute(
-        "
-        insert into finding_candidate_queue (
-          id, input_kind, source_kind, source_key, source_uri,
-          distillation_version, payload, metadata, priority, status, created_at, updated_at
-        ) values (?, 'source_target', 'vibe_memory', ?, ?, ?, ?, ?, 50, 'pending', ?, ?)
-        ",
-        params![
-            id,
-            memory_id,
-            format!("vibe_memory:{memory_id}"),
-            DISTILLATION_VERSION,
-            json!({"sourceType":"agent_log_sync","sourceId":source_id,"memorySessionId":memory_session_id,"chunkIndex":chunk_index,"dedupeKey":dedupe_key}).to_string(),
-            json!({"sourceType":"agent_log_sync","sourceId":source_id,"memorySessionId":memory_session_id,"chunkIndex":chunk_index,"dedupeKey":dedupe_key}).to_string(),
-            now,
-            now
-        ],
-    )
-    .map_err(sql_error)?;
-    append_queue_event(
-        tx,
-        "findingCandidate",
-        &id,
-        "finding candidate enqueued from Rust agent log sync",
-    )
 }
 
 fn enqueue_episode_distiller(

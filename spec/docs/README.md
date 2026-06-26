@@ -14,6 +14,7 @@
 | [EpisodeCard 品質改善 実装計画](episode-card-quality-improvement-implementation-plan.md) | `episodeDistiller` の保存マッピング、canonical schema、スコア校正、既存データ補正により EpisodeCard の読みやすさとフィールド責務を改善する実装計画 |
 | [EpisodeDistiller 逐次生成 実装計画](episode-distiller-incremental-generation-implementation-plan.md) | `episodeDistiller` を job 末尾一括保存から segment ごとの逐次生成・即時保存へ移行し、出力時刻ベースの監視、再開、重複抑止を実装する計画 |
 | Episode Distiller Queue 実装計画 (未配置) | `vibe memory` を共通ソースに、`findCandidate` の knowledge 候補抽出と `episodeDistiller` の複数 Episode 生成を分離する実装計画 |
+| [FindCandidate Vibe Memory Filtered Input 実装計画](findcandidate-vibe-memory-filtered-input-plan.md) | `findCandidate` から chunk 化と chunk 依存抽出を廃止し、deterministic な filtered vibe memory 入力へ切り替える実装計画 |
 | [Local LLM Endpoint Keys / findCandidate Diagnostics 実装計画](local-llm-endpoint-keys-and-findcandidate-diagnostics-plan.md) | Local LLM API key を endpoint/model 単位にし、`findCandidate` の `no_candidate` 診断、未整形作業ログ抽出テスト、SystemContext 改善を進める計画 |
 | [Rust sqlite-vec First Implementation Plan](rust-sqlite-vec-first-implementation-plan.md) | Bun SQLite の dynamic extension loading 制約を避けるため、`sqlite-vec` だけを先行して Rust-owned にし、API server の通常 Drizzle 経路は維持する実装計画 |
 | [Rust Test Coverage 改善計画](rust-test-coverage-improvement-plan.md) | `context-stilld` の Rust unit test coverage を、baseline、優先 module、検証コマンド、停止条件つきで段階的に改善する計画 |

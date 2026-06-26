@@ -145,12 +145,11 @@ describe("Agent Log Sync Service", () => {
       warnings: [],
     } as any);
 
-    // First vibeMemory insert succeeds, its finding job is enqueued, second memory is deduped.
+    // First vibeMemory insert succeeds, its episode job is enqueued, second memory is deduped.
     const chain = db.insert({} as any) as any;
 
     chain.returning
       .mockResolvedValueOnce([{ id: "m1" }]) // Vibe 1
-      .mockResolvedValueOnce([{ id: "q1" }]) // Finding job for Vibe 1
       .mockResolvedValueOnce([{ id: "e1" }]) // Episode distiller job for Vibe 1
       .mockResolvedValueOnce([]); // Vibe 2 (dedupe)
 
