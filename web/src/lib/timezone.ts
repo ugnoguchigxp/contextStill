@@ -79,11 +79,20 @@ export function useTimezone(): string {
   return tz;
 }
 
-function parseDate(value: string | Date | null | undefined): Date | null {
+export function parseTimestamp(value: string | Date | number | null | undefined): Date | null {
   if (!value) return null;
-  if (value instanceof Date) return value;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value === "number") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
 
   let str = value.trim();
+  const unixMillis = str.startsWith("unix-ms:") ? Number(str.slice("unix-ms:".length)) : Number.NaN;
+  if (Number.isFinite(unixMillis)) {
+    const date = new Date(unixMillis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
   if (!str.endsWith("Z") && !str.includes("+") && !/[-+]\d{2}:?\d{2}$/.test(str)) {
     str = str.replace(" ", "T");
     if (!str.includes("T")) {
@@ -95,6 +104,10 @@ function parseDate(value: string | Date | null | undefined): Date | null {
 
   const parsed = new Date(str);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseDate(value: string | Date | null | undefined): Date | null {
+  return parseTimestamp(value);
 }
 
 type TimezoneParts = {

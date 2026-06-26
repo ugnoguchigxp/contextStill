@@ -143,7 +143,18 @@ function overlapCount(queryValues: string[] | undefined, sourceValues: string[])
 
 function toDate(value: string | null): Date | null {
   if (!value) return null;
-  const date = new Date(value);
+  const trimmed = value.trim();
+  const unixMillis = trimmed.startsWith("unix-ms:")
+    ? Number(trimmed.slice("unix-ms:".length))
+    : Number.NaN;
+  if (Number.isFinite(unixMillis)) {
+    const date = new Date(unixMillis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -178,8 +189,8 @@ function mapEpisode(
     status: row.status,
     staleAt: toDate(row.stale_at),
     metadata: asRecord(parseJson(row.metadata)),
-    createdAt: new Date(row.created_at),
-    updatedAt: new Date(row.updated_at),
+    createdAt: toDate(row.created_at) ?? new Date(0),
+    updatedAt: toDate(row.updated_at) ?? new Date(0),
     score,
     refs: refs.map((ref) => ({
       id: ref.id,
@@ -189,7 +200,7 @@ function mapEpisode(
       locator: ref.locator,
       queryHint: ref.query_hint,
       metadata: asRecord(parseJson(ref.metadata)),
-      createdAt: new Date(ref.created_at),
+      createdAt: toDate(ref.created_at) ?? new Date(0),
     })),
   });
 }
@@ -258,6 +269,19 @@ function scoreEpisode(
   const qualityBoost = (episode.importance * 0.6 + episode.confidence * 0.4) / 100;
   const outcomeBoost = episode.outcomeKind === "unknown" ? 0 : 1;
   return queryScore + facetScore + qualityBoost + outcomeBoost;
+}
+
+function hasRankingCriteria(input: ReturnType<typeof normalizeSearchInput>): boolean {
+  return Boolean(
+    input.query ||
+      input.repoPath ||
+      input.repoKey ||
+      input.outcomeKinds.length > 0 ||
+      input.domains.length > 0 ||
+      input.technologies.length > 0 ||
+      input.changeTypes.length > 0 ||
+      input.tools.length > 0,
+  );
 }
 
 async function refsByEpisodeIds(ids: string[]): Promise<Map<string, SqliteEpisodeRefRow[]>> {
@@ -438,11 +462,11 @@ export async function searchEpisodeCardsSqlite(
     .filter((episode) => matchesSearchInput(episode, input))
     .map((episode) => ({ episode, score: scoreEpisode(episode, input) }))
     .filter(({ score }) => !input.query || score > 0)
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        right.episode.createdAt.getTime() - left.episode.createdAt.getTime(),
-    )
+    .sort((left, right) => {
+      const recency = right.episode.createdAt.getTime() - left.episode.createdAt.getTime();
+      if (!hasRankingCriteria(input)) return recency || right.score - left.score;
+      return right.score - left.score || recency;
+    })
     .slice(0, input.limit)
     .map(({ episode, score }) => ({ ...episode, score }));
 }

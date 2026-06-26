@@ -43,7 +43,18 @@ function parseRecord(value: string | null | undefined): Record<string, unknown> 
 }
 
 function toDate(value: string): Date {
-  const date = new Date(value);
+  const trimmed = value.trim();
+  const unixMillis = trimmed.startsWith("unix-ms:")
+    ? Number(trimmed.slice("unix-ms:".length))
+    : Number.NaN;
+  if (Number.isFinite(unixMillis)) {
+    const date = new Date(unixMillis);
+    return Number.isNaN(date.getTime()) ? new Date(0) : date;
+  }
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? new Date(0) : date;
 }
 

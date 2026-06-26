@@ -219,6 +219,45 @@ describe("VibeMemoryPage", () => {
     expect(screen.getByText("セッションを選択してください")).toBeInTheDocument();
   });
 
+  it("renders unix-ms timestamps as real configured-timezone dates", () => {
+    const unixMemory = {
+      id: "mem-unix",
+      sessionId: "session-unix",
+      memoryType: "vibe",
+      createdAt: "unix-ms:1782143401684",
+      content: "USER: Check unix timestamp display\nASSISTANT: OK.",
+      metadata: {
+        projectName: "Unix Project",
+        source: "Rust",
+      },
+    };
+    vi.mocked(useQuery).mockImplementation((options: any) => {
+      if (options.queryKey[0] === "vibe-memories") {
+        return { data: [unixMemory], isLoading: false, isError: false } as any;
+      }
+      if (options.queryKey[0] === "agent-diffs") {
+        return { data: [], isLoading: false, isError: false } as any;
+      }
+      return { data: undefined, isLoading: false } as any;
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <VibeMemoryPage />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByText(/1970\/1\/1/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: `Unix Project / ${formatDateTimeShort("unix-ms:1782143401684", "Asia/Tokyo")} / Rust`,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(formatDateTime("unix-ms:1782143401684", "Asia/Tokyo")),
+    ).toBeInTheDocument();
+  });
+
   it("handles deletion confirmation and success properly", () => {
     const confirmSpy = vi.spyOn(window, "confirm");
 

@@ -1,15 +1,15 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { resolveDatabaseBackendConfig } from "../../db/backend.js";
-import { getDefaultDbSession } from "../../db/session.js";
 import { episodeCards, episodeRefs } from "../../db/schema.js";
+import { getDefaultDbSession } from "../../db/session.js";
 import {
   type EpisodeCard,
   type EpisodeCardCreateInput,
   type EpisodeCardSearchInput,
   type EpisodeCardStatus,
   episodeCardCreateSchema,
-  episodeCardSearchInputSchema,
   episodeCardSchema,
+  episodeCardSearchInputSchema,
 } from "../../shared/schemas/episode-card.schema.js";
 import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
 
@@ -184,6 +184,19 @@ function scoreEpisode(
   return queryScore + facetScore + qualityBoost + outcomeBoost;
 }
 
+function hasRankingCriteria(input: ReturnType<typeof normalizeSearchInput>): boolean {
+  return Boolean(
+    input.query ||
+      input.repoPath ||
+      input.repoKey ||
+      input.outcomeKinds.length > 0 ||
+      input.domains.length > 0 ||
+      input.technologies.length > 0 ||
+      input.changeTypes.length > 0 ||
+      input.tools.length > 0,
+  );
+}
+
 function normalizeSearchInput(rawInput: EpisodeCardSearchInput) {
   const input = episodeCardSearchInputSchema.parse(rawInput);
   const statuses =
@@ -336,11 +349,11 @@ export async function searchEpisodeCards(rawInput: EpisodeCardSearchInput): Prom
     .filter((episode) => matchesSearchInput(episode, input))
     .map((episode) => ({ episode, score: scoreEpisode(episode, input) }))
     .filter(({ score }) => !input.query || score > 0)
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        right.episode.createdAt.getTime() - left.episode.createdAt.getTime(),
-    )
+    .sort((left, right) => {
+      const recency = right.episode.createdAt.getTime() - left.episode.createdAt.getTime();
+      if (!hasRankingCriteria(input)) return recency || right.score - left.score;
+      return right.score - left.score || recency;
+    })
     .slice(0, input.limit)
     .map(({ episode, score }) => ({ ...episode, score }));
 }

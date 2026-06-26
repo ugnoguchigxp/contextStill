@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { getDefaultDbSession } from "../src/db/session.js";
 import { resolveDatabaseBackendConfig } from "../src/db/backend.js";
+import { getDefaultDbSession } from "../src/db/session.js";
 import {
   createEpisodeCard,
   getEpisodeCard,
@@ -225,5 +225,52 @@ describe("episode-card.repository (PostgreSQL)", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0].title).toBe("Test Episode");
+  });
+
+  test("searchEpisodeCards returns newest episodes first without search criteria", async () => {
+    const olderHighScoreEpisode = {
+      ...dummyEpisode,
+      id: "older-high-score",
+      title: "Older high score episode",
+      outcomeKind: "success",
+      importance: 100,
+      confidence: 100,
+      createdAt: new Date("2026-06-26T07:41:01.000Z"),
+      updatedAt: new Date("2026-06-26T07:41:01.000Z"),
+    };
+    const newestLowScoreEpisode = {
+      ...dummyEpisode,
+      id: "newest-low-score",
+      title: "Newest low score episode",
+      outcomeKind: "unknown",
+      importance: 0,
+      confidence: 0,
+      createdAt: new Date("2026-06-26T08:40:02.000Z"),
+      updatedAt: new Date("2026-06-26T08:40:02.000Z"),
+    };
+    const mockSelectResult = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([olderHighScoreEpisode, newestLowScoreEpisode]),
+    };
+    const mockSelectRefsResult = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([]),
+    };
+
+    vi.mocked(mockDb.select).mockImplementation(() => {
+      if (vi.mocked(mockDb.select).mock.calls.length === 1) {
+        return mockSelectResult as any;
+      }
+      return mockSelectRefsResult as any;
+    });
+
+    const results = await searchEpisodeCards({
+      status: "active",
+      limit: 2,
+    });
+
+    expect(results.map((episode) => episode.id)).toEqual(["newest-low-score", "older-high-score"]);
   });
 });

@@ -31,7 +31,31 @@ function parseJson(value: string | null | undefined): unknown {
   }
 }
 
+function timestampToIso(value: unknown): string | null {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  if (typeof value === "number") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const unixMillis = trimmed.startsWith("unix-ms:")
+    ? Number(trimmed.slice("unix-ms:".length))
+    : Number.NaN;
+  if (Number.isFinite(unixMillis)) {
+    const date = new Date(unixMillis);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function mapSqliteVibeMemory(row: Record<string, unknown>) {
+  const createdAt = timestampToIso(row.created_at);
   return {
     id: row.id,
     sessionId: row.session_id,
@@ -40,7 +64,7 @@ function mapSqliteVibeMemory(row: Record<string, unknown>) {
     dedupeKey: row.dedupe_key,
     embedding: row.embedding,
     metadata: parseJson(row.metadata as string | null | undefined),
-    createdAt: row.created_at,
+    createdAt: createdAt ?? row.created_at,
     goalId: row.goal_id,
     parentId: row.parent_id,
     subject: row.subject,
@@ -50,9 +74,25 @@ function mapSqliteVibeMemory(row: Record<string, unknown>) {
     confidence: row.confidence,
     evidenceStatus: row.evidence_status,
     actorId: row.actor_id,
-    ttlAt: row.ttl_at,
+    ttlAt: timestampToIso(row.ttl_at) ?? row.ttl_at,
   };
 }
+
+const sqliteEffectiveVibeMemoryTimestampSql = `
+  case
+    when coalesce(nullif(json_extract(metadata, '$.timestamp'), ''), '') like 'unix-ms:%'
+      then datetime(cast(substr(json_extract(metadata, '$.timestamp'), 9) as integer) / 1000, 'unixepoch')
+    when coalesce(nullif(json_extract(metadata, '$.sessionStartedAt'), ''), '') like 'unix-ms:%'
+      then datetime(cast(substr(json_extract(metadata, '$.sessionStartedAt'), 9) as integer) / 1000, 'unixepoch')
+    when coalesce(created_at, '') like 'unix-ms:%'
+      then datetime(cast(substr(created_at, 9) as integer) / 1000, 'unixepoch')
+    else coalesce(
+      datetime(nullif(json_extract(metadata, '$.timestamp'), '')),
+      datetime(nullif(json_extract(metadata, '$.sessionStartedAt'), '')),
+      datetime(created_at)
+    )
+  end
+`;
 
 // Legacy compatibility
 vibeMemoryRouter.get("/", async (c) => {
@@ -66,11 +106,7 @@ vibeMemoryRouter.get("/", async (c) => {
         from vibe_memories
         where memory_type <> 'capsule'
         order by
-          coalesce(
-            nullif(json_extract(metadata, '$.timestamp'), ''),
-            nullif(json_extract(metadata, '$.sessionStartedAt'), ''),
-            created_at
-          ) desc,
+          ${sqliteEffectiveVibeMemoryTimestampSql} desc,
           created_at desc
         limit ?
       `,

@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { getRuntimeSqliteCoreDatabase } from "../src/db/sqlite/runtime.js";
 import {
   createEpisodeCardSqlite,
-  getEpisodeCardSqlite,
   getEpisodeCardBySourceSqlite,
+  getEpisodeCardSqlite,
   searchEpisodeCardsSqlite,
 } from "../src/modules/episodic-memory/episode-card.repository.sqlite.js";
 
@@ -54,8 +54,8 @@ describe("episode-card.repository.sqlite", () => {
     status: "active",
     stale_at: null,
     metadata: "{}",
-    created_at: "2026-06-20T00:00:00.000Z",
-    updated_at: "2026-06-20T00:00:00.000Z",
+    created_at: "2026-06-26 08:32:35",
+    updated_at: "2026-06-26 08:32:35",
   };
 
   const dummyRefRow = {
@@ -66,7 +66,7 @@ describe("episode-card.repository.sqlite", () => {
     locator: "L10",
     query_hint: "hint",
     metadata: "{}",
-    created_at: "2026-06-20T00:00:00.000Z",
+    created_at: "unix-ms:1782143401684",
   };
 
   test("createEpisodeCardSqlite inserts row and refs and returns mapped object", async () => {
@@ -182,6 +182,8 @@ describe("episode-card.repository.sqlite", () => {
     expect(result).not.toBeNull();
     expect(result?.title).toBe("Test Episode");
     expect(result?.refs).toHaveLength(1);
+    expect(result?.createdAt.toISOString()).toBe("2026-06-26T08:32:35.000Z");
+    expect(result?.refs[0].createdAt.toISOString()).toBe("2026-06-22T15:50:01.684Z");
 
     mockDb.query.mockImplementation(
       () =>
@@ -253,5 +255,44 @@ describe("episode-card.repository.sqlite", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0].title).toBe("Test Episode");
+  });
+
+  test("searchEpisodeCardsSqlite returns newest episodes first without search criteria", async () => {
+    const olderHighScoreRow = {
+      ...dummyEpisodeRow,
+      id: "older-high-score",
+      title: "Older high score episode",
+      created_at: "2026-06-26 07:41:01",
+      updated_at: "2026-06-26 07:41:01",
+      outcome_kind: "success",
+      importance: 100,
+      confidence: 100,
+    };
+    const newestLowScoreRow = {
+      ...dummyEpisodeRow,
+      id: "newest-low-score",
+      title: "Newest low score episode",
+      created_at: "2026-06-26 08:40:02",
+      updated_at: "2026-06-26 08:40:02",
+      outcome_kind: "unknown",
+      importance: 0,
+      confidence: 0,
+    };
+    mockDb.query.mockImplementation((sql: string) => {
+      return {
+        all: vi.fn().mockImplementation(() => {
+          if (sql.includes("episode_refs")) return [];
+          if (sql.includes("from episode_cards")) return [olderHighScoreRow, newestLowScoreRow];
+          return [];
+        }),
+      } as any;
+    });
+
+    const results = await searchEpisodeCardsSqlite({
+      status: "active",
+      limit: 2,
+    });
+
+    expect(results.map((episode) => episode.id)).toEqual(["newest-low-score", "older-high-score"]);
   });
 });

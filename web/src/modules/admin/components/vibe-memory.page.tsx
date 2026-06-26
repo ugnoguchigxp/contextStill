@@ -3,6 +3,7 @@ import {
   formatDateTime,
   formatDateTimeCompact,
   formatDateTimeShort,
+  parseTimestamp,
   useTimezone,
 } from "@/lib/timezone";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -278,8 +279,8 @@ function earliestMetadataTime(items: VibeMemory[], key: string): string | undefi
   const times = items
     .map((item) => item.metadata?.[key])
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .map((value) => new Date(value))
-    .filter((date) => !Number.isNaN(date.getTime()))
+    .map((value) => parseTimestamp(value))
+    .filter((date): date is Date => date !== null)
     .sort((a, b) => a.getTime() - b.getTime());
   return times[0]?.toISOString();
 }
@@ -288,8 +289,8 @@ function latestMetadataTime(items: VibeMemory[], key: string): Date | undefined 
   const times = items
     .map((item) => item.metadata?.[key])
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .map((value) => new Date(value))
-    .filter((date) => !Number.isNaN(date.getTime()))
+    .map((value) => parseTimestamp(value))
+    .filter((date): date is Date => date !== null)
     .sort((a, b) => b.getTime() - a.getTime());
   return times[0];
 }
@@ -490,16 +491,15 @@ function readBoolean(value: unknown): boolean | undefined {
 function resolveMemoryEventTime(memory: VibeMemory): Date {
   const timestamp = readString(memory.metadata?.timestamp);
   if (timestamp) {
-    const parsed = new Date(timestamp);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
+    const parsed = parseTimestamp(timestamp);
+    if (parsed) return parsed;
   }
 
   const startedAt = readString(memory.metadata?.sessionStartedAt);
   if (startedAt) {
-    const parsed = new Date(startedAt);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
+    const parsed = parseTimestamp(startedAt);
+    if (parsed) return parsed;
   }
 
-  const createdAt = new Date(memory.createdAt);
-  return Number.isNaN(createdAt.getTime()) ? new Date(0) : createdAt;
+  return parseTimestamp(memory.createdAt) ?? new Date(0);
 }
