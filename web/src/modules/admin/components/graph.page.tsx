@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { formatDateTimeShort, useTimezone } from "@/lib/timezone";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
@@ -659,6 +660,7 @@ function matchesTrajectoryStage(
 }
 
 export function GraphPage() {
+  const timezone = useTimezone();
   const [statusFilter, setStatusFilter] = useState<GraphStatusFilter>("current");
   const [viewMode, setViewMode] = useState<GraphViewMode>("relation");
   const [communityDisplayMode, setCommunityDisplayMode] =
@@ -1865,13 +1867,16 @@ export function GraphPage() {
                                 <td>{snapshot.readyCount}</td>
                                 <td>{snapshot.staleCount}</td>
                                 <td>{snapshot.expiredReadyCount}</td>
-                                <td>{snapshot.oldestGeneratedAt ?? "-"}</td>
-                                <td>{snapshot.latestGeneratedAt ?? "-"}</td>
-                                <td>{snapshot.latestExpiresAt ?? "-"}</td>
+                                <td>{formatDateTimeShort(snapshot.oldestGeneratedAt, timezone)}</td>
+                                <td>{formatDateTimeShort(snapshot.latestGeneratedAt, timezone)}</td>
+                                <td>{formatDateTimeShort(snapshot.latestExpiresAt, timezone)}</td>
                                 <td>{formatBytes(snapshot.estimatedPayloadBytes)}</td>
                                 <td>
                                   {snapshot.lastPurge
-                                    ? `${snapshot.lastPurge.deletedCount} @ ${snapshot.lastPurge.purgedAt}`
+                                    ? `${snapshot.lastPurge.deletedCount} @ ${formatDateTimeShort(
+                                        snapshot.lastPurge.purgedAt,
+                                        timezone,
+                                      )}`
                                     : "-"}
                                 </td>
                               </tr>

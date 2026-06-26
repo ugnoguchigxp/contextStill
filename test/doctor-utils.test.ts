@@ -6,6 +6,7 @@ import {
   minutesSince,
   normalizeReasonCounts,
   nowIso,
+  timestampToIso,
 } from "../src/modules/doctor/doctor.utils.js";
 
 describe("Doctor Utils", () => {
@@ -25,6 +26,11 @@ describe("Doctor Utils", () => {
     expect(minutesSince(futureDate)).toBe(0);
 
     vi.restoreAllMocks();
+  });
+
+  test("timestampToIso treats database timestamps without timezone as UTC", () => {
+    expect(timestampToIso("2026-06-26 06:37:58")).toBe("2026-06-26T06:37:58.000Z");
+    expect(timestampToIso("2026-06-26T06:37:58.123")).toBe("2026-06-26T06:37:58.123Z");
   });
 
   describe("cursorFileCount", () => {

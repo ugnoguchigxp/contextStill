@@ -40,6 +40,12 @@ pub enum RuntimeAction {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
+pub enum VectorAction {
+    Health,
+    Smoke,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum BootstrapAction {
     Preflight,
     Init,
@@ -87,6 +93,10 @@ pub enum CliCommand {
     },
     Runtime {
         action: RuntimeAction,
+        json: bool,
+    },
+    Vector {
+        action: VectorAction,
         json: bool,
     },
     Bootstrap {
@@ -228,6 +238,22 @@ where
                 }
             };
             Ok(CliCommand::Runtime {
+                action,
+                json: parse_json_flag(args)?,
+            })
+        }
+        "vector" => {
+            let action_str = required_action(&mut args, "vector", "health or smoke")?;
+            let action = match action_str.as_str() {
+                "health" => VectorAction::Health,
+                "smoke" => VectorAction::Smoke,
+                _ => {
+                    return Err(CliError::invalid_arguments(format!(
+                        "unknown vector action: {action_str}"
+                    )))
+                }
+            };
+            Ok(CliCommand::Vector {
                 action,
                 json: parse_json_flag(args)?,
             })
@@ -500,6 +526,25 @@ mod tests {
             CliCommand::Runtime {
                 action: RuntimeAction::AssertRustOnly,
                 json: true,
+            },
+        );
+    }
+
+    #[test]
+    fn parses_vector_health_json() {
+        use super::VectorAction;
+        assert_eq!(
+            parse_args(["vector", "health", "--json"]).expect("parsed"),
+            CliCommand::Vector {
+                action: VectorAction::Health,
+                json: true,
+            },
+        );
+        assert_eq!(
+            parse_args(["vector", "smoke"]).expect("parsed"),
+            CliCommand::Vector {
+                action: VectorAction::Smoke,
+                json: false,
             },
         );
     }

@@ -14,6 +14,17 @@ type QueueStateRow = {
   status: string;
 };
 
+const workerUnavailableBackoffSecondsSql = `
+  case
+    when attempt_count <= 0 then 60
+    when attempt_count = 1 then 120
+    when attempt_count = 2 then 300
+    when attempt_count = 3 then 600
+    when attempt_count = 4 then 1200
+    else 3600
+  end
+`;
+
 async function updateSqliteQueueState(params: {
   queueName: DistillationQueueName;
   id?: string;
@@ -87,8 +98,9 @@ export async function keepQueueJobWaitingForWorker(params: {
         ${
           params.queueName === "finalizeDistille"
             ? ""
-            : "next_run_at = datetime('now', '+30 seconds'),"
+            : `next_run_at = datetime('now', '+' || ${workerUnavailableBackoffSecondsSql} || ' seconds'),`
         }
+        attempt_count = attempt_count + 1,
         last_error = ?,
         last_outcome_kind = 'worker_unavailable',
         locked_by = null,
@@ -110,6 +122,7 @@ export async function keepQueueJobWaitingForWorker(params: {
             status = 'pending',
             last_error = ${params.reason},
             last_outcome_kind = 'worker_unavailable',
+            attempt_count = attempt_count + 1,
             locked_by = null,
             locked_at = null,
             heartbeat_at = null,
@@ -122,7 +135,8 @@ export async function keepQueueJobWaitingForWorker(params: {
           update ${sql.raw(tableName)}
           set
             status = 'pending',
-            next_run_at = now() + interval '30 seconds',
+            next_run_at = now() + make_interval(secs => ${sql.raw(workerUnavailableBackoffSecondsSql)}),
+            attempt_count = attempt_count + 1,
             last_error = ${params.reason},
             last_outcome_kind = 'worker_unavailable',
             locked_by = null,

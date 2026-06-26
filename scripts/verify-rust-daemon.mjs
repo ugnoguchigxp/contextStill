@@ -70,6 +70,10 @@ const tasks = [
     ],
   },
   {
+    label: "context-stilld vector smoke",
+    command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "vector", "smoke", "--json"],
+  },
+  {
     label: "context-stilld mcp endpoint",
     command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "mcp", "endpoint", "--json"],
   },
@@ -248,6 +252,20 @@ function assertQueueInspect(result) {
   return result;
 }
 
+function assertVectorSmoke(result) {
+  const checked = assertJsonLine(result, "vecUsable");
+  if (checked.code !== 0) return checked;
+  const json = JSON.parse(result.stdout);
+  if (json.vecUsable !== true || json.status !== "ok") {
+    return {
+      ...result,
+      code: 1,
+      stderr: `${result.stderr}\nExpected vector smoke status=ok and vecUsable=true, got status=${json.status} vecUsable=${json.vecUsable}\n`,
+    };
+  }
+  return result;
+}
+
 async function runLiveOwnershipCheck() {
   console.log("[verify:rust-daemon] live ownership check ...");
   if (process.platform !== "darwin") {
@@ -352,6 +370,9 @@ for (const task of tasks) {
   }
   if (task.label === "context-stilld runtime assert rust only" && result.code === 0) {
     result = assertRuntimeRustOnly(result);
+  }
+  if (task.label === "context-stilld vector smoke" && result.code === 0) {
+    result = assertVectorSmoke(result);
   }
   if (task.label === "context-stilld mcp endpoint" && result.code === 0) {
     result = assertJsonLine(result, "url");

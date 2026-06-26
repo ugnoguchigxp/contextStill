@@ -483,7 +483,7 @@ export function createDefaultChatClient(
         const message = error instanceof Error ? error.message : String(error);
         errors.push(`${provider}: ${message}`);
         providerErrorKinds[provider] = classifyLlmError(error);
-        if (error instanceof Error && error.name === "AbortError") {
+        if (error instanceof Error && error.name === "AbortError" && request.signal?.aborted) {
           throw error;
         }
         if (!allowFallback) {

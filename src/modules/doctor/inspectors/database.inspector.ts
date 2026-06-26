@@ -1,7 +1,10 @@
+import { execFileSync } from "node:child_process";
+import { performance } from "node:perf_hooks";
 import { sql } from "drizzle-orm";
 import { groupedConfig } from "../../../config.js";
 import { resolveDatabaseBackendConfig } from "../../../db/backend.js";
 import { getDb } from "../../../db/index.js";
+import { knowledgeIntentTagSlugs } from "../../../knowledge/intentTagDefinitions.js";
 import type { DoctorReport } from "../../../shared/schemas/doctor.schema.js";
 import { requiredTableSqlList, requiredTables, sqliteRequiredTables } from "../doctor.constants.js";
 
@@ -11,8 +14,27 @@ type DatabaseInspectorOptions = {
   zeroUseWarningMinActiveCount: number;
 };
 
+type RustVectorHealth = {
+  vecUsable?: unknown;
+};
+
+type MetricTimer = {
+  elapsedMs(): number;
+};
+
 const hitlBacklogThresholdCount = groupedConfig.distillation.promotionBacklogThresholdCount;
 const hitlBacklogThresholdAgeMinutes = 60 * 24 * 3;
+
+function startMetricTimer(): MetricTimer {
+  const startedAt = performance.now();
+  return {
+    elapsedMs: () => Math.max(0, Math.round((performance.now() - startedAt) * 10) / 10),
+  };
+}
+
+function roundMetricMs(value: number): number {
+  return Math.max(0, Math.round(value * 10) / 10);
+}
 
 function toIso(value: unknown): string | null {
   if (value instanceof Date) return value.toISOString();
@@ -32,6 +54,7 @@ function ageMinutesFromIso(value: string | null): number | null {
 
 export type DatabaseInspection = {
   db: DoctorReport["db"];
+  vector: DoctorReport["vector"];
   reachable: boolean;
   vectorInstalled: boolean;
   expectedTables: string[];
@@ -63,22 +86,7 @@ function createDefaultKnowledgeLifecycle(
   };
 }
 
-const knownIntentTags = new Set([
-  "guidance",
-  "guardrail",
-  "prohibition",
-  "warning",
-  "failure_pattern",
-  "review_finding",
-  "regression",
-  "test_gap",
-  "verification",
-  "preference",
-  "boundary_violation",
-  "architecture_risk",
-  "security_risk",
-  "performance_risk",
-]);
+const knownIntentTags = new Set<string>(knowledgeIntentTagSlugs);
 
 function percentile(values: number[], quantile: number): number | null {
   if (values.length === 0) return null;
@@ -126,31 +134,63 @@ function ageDaysFromIso(value: string | null): number {
   return Math.max(0, (Date.now() - timestamp) / 86_400_000);
 }
 
+function inspectRustSqliteVectorHealth(
+  sqlitePath: string,
+): { available: boolean; durationMs: number } | null {
+  const timer = startMetricTimer();
+  try {
+    const output = execFileSync(
+      "cargo",
+      ["run", "-q", "-p", "context-stilld", "--", "vector", "health", "--json"],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CONTEXT_STILL_SQLITE_CORE_PATH: sqlitePath,
+        },
+        timeout: 30_000,
+      },
+    );
+    const parsed = JSON.parse(output) as RustVectorHealth;
+    return { available: parsed.vecUsable === true, durationMs: timer.elapsedMs() };
+  } catch {
+    return null;
+  }
+}
+
 async function inspectSqliteDatabase({
   freshnessThresholdMinutes,
   staleDecayFactor,
   zeroUseWarningMinActiveCount,
 }: DatabaseInspectorOptions): Promise<DatabaseInspection> {
-  const startedAt = Date.now();
+  const totalTimer = startMetricTimer();
+  const responseTimer = startMetricTimer();
   const expectedTables = [...sqliteRequiredTables];
 
   try {
     const { getRuntimeSqliteCoreDatabase } = await import("../../../db/sqlite/runtime.js");
     const sqlite = await getRuntimeSqliteCoreDatabase();
     sqlite.db.query("select 1 as ok").get();
+    const responseMs = responseTimer.elapsedMs();
+    let queryMs = 0;
     const placeholders = expectedTables.map(() => "?").join(", ");
+    const tableTimer = startMetricTimer();
     const existingTables = sqlite.db
       .query<{ name: string }, string[]>(
         `select name from sqlite_schema where type in ('table', 'view') and name in (${placeholders})`,
       )
       .all(...expectedTables)
       .map((row) => row.name);
+    queryMs += tableTimer.elapsedMs();
     const missingTables = expectedTables.filter((tableName) => !existingTables.includes(tableName));
+    const rustVectorHealth = inspectRustSqliteVectorHealth(sqlite.path);
+    const vectorInstalled = rustVectorHealth?.available ?? sqlite.vector.available;
     const reasons: string[] = [];
     if (missingTables.length > 0) {
       reasons.push("MISSING_REQUIRED_TABLES");
     }
-    if (!sqlite.vector.available) {
+    if (!vectorInstalled) {
       reasons.push("SQLITE_VECTOR_EXTENSION_UNAVAILABLE");
     }
 
@@ -169,17 +209,20 @@ async function inspectSqliteDatabase({
 
     if (existingTables.includes("knowledge_items")) {
       try {
+        const timer = startMetricTimer();
         const staleRow = sqlite.db
           .query<{ count: number }, []>(
             "select count(*) as count from knowledge_items where status = 'deprecated'",
           )
           .get();
+        queryMs += timer.elapsedMs();
         staleKnowledgeCount = Number(staleRow?.count ?? 0);
       } catch {
         reasons.push("STALE_KNOWLEDGE_COUNT_QUERY_FAILED");
       }
 
       try {
+        const timer = startMetricTimer();
         const draftRow = (sqlite.db
           .query<{ draft_count: number; oldest_draft_at: string | null }, []>(`
             select
@@ -191,6 +234,7 @@ async function inspectSqliteDatabase({
           draft_count: 0,
           oldest_draft_at: null,
         }) as { draft_count: number; oldest_draft_at: string | null };
+        queryMs += timer.elapsedMs();
         hitl.draftCount = Number(draftRow.draft_count ?? 0);
         hitl.oldestDraftAt = toIso(draftRow.oldest_draft_at);
         hitl.oldestDraftAgeMinutes = ageMinutesFromIso(hitl.oldestDraftAt);
@@ -208,6 +252,7 @@ async function inspectSqliteDatabase({
       }
 
       try {
+        const timer = startMetricTimer();
         const activeRows = sqlite.db
           .query<
             {
@@ -231,6 +276,7 @@ async function inspectSqliteDatabase({
             where status = 'active'
           `)
           .all();
+        queryMs += timer.elapsedMs();
         const dynamicScores = activeRows
           .map((row) => Number(row.dynamic_score))
           .filter((value) => Number.isFinite(value));
@@ -278,6 +324,7 @@ async function inspectSqliteDatabase({
       }
 
       try {
+        const timer = startMetricTimer();
         const rows = sqlite.db
           .query<
             {
@@ -304,6 +351,7 @@ async function inspectSqliteDatabase({
             from knowledge_items ki
           `)
           .all();
+        queryMs += timer.elapsedMs();
         if (
           rows.some((row) =>
             parseJsonArray(row.intent_tags).some(
@@ -336,11 +384,13 @@ async function inspectSqliteDatabase({
 
     if (existingTables.includes("audit_logs")) {
       try {
+        const timer = startMetricTimer();
         const row = sqlite.db
           .query<{ count: number }, [string]>(
             "select count(*) as count from audit_logs where event_type = 'KNOWLEDGE_VALUE_UPDATE_FAILED' and created_at >= ?",
           )
           .get(new Date(Date.now() - freshnessThresholdMinutes * 60_000).toISOString());
+        queryMs += timer.elapsedMs();
         const recentFailureCount = Number(row?.count ?? 0);
         if (recentFailureCount > 0 && !reasons.includes("KNOWLEDGE_VALUE_UPDATE_FAILED")) {
           reasons.push("KNOWLEDGE_VALUE_UPDATE_FAILED");
@@ -355,10 +405,18 @@ async function inspectSqliteDatabase({
     return {
       db: {
         reachable: true,
-        durationMs: Date.now() - startedAt,
+        durationMs: Math.round(responseMs),
+        responseMs,
+        queryMs: roundMetricMs(queryMs),
+        totalInspectionMs: totalTimer.elapsedMs(),
       },
       reachable: true,
-      vectorInstalled: sqlite.vector.available,
+      vector: {
+        installed: vectorInstalled,
+        healthMs: rustVectorHealth?.durationMs ?? null,
+        source: rustVectorHealth ? "rust" : sqlite.vector.available ? "bun" : "unavailable",
+      },
+      vectorInstalled,
       expectedTables,
       existingTables,
       missingTables,
@@ -369,13 +427,22 @@ async function inspectSqliteDatabase({
       reasons,
     };
   } catch (error) {
+    const elapsedMs = totalTimer.elapsedMs();
     return {
       db: {
         reachable: false,
-        durationMs: Date.now() - startedAt,
+        durationMs: Math.round(elapsedMs),
+        responseMs: elapsedMs,
+        queryMs: 0,
+        totalInspectionMs: elapsedMs,
         error: error instanceof Error ? error.message : String(error),
       },
       reachable: false,
+      vector: {
+        installed: false,
+        healthMs: null,
+        source: "unavailable",
+      },
       vectorInstalled: false,
       expectedTables,
       existingTables: [],
@@ -412,18 +479,28 @@ export async function inspectDatabase({
   }
 
   const db = getDb();
-  const startedAt = Date.now();
+  const totalTimer = startMetricTimer();
+  const responseTimer = startMetricTimer();
 
   try {
     await db.execute(sql`select 1 as ok`);
   } catch (error) {
+    const elapsedMs = totalTimer.elapsedMs();
     return {
       db: {
         reachable: false,
-        durationMs: Date.now() - startedAt,
+        durationMs: Math.round(elapsedMs),
+        responseMs: elapsedMs,
+        queryMs: 0,
+        totalInspectionMs: elapsedMs,
         error: error instanceof Error ? error.message : String(error),
       },
       reachable: false,
+      vector: {
+        installed: false,
+        healthMs: null,
+        source: "postgres",
+      },
       vectorInstalled: false,
       expectedTables: [...requiredTables],
       existingTables: [],
@@ -444,14 +521,19 @@ export async function inspectDatabase({
       reasons: ["DB_UNREACHABLE"],
     };
   }
+  const responseMs = responseTimer.elapsedMs();
 
   const reasons: string[] = [];
+  let queryMs = 0;
 
   let vectorInstalled = false;
+  let vectorHealthMs: number | null = null;
   try {
+    const timer = startMetricTimer();
     const result = await db.execute(
       sql`select exists(select 1 from pg_extension where extname = 'vector') as installed`,
     );
+    vectorHealthMs = timer.elapsedMs();
     vectorInstalled = Boolean((result.rows as Array<{ installed: boolean }>)[0]?.installed);
     if (!vectorInstalled) {
       reasons.push("VECTOR_EXTENSION_MISSING");
@@ -462,6 +544,7 @@ export async function inspectDatabase({
 
   let existingTables: string[] = [];
   try {
+    const timer = startMetricTimer();
     const result = await db.execute(sql`
       select table_name
       from information_schema.tables
@@ -470,6 +553,7 @@ export async function inspectDatabase({
           ${sql.raw(requiredTableSqlList)}
         )
     `);
+    queryMs += timer.elapsedMs();
     existingTables = (result.rows as Array<{ table_name: string }>).map((row) => row.table_name);
   } catch {
     reasons.push("REQUIRED_TABLES_CHECK_FAILED");
@@ -496,23 +580,27 @@ export async function inspectDatabase({
 
   if (!missingTables.includes("knowledge_items")) {
     try {
+      const timer = startMetricTimer();
       const result = await db.execute(sql`
         select count(*)::int as count
         from knowledge_items
         where status = 'deprecated'
       `);
+      queryMs += timer.elapsedMs();
       staleKnowledgeCount = Number((result.rows as Array<{ count?: number }>)[0]?.count ?? 0);
     } catch {
       reasons.push("STALE_KNOWLEDGE_COUNT_QUERY_FAILED");
     }
 
     try {
+      const timer = startMetricTimer();
       const draftResult = await db.execute(sql`
         select
           count(*) filter (where status = 'draft')::int as draft_count,
           min(case when status = 'draft' then updated_at end) as oldest_draft_at
         from knowledge_items
       `);
+      queryMs += timer.elapsedMs();
       const draftRow = (draftResult.rows as Array<Record<string, unknown>>)[0] ?? {};
       hitl.draftCount = Number(draftRow.draft_count ?? 0);
       hitl.oldestDraftAt = toIso(draftRow.oldest_draft_at);
@@ -531,6 +619,7 @@ export async function inspectDatabase({
     }
 
     try {
+      const timer = startMetricTimer();
       const lifecycleResult = await db.execute(sql`
         with active_items as (
           select
@@ -568,6 +657,7 @@ export async function inspectDatabase({
           max(last_compiled_at) as last_compiled_at
         from scored
       `);
+      queryMs += timer.elapsedMs();
       const lifecycleRow = (lifecycleResult.rows as Array<Record<string, unknown>>)[0] ?? {};
 
       knowledgeLifecycle.activeCount = Number(lifecycleRow.active_count ?? 0);
@@ -605,17 +695,17 @@ export async function inspectDatabase({
     }
 
     try {
+      const timer = startMetricTimer();
       const unknownTagsResult = await db.execute(sql`
         select count(*)::int as count
         from knowledge_items,
              jsonb_array_elements_text(intent_tags) as tag
-        where tag not in (
-          'guidance', 'guardrail', 'prohibition', 'warning', 'failure_pattern',
-          'review_finding', 'regression', 'test_gap', 'verification', 'preference',
-          'boundary_violation', 'architecture_risk', 'security_risk', 'performance_risk',
-          'operational_risk'
-        )
+        where tag not in (${sql.join(
+          knowledgeIntentTagSlugs.map((tag) => sql`${tag}`),
+          sql`, `,
+        )})
       `);
+      queryMs += timer.elapsedMs();
       const unknownTagsCount = Number(
         (unknownTagsResult.rows as Array<{ count?: number }>)[0]?.count ?? 0,
       );
@@ -623,6 +713,7 @@ export async function inspectDatabase({
         reasons.push("KNOWLEDGE_UNKNOWN_INTENT_TAGS");
       }
 
+      const negativeWithoutOriginTimer = startMetricTimer();
       const negativeWithoutOriginResult = await db.execute(sql`
         select count(*)::int as count
         from knowledge_items
@@ -631,6 +722,7 @@ export async function inspectDatabase({
           and id not in (select knowledge_id from knowledge_source_links)
           and nullif(metadata ->> 'sourceDocumentUri', '') is null
       `);
+      queryMs += negativeWithoutOriginTimer.elapsedMs();
       const negativeWithoutOriginCount = Number(
         (negativeWithoutOriginResult.rows as Array<{ count?: number }>)[0]?.count ?? 0,
       );
@@ -638,11 +730,13 @@ export async function inspectDatabase({
         reasons.push("KNOWLEDGE_NEGATIVE_WITHOUT_ORIGIN");
       }
 
+      const negativeAsPositiveTimer = startMetricTimer();
       const negativeAsPositiveResult = await db.execute(sql`
         select count(*)::int as count
         from knowledge_items
         where polarity = 'negative' and type = 'procedure'
       `);
+      queryMs += negativeAsPositiveTimer.elapsedMs();
       const negativeAsPositiveCount = Number(
         (negativeAsPositiveResult.rows as Array<{ count?: number }>)[0]?.count ?? 0,
       );
@@ -659,12 +753,14 @@ export async function inspectDatabase({
 
   if (!missingTables.includes("audit_logs")) {
     try {
+      const timer = startMetricTimer();
       const result = await db.execute(sql`
         select count(*)::int as count
         from audit_logs
         where event_type = 'KNOWLEDGE_VALUE_UPDATE_FAILED'
           and created_at >= now() - (${freshnessThresholdMinutes} * interval '1 minute')
       `);
+      queryMs += timer.elapsedMs();
       const recentFailureCount = Number((result.rows as Array<{ count?: number }>)[0]?.count ?? 0);
       if (recentFailureCount > 0 && !reasons.includes("KNOWLEDGE_VALUE_UPDATE_FAILED")) {
         reasons.push("KNOWLEDGE_VALUE_UPDATE_FAILED");
@@ -679,9 +775,17 @@ export async function inspectDatabase({
   return {
     db: {
       reachable: true,
-      durationMs: Date.now() - startedAt,
+      durationMs: Math.round(responseMs),
+      responseMs,
+      queryMs: roundMetricMs(queryMs),
+      totalInspectionMs: totalTimer.elapsedMs(),
     },
     reachable: true,
+    vector: {
+      installed: vectorInstalled,
+      healthMs: vectorHealthMs,
+      source: "postgres",
+    },
     vectorInstalled,
     expectedTables: [...requiredTables],
     existingTables,

@@ -21,13 +21,13 @@ import {
   overviewProductValueStatsSchema,
   overviewSystemQualityDomainSchema,
 } from "../../../src/shared/schemas/overview.schema.js";
-import { buildGraphSnapshot, type GraphCommunitySummary } from "../graph/graph.repository.js";
+import { type GraphCommunitySummary, buildGraphSnapshot } from "../graph/graph.repository.js";
 import {
   DASHBOARD_TIMEZONE,
   LANDSCAPE_OVERVIEW_CURRENT_LIMIT,
-  LLM_KPI_DAY_RANGE,
   LANDSCAPE_OVERVIEW_REPLAY_LIMIT,
   LANDSCAPE_OVERVIEW_WINDOW_DAYS,
+  LLM_KPI_DAY_RANGE,
   OVERVIEW_DAY_RANGE,
   buildCommunitySourceCoverage,
   buildKnowledgeStatusTypeChart,
@@ -35,7 +35,9 @@ import {
   checkedAt,
   countWikiPages,
   latestCheckedAt,
+  normalizeOverviewTimezone,
   normalizeSearchApiStatus,
+  sqliteTimezoneModifier,
   stringValue,
   toNullableNumber,
   toNumber,
@@ -58,12 +60,30 @@ function isSqliteBackend(): boolean {
   return resolveDatabaseBackendConfig().kind === "sqlite";
 }
 
-function emptyDaySeries(days = OVERVIEW_DAY_RANGE) {
-  return Array.from({ length: days }, (_, index) => {
-    const date = new Date();
-    date.setUTCDate(date.getUTCDate() - (days - 1 - index));
-    return date.toISOString().slice(0, 10);
-  });
+function timezoneDateString(value: string | Date, timezone: string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : "";
+}
+
+function shiftIsoDate(day: string, offsetDays: number): string {
+  const [year, month, date] = day.split("-").map(Number);
+  if (!year || !month || !date) return day;
+  return new Date(Date.UTC(year, month - 1, date + offsetDays)).toISOString().slice(0, 10);
+}
+
+function emptyDaySeries(timezone: string, days = OVERVIEW_DAY_RANGE) {
+  const today = timezoneDateString(new Date(), timezone);
+  return Array.from({ length: days }, (_, index) => shiftIsoDate(today, index - (days - 1)));
 }
 
 function parseJsonValue(value: unknown): unknown {
@@ -94,9 +114,11 @@ function sqliteAll<T extends Record<string, unknown>>(
 function dailyRows<T extends Record<string, unknown>>(
   rows: T[],
   defaults: (day: string) => T,
+  timezone: string,
+  days = OVERVIEW_DAY_RANGE,
 ): T[] {
   const byDay = new Map(rows.map((row) => [String(row.day ?? ""), row]));
-  return emptyDaySeries().map((day) => byDay.get(day) ?? defaults(day));
+  return emptyDaySeries(timezone, days).map((day) => byDay.get(day) ?? defaults(day));
 }
 
 function buildCompileEvalStats(row: Record<string, unknown>) {
@@ -203,9 +225,12 @@ function buildProductValueStats(row: Record<string, unknown>) {
   });
 }
 
-async function fetchOverviewKnowledgeAssetsDomainForSqlite(): Promise<OverviewKnowledgeAssetsDomain> {
+async function fetchOverviewKnowledgeAssetsDomainForSqlite(
+  timezone = DASHBOARD_TIMEZONE,
+): Promise<OverviewKnowledgeAssetsDomain> {
   await ensureRuntimeSettingsLoaded();
   const sqlite = await getSqliteCoreDatabase();
+  const timezoneModifier = sqliteTimezoneModifier(timezone);
 
   const knowledgeSummaryRow = sqliteGet<Record<string, unknown>>(
     sqlite,
@@ -291,15 +316,20 @@ async function fetchOverviewKnowledgeAssetsDomainForSqlite(): Promise<OverviewKn
     sqliteAll<Record<string, unknown>>(
       sqlite,
       `
-        select date(created_at) as day, count(*) as records
+        select date(created_at, ?) as day, count(*) as records
         from vibe_memories
-        where date(created_at) >= date('now', ?)
-        group by date(created_at)
+        where date(created_at, ?) >= date('now', ?, ?)
+        group by date(created_at, ?)
         order by day asc
       `,
+      timezoneModifier,
+      timezoneModifier,
+      timezoneModifier,
       `-${OVERVIEW_DAY_RANGE - 1} days`,
+      timezoneModifier,
     ),
     (day) => ({ day, records: 0 }),
+    timezone,
   );
   const originKindRows = sqliteAll<{ origin_kind: string; count: number }>(
     sqlite,
@@ -398,9 +428,12 @@ async function fetchOverviewKnowledgeAssetsDomainForSqlite(): Promise<OverviewKn
   });
 }
 
-async function fetchOverviewSystemQualityDomainForSqlite(): Promise<OverviewSystemQualityDomain> {
+async function fetchOverviewSystemQualityDomainForSqlite(
+  timezone = DASHBOARD_TIMEZONE,
+): Promise<OverviewSystemQualityDomain> {
   await ensureRuntimeSettingsLoaded();
   const sqlite = await getSqliteCoreDatabase();
+  const timezoneModifier = sqliteTimezoneModifier(timezone);
   const compileSummaryRow = sqliteGet<Record<string, unknown>>(
     sqlite,
     `
@@ -417,19 +450,24 @@ async function fetchOverviewSystemQualityDomainForSqlite(): Promise<OverviewSyst
       sqlite,
       `
         select
-          date(created_at) as day,
+          date(created_at, ?) as day,
           sum(case when status = 'ok' then 1 else 0 end) as ok,
           sum(case when status = 'degraded' then 1 else 0 end) as degraded,
           sum(case when status = 'failed' then 1 else 0 end) as failed,
           avg(duration_ms) as avg_duration_ms
         from context_compile_runs
-        where date(created_at) >= date('now', ?)
-        group by date(created_at)
+        where date(created_at, ?) >= date('now', ?, ?)
+        group by date(created_at, ?)
         order by day asc
       `,
+      timezoneModifier,
+      timezoneModifier,
+      timezoneModifier,
       `-${OVERVIEW_DAY_RANGE - 1} days`,
+      timezoneModifier,
     ),
     (day) => ({ day, ok: 0, degraded: 0, failed: 0, avg_duration_ms: null }),
+    timezone,
   );
   const searchProviderStateRow = sqliteGet<{ metadata?: string }>(
     sqlite,
@@ -526,9 +564,12 @@ async function fetchOverviewSystemQualityDomainForSqlite(): Promise<OverviewSyst
   });
 }
 
-async function fetchOverviewLlmResourcesDomainForSqlite(): Promise<OverviewLlmResourcesDomain> {
+async function fetchOverviewLlmResourcesDomainForSqlite(
+  timezone = DASHBOARD_TIMEZONE,
+): Promise<OverviewLlmResourcesDomain> {
   await ensureRuntimeSettingsLoaded();
   const sqlite = await getSqliteCoreDatabase();
+  const timezoneModifier = sqliteTimezoneModifier(timezone);
   const windowModifier = `-${LLM_KPI_DAY_RANGE - 1} days`;
   const overviewWindowModifier = `-${OVERVIEW_DAY_RANGE - 1} days`;
   const llmUsageKpiRow = sqliteGet<Record<string, unknown>>(
@@ -558,8 +599,10 @@ async function fetchOverviewLlmResourcesDomainForSqlite(): Promise<OverviewLlmRe
         coalesce(sum(case when provider <> 'local-llm' then cost_jpy else 0 end), 0)
           as cloud_cost_jpy_total_30d
       from llm_usage_logs
-      where date(created_at, '+9 hours') >= date('now', '+9 hours', ?)
+      where date(created_at, ?) >= date('now', ?, ?)
     `,
+    timezoneModifier,
+    timezoneModifier,
     windowModifier,
   );
   const cloudModelRow = sqliteGet<{ model?: string }>(
@@ -568,11 +611,13 @@ async function fetchOverviewLlmResourcesDomainForSqlite(): Promise<OverviewLlmRe
       select model
       from llm_usage_logs
       where provider <> 'local-llm'
-        and date(created_at, '+9 hours') >= date('now', '+9 hours', ?)
+        and date(created_at, ?) >= date('now', ?, ?)
       group by model
       order by count(*) desc, model asc
       limit 1
     `,
+    timezoneModifier,
+    timezoneModifier,
     windowModifier,
   );
   const llmUsageByDayRows = dailyRows(
@@ -580,7 +625,7 @@ async function fetchOverviewLlmResourcesDomainForSqlite(): Promise<OverviewLlmRe
       sqlite,
       `
         select
-          date(created_at, '+9 hours') as day,
+          date(created_at, ?) as day,
           coalesce(sum(case when provider = 'local-llm' then prompt_tokens else 0 end), 0)
             as local_prompt_tokens,
           coalesce(sum(case when provider = 'local-llm' then completion_tokens else 0 end), 0)
@@ -602,11 +647,15 @@ async function fetchOverviewLlmResourcesDomainForSqlite(): Promise<OverviewLlmRe
           sum(case when usage_mode = 'estimated' then 1 else 0 end) as estimated_calls,
           coalesce(sum(case when provider <> 'local-llm' then cost_jpy else 0 end), 0) as cost_jpy
         from llm_usage_logs
-        where date(created_at, '+9 hours') >= date('now', '+9 hours', ?)
-        group by date(created_at, '+9 hours')
+        where date(created_at, ?) >= date('now', ?, ?)
+        group by date(created_at, ?)
         order by day asc
       `,
+      timezoneModifier,
+      timezoneModifier,
+      timezoneModifier,
       overviewWindowModifier,
+      timezoneModifier,
     ),
     (day) => ({
       day,
@@ -623,6 +672,7 @@ async function fetchOverviewLlmResourcesDomainForSqlite(): Promise<OverviewLlmRe
       estimated_calls: 0,
       cost_jpy: 0,
     }),
+    timezone,
   );
   const llmUsageBySourceRows = sqliteAll<Record<string, unknown>>(
     sqlite,
@@ -636,10 +686,12 @@ async function fetchOverviewLlmResourcesDomainForSqlite(): Promise<OverviewLlmRe
         coalesce(sum(completion_tokens), 0) as completion_tokens,
         coalesce(sum(prompt_tokens + completion_tokens), 0) as total_tokens
       from llm_usage_logs
-      where date(created_at, '+9 hours') >= date('now', '+9 hours', ?)
+      where date(created_at, ?) >= date('now', ?, ?)
       group by source
       order by calls desc, source asc
     `,
+    timezoneModifier,
+    timezoneModifier,
     windowModifier,
   );
   const llmUsageTotalCalls = toNumber(llmUsageKpiRow.total_calls_30d);
@@ -831,7 +883,9 @@ async function buildLandscapeSummaryFromGraphHealth(): Promise<
   };
 }
 
-async function fetchOverviewLandscapeHealthDomainForSqlite(): Promise<OverviewLandscapeHealthDomain> {
+async function fetchOverviewLandscapeHealthDomainForSqlite(
+  _timezone = DASHBOARD_TIMEZONE,
+): Promise<OverviewLandscapeHealthDomain> {
   await ensureRuntimeSettingsLoaded();
   const sqlite = await getSqliteCoreDatabase();
   const snapshotRow = sqliteGet<{ payload?: string }>(
@@ -873,7 +927,9 @@ async function fetchOverviewLandscapeHealthDomainForSqlite(): Promise<OverviewLa
   });
 }
 
-export async function fetchOverviewKnowledgeAssetsDomainForApi(): Promise<OverviewKnowledgeAssetsDomain> {
+export async function fetchOverviewKnowledgeAssetsDomainForApi(
+  timezone = DASHBOARD_TIMEZONE,
+): Promise<OverviewKnowledgeAssetsDomain> {
   await ensureRuntimeSettingsLoaded();
   const db = getDb();
 
@@ -956,17 +1012,18 @@ export async function fetchOverviewKnowledgeAssetsDomainForApi(): Promise<Overvi
     db.execute(sql`
       with days as (
         select generate_series(
-          current_date - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day'),
-          current_date,
+          (now() at time zone ${timezone})::date - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day'),
+          (now() at time zone ${timezone})::date,
           interval '1 day'
         )::date as day
       ),
       daily_records as (
         select
-          date_trunc('day', created_at)::date as day,
+          (created_at at time zone ${timezone})::date as day,
           count(*)::int as records
         from vibe_memories
-        where created_at >= current_date - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day')
+        where (created_at at time zone ${timezone})::date >=
+          (now() at time zone ${timezone})::date - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day')
         group by 1
       )
       select
@@ -1088,7 +1145,9 @@ export async function fetchOverviewKnowledgeAssetsDomainForApi(): Promise<Overvi
   return overviewKnowledgeAssetsDomainSchema.parse(domain);
 }
 
-export async function fetchOverviewSystemQualityDomainForApi(): Promise<OverviewSystemQualityDomain> {
+export async function fetchOverviewSystemQualityDomainForApi(
+  timezone = DASHBOARD_TIMEZONE,
+): Promise<OverviewSystemQualityDomain> {
   await ensureRuntimeSettingsLoaded();
   const db = getDb();
 
@@ -1111,20 +1170,21 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
     db.execute(sql`
       with days as (
         select generate_series(
-          current_date - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day'),
-          current_date,
+          (now() at time zone ${timezone})::date - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day'),
+          (now() at time zone ${timezone})::date,
           interval '1 day'
         )::date as day
       ),
       daily_runs as (
         select
-          date_trunc('day', created_at)::date as day,
+          (created_at at time zone ${timezone})::date as day,
           count(*) filter (where status = 'ok')::int as ok,
           count(*) filter (where status = 'degraded')::int as degraded,
           count(*) filter (where status = 'failed')::int as failed,
           avg(duration_ms)::float as avg_duration_ms
         from context_compile_runs
-        where created_at >= current_date - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day')
+        where (created_at at time zone ${timezone})::date >=
+          (now() at time zone ${timezone})::date - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day')
         group by 1
       )
       select
@@ -1245,20 +1305,22 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
   return overviewSystemQualityDomainSchema.parse(domain);
 }
 
-export async function fetchOverviewLlmResourcesDomainForApi(): Promise<OverviewLlmResourcesDomain> {
+export async function fetchOverviewLlmResourcesDomainForApi(
+  timezone = DASHBOARD_TIMEZONE,
+): Promise<OverviewLlmResourcesDomain> {
   await ensureRuntimeSettingsLoaded();
   const db = getDb();
 
   const [llmUsageKpisResult, llmUsageByDayResult, llmUsageBySourceResult] = await Promise.all([
     db.execute(sql`
-      with jst_anchor as (
-        select (now() at time zone ${DASHBOARD_TIMEZONE})::date as jst_today
+      with local_anchor as (
+        select (now() at time zone ${timezone})::date as local_today
       ),
       window_usage as (
         select *
         from llm_usage_logs
-        where (created_at + interval '9 hours')::date >=
-          ((select jst_today from jst_anchor) - (${LLM_KPI_DAY_RANGE - 1} * interval '1 day'))
+        where (created_at at time zone ${timezone})::date >=
+          ((select local_today from local_anchor) - (${LLM_KPI_DAY_RANGE - 1} * interval '1 day'))
       ),
       primary_cloud_model as (
         select model
@@ -1296,19 +1358,19 @@ export async function fetchOverviewLlmResourcesDomainForApi(): Promise<OverviewL
       from window_usage
     `),
     db.execute(sql`
-      with jst_anchor as (
-        select (now() at time zone ${DASHBOARD_TIMEZONE})::date as jst_today
+      with local_anchor as (
+        select (now() at time zone ${timezone})::date as local_today
       ),
       days as (
         select generate_series(
-          (select jst_today from jst_anchor) - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day'),
-          (select jst_today from jst_anchor),
+          (select local_today from local_anchor) - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day'),
+          (select local_today from local_anchor),
           interval '1 day'
         )::date as day
       ),
       daily_usage as (
         select
-          (created_at + interval '9 hours')::date as day,
+          (created_at at time zone ${timezone})::date as day,
           coalesce(sum(prompt_tokens) filter (where provider = 'local-llm'), 0)::int
             as local_prompt_tokens,
           coalesce(sum(completion_tokens) filter (where provider = 'local-llm'), 0)::int
@@ -1330,8 +1392,8 @@ export async function fetchOverviewLlmResourcesDomainForApi(): Promise<OverviewL
           count(*) filter (where usage_mode = 'estimated')::int as estimated_calls,
           coalesce(sum(cost_jpy) filter (where provider <> 'local-llm'), 0)::float as cost_jpy
         from llm_usage_logs
-        where (created_at + interval '9 hours')::date >=
-          ((select jst_today from jst_anchor) - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day'))
+        where (created_at at time zone ${timezone})::date >=
+          ((select local_today from local_anchor) - (${OVERVIEW_DAY_RANGE - 1} * interval '1 day'))
         group by 1
       )
       select
@@ -1353,8 +1415,8 @@ export async function fetchOverviewLlmResourcesDomainForApi(): Promise<OverviewL
       order by days.day asc
     `),
     db.execute(sql`
-      with jst_anchor as (
-        select (now() at time zone ${DASHBOARD_TIMEZONE})::date as jst_today
+      with local_anchor as (
+        select (now() at time zone ${timezone})::date as local_today
       )
       select
         source,
@@ -1365,8 +1427,8 @@ export async function fetchOverviewLlmResourcesDomainForApi(): Promise<OverviewL
         coalesce(sum(completion_tokens), 0)::int as completion_tokens,
         coalesce(sum(prompt_tokens + completion_tokens), 0)::int as total_tokens
       from llm_usage_logs
-      where (created_at + interval '9 hours')::date >=
-        ((select jst_today from jst_anchor) - (${LLM_KPI_DAY_RANGE - 1} * interval '1 day'))
+      where (created_at at time zone ${timezone})::date >=
+        ((select local_today from local_anchor) - (${LLM_KPI_DAY_RANGE - 1} * interval '1 day'))
       group by source
       order by calls desc, source asc
     `),
@@ -1436,7 +1498,9 @@ export async function fetchOverviewLlmResourcesDomainForApi(): Promise<OverviewL
   return overviewLlmResourcesDomainSchema.parse(domain);
 }
 
-export async function fetchOverviewLandscapeHealthDomainForApi(): Promise<OverviewLandscapeHealthDomain> {
+export async function fetchOverviewLandscapeHealthDomainForApi(
+  _timezone = DASHBOARD_TIMEZONE,
+): Promise<OverviewLandscapeHealthDomain> {
   await ensureRuntimeSettingsLoaded();
   const domain: OverviewLandscapeHealthDomain = {
     checkedAt: checkedAt(),
@@ -1447,27 +1511,38 @@ export async function fetchOverviewLandscapeHealthDomainForApi(): Promise<Overvi
 
 export async function fetchOverviewDomainForApi(
   domain: OverviewDomainName,
+  timezone = DASHBOARD_TIMEZONE,
 ): Promise<OverviewDomainPayload> {
+  const normalizedTimezone = normalizeOverviewTimezone(timezone);
   if (isSqliteBackend()) {
-    if (domain === "knowledge-assets") return fetchOverviewKnowledgeAssetsDomainForSqlite();
-    if (domain === "landscape-health") return fetchOverviewLandscapeHealthDomainForSqlite();
-    if (domain === "system-quality") return fetchOverviewSystemQualityDomainForSqlite();
-    return fetchOverviewLlmResourcesDomainForSqlite();
+    if (domain === "knowledge-assets")
+      return fetchOverviewKnowledgeAssetsDomainForSqlite(normalizedTimezone);
+    if (domain === "landscape-health")
+      return fetchOverviewLandscapeHealthDomainForSqlite(normalizedTimezone);
+    if (domain === "system-quality")
+      return fetchOverviewSystemQualityDomainForSqlite(normalizedTimezone);
+    return fetchOverviewLlmResourcesDomainForSqlite(normalizedTimezone);
   }
 
-  if (domain === "knowledge-assets") return fetchOverviewKnowledgeAssetsDomainForApi();
-  if (domain === "landscape-health") return fetchOverviewLandscapeHealthDomainForApi();
-  if (domain === "system-quality") return fetchOverviewSystemQualityDomainForApi();
-  return fetchOverviewLlmResourcesDomainForApi();
+  if (domain === "knowledge-assets")
+    return fetchOverviewKnowledgeAssetsDomainForApi(normalizedTimezone);
+  if (domain === "landscape-health")
+    return fetchOverviewLandscapeHealthDomainForApi(normalizedTimezone);
+  if (domain === "system-quality")
+    return fetchOverviewSystemQualityDomainForApi(normalizedTimezone);
+  return fetchOverviewLlmResourcesDomainForApi(normalizedTimezone);
 }
 
-export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard> {
+export async function fetchOverviewDashboardForApi(
+  timezone = DASHBOARD_TIMEZONE,
+): Promise<OverviewDashboard> {
+  const normalizedTimezone = normalizeOverviewTimezone(timezone);
   if (isSqliteBackend()) {
     const [knowledgeAssets, landscapeHealth, systemQuality, llmResources] = await Promise.all([
-      fetchOverviewKnowledgeAssetsDomainForSqlite(),
-      fetchOverviewLandscapeHealthDomainForSqlite(),
-      fetchOverviewSystemQualityDomainForSqlite(),
-      fetchOverviewLlmResourcesDomainForSqlite(),
+      fetchOverviewKnowledgeAssetsDomainForSqlite(normalizedTimezone),
+      fetchOverviewLandscapeHealthDomainForSqlite(normalizedTimezone),
+      fetchOverviewSystemQualityDomainForSqlite(normalizedTimezone),
+      fetchOverviewLlmResourcesDomainForSqlite(normalizedTimezone),
     ]);
 
     return overviewDashboardSchema.parse({
@@ -1494,10 +1569,10 @@ export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard>
   }
 
   const [knowledgeAssets, landscapeHealth, systemQuality, llmResources] = await Promise.all([
-    fetchOverviewKnowledgeAssetsDomainForApi(),
-    fetchOverviewLandscapeHealthDomainForApi(),
-    fetchOverviewSystemQualityDomainForApi(),
-    fetchOverviewLlmResourcesDomainForApi(),
+    fetchOverviewKnowledgeAssetsDomainForApi(normalizedTimezone),
+    fetchOverviewLandscapeHealthDomainForApi(normalizedTimezone),
+    fetchOverviewSystemQualityDomainForApi(normalizedTimezone),
+    fetchOverviewLlmResourcesDomainForApi(normalizedTimezone),
   ]);
 
   const dashboard: OverviewDashboard = {

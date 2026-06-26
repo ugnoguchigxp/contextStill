@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
+import { formatDateTime, useTimezone } from "@/lib/timezone";
 import { useQuery } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -24,12 +25,6 @@ import { AdminSortableTableHead } from "./admin-sortable-table-head";
 
 const actorOptions: Array<AuditLogActor | "all"> = ["all", "agent", "user", "system"];
 
-function formatAuditDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("ja-JP", { hour12: false });
-}
-
 function compactJson(value: Record<string, unknown>, maxChars = 160): string {
   const text = JSON.stringify(value);
   if (text.length <= maxChars) return text;
@@ -50,6 +45,7 @@ function eventTypeOptions(eventTypes: string[]): ReactNode[] {
 }
 
 export function AuditLogsPage() {
+  const timezone = useTimezone();
   const initialQueryText = useMemo(() => {
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("q") ?? "";
@@ -87,7 +83,7 @@ export function AuditLogsPage() {
       {
         accessorKey: "createdAt",
         header: "Created At",
-        cell: ({ row }) => formatAuditDate(row.original.createdAt),
+        cell: ({ row }) => formatDateTime(row.original.createdAt, timezone),
       },
       {
         accessorKey: "eventType",
@@ -117,7 +113,7 @@ export function AuditLogsPage() {
         ),
       },
     ],
-    [],
+    [timezone],
   );
 
   const table = useReactTable({
@@ -283,7 +279,9 @@ export function AuditLogsPage() {
                 <span className="text-muted-foreground block mb-1 font-bold uppercase tracking-tighter">
                   Created At
                 </span>
-                <span className="font-semibold">{formatAuditDate(selectedLog.createdAt)}</span>
+                <span className="font-semibold">
+                  {formatDateTime(selectedLog.createdAt, timezone)}
+                </span>
               </div>
             </div>
             <div className="space-y-2">

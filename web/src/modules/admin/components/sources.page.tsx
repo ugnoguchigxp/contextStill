@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatDateTimeShort, useTimezone } from "@/lib/timezone";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -94,14 +95,6 @@ const resolveSiblingPath = (currentPath: string, input: string): string => {
 };
 
 const shortCommit = (commit: string): string => commit.slice(0, 7);
-
-const formatDate = (value: string): string => {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString();
-};
 
 const editableMetaKeys = new Set(["title", "showOnMenu", "showOnHome", "sort", "tags"]);
 const noop = (): void => {};
@@ -313,6 +306,7 @@ const IconButton = ({ label, Icon, size = "icon", type = "button", ...props }: I
 mermaid.initialize({ startOnLoad: false });
 
 export function SourcesPage() {
+  const timezone = useTimezone();
   const queryClient = useQueryClient();
   const initialSearchText = useMemo(() => {
     if (typeof window === "undefined") return "";
@@ -1506,7 +1500,9 @@ export function SourcesPage() {
                 <div className="font-mono">{item.commit.slice(0, 8)}</div>
                 <div className="text-muted-foreground">{item.message}</div>
                 <div className="text-muted-foreground">{item.author}</div>
-                <div className="text-muted-foreground">{formatDate(item.date)}</div>
+                <div className="text-muted-foreground">
+                  {formatDateTimeShort(item.date, timezone)}
+                </div>
               </button>
             ))}
             {historyQuery.isLoading ? (

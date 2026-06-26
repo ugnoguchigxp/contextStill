@@ -552,6 +552,8 @@ function isQueueWorkerUnavailableError(message: string): boolean {
     normalized.includes("connection reset") ||
     normalized.includes("socket connection was closed unexpectedly") ||
     normalized.includes("the operation timed out") ||
+    normalized.includes("the operation was aborted") ||
+    normalized.includes("operation was aborted") ||
     normalized.includes("failed to fetch") ||
     normalized.includes("fetch failed") ||
     normalized.includes("was there a typo in the url or port") ||

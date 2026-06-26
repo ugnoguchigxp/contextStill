@@ -10,6 +10,10 @@ import {
 } from "../../shared/doctor/doctor-reasons.js";
 import type { DoctorReport } from "../../shared/schemas/doctor.schema.js";
 import { isPipelineLockLikelyBlocking } from "./distillation-lock.util.js";
+import {
+  getDistillationFailedBacklogLevel,
+  getDistillationFailedBacklogStats,
+} from "./distillation-backlog.util.js";
 import type { ResolvedDoctorOptions } from "./doctor.types.js";
 
 function createEmptyLaunchAgent(label: string): DoctorReport["agentLogSync"]["launchAgent"] {
@@ -43,6 +47,10 @@ function createEmptyAgentLogSync(): DoctorReport["agentLogSync"] {
 
 function createEmptyDistillationHealth(label: string): DoctorReport["vibeDistillation"] {
   return {
+    inputSources: {
+      sources: 0,
+      fragments: 0,
+    },
     launchAgent: createEmptyLaunchAgent(label),
     runs: {
       totalRuns: 0,
@@ -57,10 +65,13 @@ function createEmptyDistillationHealth(label: string): DoctorReport["vibeDistill
       lastOkRunAgeMinutes: null,
     },
     jobs: {
+      total: 0,
       queued: 0,
       running: 0,
       paused: 0,
       failed: 0,
+      failedLast24h: 0,
+      failedLast7d: 0,
       lastPausedAt: null,
       lastError: null,
     },
@@ -88,9 +99,6 @@ function createEmptyDistillationHealth(label: string): DoctorReport["vibeDistill
 }
 
 const sourceDistillationFreshnessThresholdMinutes = 72 * 60;
-const failedBacklogWarningCount = 50;
-const failedBacklogCriticalCount = 200;
-
 export function createEmptyRuns(options: ResolvedDoctorOptions): DoctorReport["runs"] {
   return {
     windowSize: options.windowSize,
@@ -176,6 +184,9 @@ function appendDistillationReasons(
   prefix: string,
   distillation: DoctorReport["vibeDistillation"],
 ): void {
+  if (prefix === "SOURCE_DISTILLATION" && !sourceDistillationConfigured(distillation)) {
+    return;
+  }
   if (!distillation.launchAgent.installed) {
     reasons.push(`${prefix}_LAUNCH_AGENT_NOT_INSTALLED`);
   } else if (!distillation.launchAgent.loaded) {
@@ -185,18 +196,17 @@ function appendDistillationReasons(
   if (!distillation.runs.lastRunAt) {
     reasons.push(`${prefix}_NEVER_RAN`);
   } else if (
+    prefix !== "SOURCE_DISTILLATION" &&
     typeof ageMinutes === "number" &&
-    ageMinutes >
-      (prefix === "SOURCE_DISTILLATION"
-        ? sourceDistillationFreshnessThresholdMinutes
-        : options.freshnessThresholdMinutes)
+    ageMinutes > options.freshnessThresholdMinutes
   ) {
     reasons.push(`${prefix}_STALE`);
   }
-  if (distillation.jobs.failed >= failedBacklogWarningCount) {
+  const failedBacklogLevel = getDistillationFailedBacklogLevel(distillation);
+  if (failedBacklogLevel === "high" || failedBacklogLevel === "critical") {
     reasons.push(`${prefix}_FAILED_BACKLOG_HIGH`);
   }
-  if (distillation.jobs.failed >= failedBacklogCriticalCount) {
+  if (failedBacklogLevel === "critical") {
     reasons.push(`${prefix}_FAILED_BACKLOG_CRITICAL`);
   }
   if (distillation.queueHealth.staleRunning > 0) {
@@ -289,6 +299,24 @@ function distillationConfigured(distillation: DoctorReport["vibeDistillation"]):
   );
 }
 
+function sourceDistillationConfigured(distillation: DoctorReport["sourceDistillation"]): boolean {
+  const queueTotal =
+    distillation.jobs.queued +
+    distillation.jobs.running +
+    distillation.jobs.paused +
+    distillation.jobs.failed +
+    distillation.queueHealth.queued +
+    distillation.queueHealth.running +
+    distillation.queueHealth.retryablePaused +
+    distillation.queueHealth.staleRunning;
+  return (
+    distillation.inputSources.sources > 0 ||
+    distillation.inputSources.fragments > 0 ||
+    queueTotal > 0 ||
+    distillation.runs.totalRuns > 0
+  );
+}
+
 function distillationForReason(
   code: string,
   context: ReasonResolutionContext,
@@ -357,7 +385,7 @@ function shouldActivateConfiguredReason(code: string, context: ReasonResolutionC
     return distillationConfigured(context.vibeDistillation);
   }
   if (code.startsWith("SOURCE_DISTILLATION_")) {
-    return distillationConfigured(context.sourceDistillation);
+    return sourceDistillationConfigured(context.sourceDistillation);
   }
   return false;
 }
@@ -426,12 +454,17 @@ function evidenceForReason(
     };
   }
   if (code.startsWith("VIBE_DISTILLATION_")) {
+    const failedBacklog = getDistillationFailedBacklogStats(context.vibeDistillation);
     return {
       queued: context.vibeDistillation.queueHealth.queued,
       running: context.vibeDistillation.queueHealth.running,
       retryablePaused: context.vibeDistillation.queueHealth.retryablePaused,
       staleRunning: context.vibeDistillation.queueHealth.staleRunning,
       failed: context.vibeDistillation.jobs.failed,
+      totalJobs: failedBacklog.totalJobs,
+      failedRate: failedBacklog.failedRate,
+      failedLast24h: failedBacklog.failedLast24h,
+      failedLast7d: failedBacklog.failedLast7d,
       blockedByHigherPriority: context.vibeDistillation.queueHealth.blockedByHigherPriority,
       freshnessAgeMinutes:
         context.vibeDistillation.runs.lastOkRunAgeMinutes ??
@@ -441,12 +474,17 @@ function evidenceForReason(
     };
   }
   if (code.startsWith("SOURCE_DISTILLATION_")) {
+    const failedBacklog = getDistillationFailedBacklogStats(context.sourceDistillation);
     return {
       queued: context.sourceDistillation.queueHealth.queued,
       running: context.sourceDistillation.queueHealth.running,
       retryablePaused: context.sourceDistillation.queueHealth.retryablePaused,
       staleRunning: context.sourceDistillation.queueHealth.staleRunning,
       failed: context.sourceDistillation.jobs.failed,
+      totalJobs: failedBacklog.totalJobs,
+      failedRate: failedBacklog.failedRate,
+      failedLast24h: failedBacklog.failedLast24h,
+      failedLast7d: failedBacklog.failedLast7d,
       blockedByHigherPriority: context.sourceDistillation.queueHealth.blockedByHigherPriority,
       freshnessAgeMinutes:
         context.sourceDistillation.runs.lastOkRunAgeMinutes ??

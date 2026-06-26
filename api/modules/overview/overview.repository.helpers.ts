@@ -21,6 +21,50 @@ export const OVERVIEW_DAY_RANGE = 14;
 export const LLM_KPI_DAY_RANGE = 30;
 export const DASHBOARD_TIMEZONE = "Asia/Tokyo";
 
+export function normalizeOverviewTimezone(value: string | null | undefined): string {
+  const timezone = value?.trim();
+  if (!timezone || timezone === "system") return DASHBOARD_TIMEZONE;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
+    return timezone;
+  } catch {
+    return DASHBOARD_TIMEZONE;
+  }
+}
+
+function timezoneOffsetMinutes(timezone: string, date = new Date()): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+  const asUtc = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute"),
+    get("second"),
+  );
+  return Math.round((asUtc - date.getTime()) / 60_000);
+}
+
+export function sqliteTimezoneModifier(timezone: string): string {
+  const minutes = timezoneOffsetMinutes(normalizeOverviewTimezone(timezone));
+  const sign = minutes >= 0 ? "+" : "-";
+  const absoluteMinutes = Math.abs(minutes);
+  const hours = Math.floor(absoluteMinutes / 60);
+  const restMinutes = absoluteMinutes % 60;
+  if (restMinutes === 0) return `${sign}${hours} hours`;
+  return `${sign}${absoluteMinutes} minutes`;
+}
+
 export function toNumber(value: unknown, fallback = 0): number {
   const converted = Number(value);
   return Number.isFinite(converted) ? converted : fallback;

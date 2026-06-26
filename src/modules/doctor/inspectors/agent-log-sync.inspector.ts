@@ -10,6 +10,7 @@ import {
   metadataSyncedAt,
   metadataWarnings,
   minutesSince,
+  timestampToIso,
 } from "../doctor.utils.js";
 import { inspectLaunchAgent, pathExists } from "../launch-agent.util.js";
 
@@ -60,19 +61,18 @@ export async function inspectAgentLogSync({
               .all()
               .map((row) => ({
                 id: row.id,
-                lastSyncedAt: new Date(row.last_synced_at),
+                lastSyncedAt: timestampToIso(row.last_synced_at),
                 cursor: safeJson(row.cursor),
                 metadata: safeJson(row.metadata),
-                updatedAt: new Date(row.updated_at),
+                updatedAt: timestampToIso(row.updated_at),
               }))
           : await getDb()
               .select()
               .from(syncStates)
               .where(inArray(syncStates.id, ["codex_logs", "antigravity_logs"]));
       for (const row of rows) {
-        const lastSyncedAt = row.lastSyncedAt?.toISOString() ?? null;
-        const lastCheckedAt =
-          metadataSyncedAt(row.metadata) ?? row.updatedAt?.toISOString() ?? null;
+        const lastSyncedAt = timestampToIso(row.lastSyncedAt);
+        const lastCheckedAt = metadataSyncedAt(row.metadata) ?? timestampToIso(row.updatedAt);
         states.push({
           id: row.id,
           lastSyncedAt,

@@ -791,6 +791,58 @@ describe("Distillation Runtime Service", () => {
     );
   });
 
+  test("runDistillationCompletion falls back when a provider-local timeout aborts", async () => {
+    groupedConfig.localLlm.apiKey = "local-key";
+    groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
+    groupedConfig.localLlm.model = "gemma-4-e4b-it";
+    groupedConfig.azureOpenAi.apiKey = "azure-key";
+    groupedConfig.azureOpenAi.apiBaseUrl = "https://first.openai.azure.com";
+    groupedConfig.azureOpenAi.apiPath = "/openai/deployments";
+    groupedConfig.azureOpenAi.apiVersion = "2025-04-01-preview";
+    groupedConfig.azureOpenAi.model = "gpt-4o-mini";
+    groupedConfig.azureOpenAi.deployments = [
+      {
+        apiKey: "azure-key",
+        apiBaseUrl: "https://first.openai.azure.com",
+        apiPath: "/openai/deployments",
+        apiVersion: "2025-04-01-preview",
+        model: "gpt-4o-mini",
+      },
+    ];
+
+    const abortError = new Error("The operation was aborted.");
+    abortError.name = "AbortError";
+    const mockFetch = vi
+      .fn()
+      .mockRejectedValueOnce(abortError)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"candidates":[]}', tool_calls: [] } }],
+        }),
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await runDistillationCompletion(
+      {
+        model: "gemma-4-e4b-it",
+        messages: [{ role: "user", content: "provider timeout fallback" }],
+        maxTokens: 128,
+      },
+      {
+        providerSetting: "local-llm",
+        fallbackOrder: ["azure-openai"],
+        enableTools: false,
+      },
+    );
+
+    expect(result.content).toBe('{"candidates":[]}');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(String(mockFetch.mock.calls[1]?.[0])).toBe(
+      "https://first.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2025-04-01-preview",
+    );
+  });
+
   test("runDistillationCompletion uses configured Local LLM model for fallback", async () => {
     groupedConfig.openAi.apiKey = "openai-key";
     groupedConfig.openAi.apiBaseUrl = "https://api.openai.test/v1";

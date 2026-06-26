@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
+import { formatDateTimeShort, useTimezone } from "@/lib/timezone";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -120,7 +121,7 @@ const queueCardVisuals: Record<
   },
 };
 
-function formatRelativeTime(iso: string | null): string {
+function formatRelativeTime(iso: string | null, timezone: string): string {
   if (!iso) return "-";
   const delta = Date.now() - Date.parse(iso);
   if (!Number.isFinite(delta)) return "-";
@@ -130,7 +131,7 @@ function formatRelativeTime(iso: string | null): string {
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
-  return new Date(iso).toLocaleString();
+  return formatDateTimeShort(iso, timezone);
 }
 
 function formatElapsed(startedAt: string | null, nowMs: number): string {
@@ -274,6 +275,7 @@ function actionState(item: QueueListItemV2): {
 
 export function QueuePage() {
   const queryClient = useQueryClient();
+  const timezone = useTimezone();
   const [queue, setQueue] = useState<VisibleDistillationQueueName>("findingCandidate");
   const [status, setStatus] = useState<DistillationQueueStatus | "all">("all");
   const [query, setQuery] = useState("");
@@ -558,7 +560,7 @@ export function QueuePage() {
         header: "更新",
         cell: ({ row }) => (
           <span className="text-xs text-muted-foreground">
-            {formatRelativeTime(row.original.updatedAt)}
+            {formatRelativeTime(row.original.updatedAt, timezone)}
           </span>
         ),
       },
@@ -644,7 +646,7 @@ export function QueuePage() {
         },
       },
     ],
-    [actioning, onAction],
+    [actioning, onAction, timezone],
   );
 
   const table = useReactTable({
@@ -662,7 +664,7 @@ export function QueuePage() {
       <AdminPageHeader
         title="Distillation Queues"
         checkedAtText={
-          checkedAt ? formatRelativeTime(new Date(checkedAt).toISOString()) : undefined
+          checkedAt ? formatRelativeTime(new Date(checkedAt).toISOString(), timezone) : undefined
         }
         onRefresh={() => void invalidateQueue()}
         refreshDisabled={statsQuery.isFetching || activeQuery.isFetching || itemsQuery.isFetching}

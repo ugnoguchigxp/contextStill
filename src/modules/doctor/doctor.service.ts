@@ -76,6 +76,7 @@ async function inspectAgenticLlmWithProviderHealth(
       agenticLlm.provider === "local-llm"
         ? (agenticRouting.localLlmModel ?? agenticLlm.model)
         : undefined,
+    verifyLocalLlmGeneration: true,
   });
   return {
     ...agenticLlm,
@@ -143,7 +144,8 @@ function hasTable(database: DatabaseInspection, tableName: string): boolean {
 }
 
 function canQueryOperationalTables(): boolean {
-  return resolveDatabaseBackendConfig().kind === "postgres";
+  const backend = resolveDatabaseBackendConfig().kind;
+  return backend === "postgres" || backend === "sqlite";
 }
 
 function canQueryAgentLogSyncTables(): boolean {
@@ -269,6 +271,7 @@ function buildDesktopReadiness(input: {
 }
 
 export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorReport> {
+  const startedAt = Date.now();
   await ensureRuntimeSettingsLoaded();
   const options = resolveDoctorOptions(rawOptions);
   await cleanupExpiredAuditLogsSafe({ trigger: "doctor" });
@@ -310,12 +313,13 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     return doctorReportSchema.parse({
       status: reasonResolution.status,
       checkedAt: nowIso(),
+      totalDurationMs: Date.now() - startedAt,
       summary: reasonResolution.summary,
       reasons: reasonResolution.reasons,
       reasonDetails: reasonResolution.reasonDetails,
       skippedChecks: reasonResolution.skippedChecks,
       db: database.db,
-      vector: { installed: database.vectorInstalled },
+      vector: database.vector,
       desktopReadiness: buildDesktopReadiness({
         database,
         embedding,
@@ -403,14 +407,13 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   return doctorReportSchema.parse({
     status: reasonResolution.status,
     checkedAt: nowIso(),
+    totalDurationMs: Date.now() - startedAt,
     summary: reasonResolution.summary,
     reasons: reasonResolution.reasons,
     reasonDetails: reasonResolution.reasonDetails,
     skippedChecks: reasonResolution.skippedChecks,
     db: database.db,
-    vector: {
-      installed: database.vectorInstalled,
-    },
+    vector: database.vector,
     desktopReadiness,
     embedding,
     agenticLlm,
@@ -440,6 +443,7 @@ async function prepareDoctorDomainOptions(
 export async function runDoctorCoreInfrastructure(
   rawOptions?: DoctorOptions,
 ): Promise<DoctorCoreInfrastructureDomain> {
+  const startedAt = Date.now();
   const options = await prepareDoctorDomainOptions(rawOptions);
   const [embedding, database] = await Promise.all([
     inspectEmbedding(),
@@ -462,14 +466,13 @@ export async function runDoctorCoreInfrastructure(
   return doctorCoreInfrastructureDomainSchema.parse({
     status: reasonResolution.status,
     checkedAt: nowIso(),
+    totalDurationMs: Date.now() - startedAt,
     summary: reasonResolution.summary,
     reasons: reasonResolution.reasons,
     reasonDetails: reasonResolution.reasonDetails,
     skippedChecks: reasonResolution.skippedChecks,
     db: database.db,
-    vector: {
-      installed: database.vectorInstalled,
-    },
+    vector: database.vector,
     desktopReadiness: buildDesktopReadiness({ database, embedding }),
     embedding,
     tables: {
@@ -485,6 +488,7 @@ export async function runDoctorCoreInfrastructure(
 export async function runDoctorAiServiceTools(
   rawOptions?: DoctorOptions,
 ): Promise<DoctorAiServiceToolsDomain> {
+  const startedAt = Date.now();
   const options = await prepareDoctorDomainOptions(rawOptions);
   const mcp = await inspectMcpSurface();
   const agenticLlm = await inspectAgenticLlmWithProviderHealth(5000);
@@ -507,6 +511,7 @@ export async function runDoctorAiServiceTools(
   return doctorAiServiceToolsDomainSchema.parse({
     status: reasonResolution.status,
     checkedAt: nowIso(),
+    totalDurationMs: Date.now() - startedAt,
     summary: reasonResolution.summary,
     reasons: reasonResolution.reasons,
     reasonDetails: reasonResolution.reasonDetails,
@@ -519,6 +524,7 @@ export async function runDoctorAiServiceTools(
 export async function runDoctorPipelineAutomation(
   rawOptions?: DoctorOptions,
 ): Promise<DoctorPipelineAutomationDomain> {
+  const startedAt = Date.now();
   const options = await prepareDoctorDomainOptions(rawOptions);
   const database = await inspectDoctorDatabase(options);
   const reasons: string[] = [];
@@ -586,6 +592,7 @@ export async function runDoctorPipelineAutomation(
   return doctorPipelineAutomationDomainSchema.parse({
     status: reasonResolution.status,
     checkedAt: nowIso(),
+    totalDurationMs: Date.now() - startedAt,
     summary: reasonResolution.summary,
     reasons: reasonResolution.reasons,
     reasonDetails: reasonResolution.reasonDetails,

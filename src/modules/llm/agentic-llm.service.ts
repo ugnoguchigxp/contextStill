@@ -30,6 +30,9 @@ export type LlmProviderHealthStatus = LlmHealthStatus & {
   deploymentIndex?: number;
   selected: boolean;
   routeOrder: number | null;
+  generationChecked?: boolean;
+  generationReachable?: boolean;
+  generationError?: string;
 };
 
 type LlmProviderHealthEntry = {
@@ -195,6 +198,7 @@ export async function checkLlmProviderHealthMatrix(
     routeOrder?: LlmProviderName[];
     selectedAzureDeploymentSlots?: number[];
     selectedLocalLlmModel?: string;
+    verifyLocalLlmGeneration?: boolean;
   } = {},
 ): Promise<LlmProviderHealthStatus[]> {
   const routeOrder = options.routeOrder ?? [];
@@ -299,13 +303,41 @@ export async function checkLlmProviderHealthMatrix(
         (entry.providerName !== "local-llm" ||
           !options.selectedLocalLlmModel ||
           entry.model === options.selectedLocalLlmModel);
+      const generationStatus: Pick<
+        LlmProviderHealthStatus,
+        "generationChecked" | "generationReachable" | "generationError"
+      > = {};
+      const reachable = status.reachable;
+      const error = status.error;
+      if (options.verifyLocalLlmGeneration && entry.providerName === "local-llm" && reachable) {
+        generationStatus.generationChecked = true;
+        try {
+          const response = await entry.provider.chat({
+            model: entry.model ?? status.model,
+            messages: [{ role: "user", content: "Reply with OK only." }],
+            maxTokens: 8,
+            temperature: 0,
+          });
+          generationStatus.generationReachable = Boolean(response.content.trim());
+          if (!generationStatus.generationReachable) {
+            generationStatus.generationError = "Local LLM generation check returned empty content";
+          }
+        } catch (generationError) {
+          generationStatus.generationError =
+            generationError instanceof Error ? generationError.message : String(generationError);
+          generationStatus.generationReachable = false;
+        }
+      }
       return {
         ...status,
+        reachable,
+        ...(error ? { error } : {}),
         id: entry.id,
         label: entry.label,
         deploymentIndex: entry.deploymentIndex,
         selected,
         routeOrder: routeIndex >= 0 ? routeIndex : null,
+        ...generationStatus,
       };
     }),
   );

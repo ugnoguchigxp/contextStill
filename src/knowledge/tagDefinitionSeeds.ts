@@ -1,4 +1,6 @@
-export type KnowledgeTagSeedKind = "technology" | "change_type" | "domain";
+import { knowledgeIntentTagDefinitions } from "./intentTagDefinitions.js";
+
+export type KnowledgeTagSeedKind = "technology" | "change_type" | "domain" | "intent";
 
 export type KnowledgeTagSeed = {
   kind: KnowledgeTagSeedKind;
@@ -11,6 +13,13 @@ export type KnowledgeTagSeed = {
 };
 
 export const knowledgeTagDefinitionSeeds: KnowledgeTagSeed[] = [
+  ...knowledgeIntentTagDefinitions.map((definition, index) => ({
+    kind: "intent" as const,
+    slug: definition.slug,
+    label: definition.label,
+    description: definition.description,
+    sortOrder: index + 1,
+  })),
   { kind: "technology", slug: "typescript", label: "TypeScript", aliases: ["ts"] },
   { kind: "technology", slug: "javascript", label: "JavaScript", aliases: ["js"] },
   { kind: "technology", slug: "python", label: "Python", aliases: ["py"] },

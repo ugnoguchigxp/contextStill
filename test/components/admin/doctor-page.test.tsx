@@ -18,6 +18,7 @@ const queryClient = new QueryClient();
 const baseReport = {
   status: "degraded",
   checkedAt: "2026-05-21T13:26:44.509Z",
+  totalDurationMs: 120,
   summary: {
     blocking: 2,
     degraded: 2,
@@ -32,8 +33,8 @@ const baseReport = {
     "ANTIGRAVITY_LOGS_SYNC_STALE",
   ],
   skippedChecks: [],
-  db: { reachable: true, durationMs: 26 },
-  vector: { installed: true },
+  db: { reachable: true, durationMs: 1, responseMs: 0.8, queryMs: 26, totalInspectionMs: 80 },
+  vector: { installed: true, healthMs: 53, source: "rust" },
   embedding: {
     configured: true,
     provider: "daemon",
@@ -318,6 +319,7 @@ const baseReport = {
 const baseDomainMeta = {
   status: baseReport.status,
   checkedAt: baseReport.checkedAt,
+  totalDurationMs: baseReport.totalDurationMs,
   summary: baseReport.summary,
   reasonDetails: [],
   skippedChecks: baseReport.skippedChecks,
@@ -485,6 +487,40 @@ describe("DoctorPage", () => {
     expect(screen.getByText("Doctor が未定義の診断コードを返しました。")).toBeInTheDocument();
     expect(screen.queryByText("AI 推奨アクション:")).not.toBeInTheDocument();
     expect(screen.queryByText("パイプライン推奨アクション:")).not.toBeInTheDocument();
+  });
+
+  it("colors core infrastructure metrics by health severity", () => {
+    const core = {
+      ...coreInfrastructureDomain,
+      totalDurationMs: 6000,
+      db: {
+        reachable: true,
+        durationMs: 100,
+        responseMs: 100,
+        queryMs: 800,
+        totalInspectionMs: 1000,
+      },
+      vector: { installed: false, healthMs: 2500, source: "unavailable" },
+      tables: {
+        ...baseReport.tables,
+        missing: ["knowledge_items"],
+      },
+    };
+
+    mockDoctorDomainQueries({ core: { data: core } });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DoctorPage />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("DB response: 100ms")).toHaveClass("text-amber-700");
+    expect(screen.getByText("100ms")).toHaveClass("text-amber-600");
+    expect(screen.getByText("800ms")).toHaveClass("text-red-600");
+    expect(screen.getByText("2500ms")).toHaveClass("text-red-600");
+    expect(screen.getByText("Missing 1")).toHaveClass("text-red-600");
+    expect(screen.getByText("6000ms")).toHaveClass("text-amber-600");
   });
 
   it("renders error card when doctor query fails", () => {

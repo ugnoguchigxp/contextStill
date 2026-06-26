@@ -71,6 +71,9 @@ where
                 }
             }
         },
+        CliCommand::Vector { action, json } => {
+            domains::vector_index::routing::handle_command(action, json, env)
+        }
         CliCommand::Bootstrap { action, json } => match action {
             domains::cli::routing::BootstrapAction::Preflight => {
                 let report = domains::bootstrap::service::preflight(env);

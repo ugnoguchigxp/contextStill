@@ -1,8 +1,7 @@
-export function formatCheckedAt(value: string | null | undefined): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString();
+import { formatDateTimeShort } from "./timezone";
+
+export function formatCheckedAt(value: string | null | undefined, timezone: string): string {
+  return formatDateTimeShort(value, timezone);
 }
 
 export function formatNumber(value: number | null | undefined): string {

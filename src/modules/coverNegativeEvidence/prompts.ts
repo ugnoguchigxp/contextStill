@@ -1,7 +1,10 @@
+import { knowledgeIntentTagSlugs } from "../../knowledge/intentTagDefinitions.js";
+
 export function buildNegativeEvidencePrompt(params: {
   title: string;
   content: string;
 }) {
+  const allowedIntentTags = knowledgeIntentTagSlugs.join(", ");
   return `あなたは failure pattern、regression、architecture/security risk を表す review correction candidate（Negative Knowledge）を分析します。
 この correction が再利用可能な rule/guardrail として有効なら status='ready'、不十分・誤検知・再利用不能なら該当 status にしてください。
 
@@ -11,12 +14,13 @@ ${params.content}
 
 JSON のキー名、enum 値、タグ、repo path、API 名、コマンド名、エラー名、固有名詞は指定どおり保持してください。
 それ以外の distilled と evidence の自然文は必ず日本語で書いてください。入力が英語でも、保存される failure / impact / trigger / fix / verification / decisionSignal の説明文は日本語へ言い換えてください。
+intentTags は次の許可リストからだけ選んでください: ${allowedIntentTags}
 
 次の schema の JSON response だけを返してください:
 {
   "status": "ready" | "insufficient" | "false_positive" | "not_reusable",
   "polarity": "negative" | "neutral",
-  "intentTags": string[], // "guardrail", "failure_pattern", "regression", "security_risk" などの normalized tags
+  "intentTags": string[],
   "appliesTo": {
     "technologies": string[], // この rule が適用される concrete stack, runtime, library, language
     "changeTypes": string[], // "implementation", "configuration", "testing", "diagnosis" などの concrete change categories

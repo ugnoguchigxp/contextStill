@@ -2,9 +2,12 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { getDb } from "../src/db/index.js";
+import { getRuntimeSqliteCoreDatabase } from "../src/db/sqlite/runtime.js";
 import { getExposedToolEntries } from "../src/mcp/tools/index.js";
 import { runDoctor, runDoctorAiServiceTools } from "../src/modules/doctor/doctor.service.js";
 import { inspectCompileRuns } from "../src/modules/doctor/inspectors/compile.inspector.js";
+import { inspectDatabase } from "../src/modules/doctor/inspectors/database.inspector.js";
+import { inspectVibeDistillation } from "../src/modules/doctor/inspectors/vibe-distillation.inspector.js";
 import { embeddingHealth } from "../src/modules/embedding/embedding.service.js";
 import {
   checkAgenticLlmHealth,
@@ -17,6 +20,9 @@ vi.mock("../src/db/index.js", () => ({
     transaction: vi.fn(),
   },
   getDb: vi.fn(),
+}));
+vi.mock("../src/db/sqlite/runtime.js", () => ({
+  getRuntimeSqliteCoreDatabase: vi.fn(),
 }));
 vi.mock("../src/modules/audit/audit-log.service.js", () => ({
   cleanupExpiredAuditLogsSafe: vi.fn(),
@@ -268,7 +274,8 @@ describe("Doctor Service", () => {
       where: vi.fn().mockResolvedValue([
         {
           id: "codex_logs",
-          lastSyncedAt: new Date(),
+          lastSyncedAt: `unix-ms:${Date.now()}`,
+          updatedAt: `unix-ms:${Date.now()}`,
           cursor: {},
           metadata: { warnings: ["Low disk"] },
         },
@@ -300,6 +307,101 @@ describe("Doctor Service", () => {
     const report = await runDoctor();
     expect(report.vibeDistillation.runs.totalRuns).toBe(10);
     expect(report.sourceDistillation.runs.totalRuns).toBe(10);
+  });
+
+  test("uses sqlite terminal queue rows for vibe distillation run history", async () => {
+    process.env.CONTEXT_STILL_DB_BACKEND = "sqlite";
+    vi.mocked(fs.access).mockResolvedValue(undefined);
+    vi.mocked(execFileSync).mockReturnValue("state = running\n" as any);
+
+    const sqliteDb = {
+      query: vi.fn((query: string) => {
+        if (query.includes("status, last_outcome_kind")) {
+          return {
+            all: vi.fn(() => [
+              {
+                status: "completed",
+                last_outcome_kind: "candidates_found",
+                ended_at: "2026-06-26T06:12:13.686Z",
+              },
+              {
+                status: "skipped",
+                last_outcome_kind: "source_missing",
+                ended_at: "2026-06-26T06:19:46.253Z",
+              },
+            ]),
+          };
+        }
+        if (query.includes("status, last_error")) {
+          return {
+            all: vi.fn(() => [
+              {
+                status: "completed",
+                last_error: null,
+                updated_at: "2026-06-26T06:12:13.686Z",
+              },
+            ]),
+          };
+        }
+        return {
+          all: vi.fn(() => [
+            {
+              source_kind: "vibe_memory",
+              status: "completed",
+              created_at: "2026-06-26T06:12:13.000Z",
+              locked_at: null,
+              heartbeat_at: null,
+              updated_at: "2026-06-26T06:12:13.686Z",
+              next_run_at: null,
+              last_error: null,
+            },
+          ]),
+        };
+      }),
+    };
+    vi.mocked(getRuntimeSqliteCoreDatabase).mockResolvedValue({ db: sqliteDb } as any);
+
+    const report = await inspectVibeDistillation({ canQueryDb: true });
+
+    expect(report.runs.totalRuns).toBe(2);
+    expect(report.runs.okRuns).toBe(1);
+    expect(report.runs.lastRunAt).toBe("2026-06-26T06:19:46.253Z");
+    expect(report.runs.lastOkRunAt).toBe("2026-06-26T06:12:13.686Z");
+  });
+
+  test("keeps sqlite vector health time out of the DB response metric", async () => {
+    process.env.CONTEXT_STILL_DB_BACKEND = "sqlite";
+    vi.mocked(execFileSync).mockImplementation(() => {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 20) {
+        // Simulate a slow current vector health check without using a cache.
+      }
+      return JSON.stringify({ vecUsable: true }) as any;
+    });
+
+    const sqliteDb = {
+      query: vi.fn((query: string) => {
+        if (query.includes("select 1")) {
+          return { get: vi.fn(() => ({ ok: 1 })) };
+        }
+        return { all: vi.fn(() => []) };
+      }),
+    };
+    vi.mocked(getRuntimeSqliteCoreDatabase).mockResolvedValue({
+      db: sqliteDb,
+      path: "/tmp/context-still-test.sqlite",
+      vector: { available: false },
+    } as any);
+
+    const inspection = await inspectDatabase({
+      freshnessThresholdMinutes: 30,
+      staleDecayFactor: 0.5,
+      zeroUseWarningMinActiveCount: 10,
+    });
+
+    expect(inspection.vector.healthMs).toBeGreaterThanOrEqual(15);
+    expect(inspection.db.responseMs).toBeLessThan(inspection.vector.healthMs ?? 0);
+    expect(inspection.db.durationMs).toBe(Math.round(inspection.db.responseMs));
   });
 
   test("inspects launch agents via launchctl", async () => {
@@ -565,6 +667,8 @@ describe("Doctor Service", () => {
     const executedSql = mockDb.execute.mock.calls
       .map(([query]) => flattenSqlChunks(query))
       .join("\n");
+    expect(executedSql).toContain("operational_risk");
+    expect(executedSql).toContain("data_integrity");
     expect(executedSql).toContain("knowledge_origin_links");
     expect(executedSql).toContain("knowledge_source_links");
     expect(executedSql).toContain("sourceDocumentUri");

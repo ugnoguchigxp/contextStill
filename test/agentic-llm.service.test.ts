@@ -325,6 +325,48 @@ describe("agentic-llm service tests", () => {
     });
   });
 
+  test("checkLlmProviderHealthMatrix reports Local LLM generation failure without marking endpoint offline", async () => {
+    groupedConfig.localLlm.models = [
+      {
+        name: "Qwen",
+        apiBaseUrl: "http://127.0.0.1:11434",
+        apiPath: "/v1/chat/completions",
+        apiKey: "qwen-key",
+        model: "qwen3",
+      },
+    ];
+    const local = mockProvider("local-llm", true, true);
+    local.chat.mockRejectedValue(new Error("The operation was aborted."));
+    vi.mocked(createOpenAiProvider).mockReturnValue(mockProvider("openai", false, false) as any);
+    vi.mocked(createAzureOpenAiProvider).mockReturnValue(
+      mockProvider("azure-openai", false, false) as any,
+    );
+    vi.mocked(createBedrockProvider).mockReturnValue(mockProvider("bedrock", false, false) as any);
+    vi.mocked(createLocalLlmProvider).mockReturnValue(local as any);
+
+    const health = await checkLlmProviderHealthMatrix(2000, {
+      selectedProvider: "local-llm",
+      routeOrder: ["local-llm"],
+      verifyLocalLlmGeneration: true,
+    });
+
+    expect(health).toHaveLength(1);
+    expect(health[0]).toMatchObject({
+      id: "local-llm:1",
+      configured: true,
+      reachable: true,
+      generationChecked: true,
+      generationReachable: false,
+      generationError: "The operation was aborted.",
+    });
+    expect(local.chat).toHaveBeenCalledWith({
+      model: "qwen3",
+      messages: [{ role: "user", content: "Reply with OK only." }],
+      maxTokens: 8,
+      temperature: 0,
+    });
+  });
+
   describe("checkAgenticLlmHealth fallback logic", () => {
     test("returns first configured and reachable provider", async () => {
       // OpenAI and Azure are unconfigured; bedrock is configured & reachable, local is unreachable.

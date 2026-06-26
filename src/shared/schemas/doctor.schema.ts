@@ -120,6 +120,12 @@ const desktopReadinessSchema = z.object({
 });
 
 export const doctorDistillationHealthSchema = z.object({
+  inputSources: z
+    .object({
+      sources: z.number().int().nonnegative(),
+      fragments: z.number().int().nonnegative(),
+    })
+    .default({ sources: 0, fragments: 0 }),
   launchAgent: launchAgentSchema,
   runs: z.object({
     totalRuns: z.number().int().nonnegative(),
@@ -134,10 +140,13 @@ export const doctorDistillationHealthSchema = z.object({
     lastOkRunAgeMinutes: z.number().nonnegative().nullable(),
   }),
   jobs: z.object({
+    total: z.number().int().nonnegative().optional(),
     queued: z.number().int().nonnegative(),
     running: z.number().int().nonnegative(),
     paused: z.number().int().nonnegative(),
     failed: z.number().int().nonnegative(),
+    failedLast24h: z.number().int().nonnegative().optional(),
+    failedLast7d: z.number().int().nonnegative().optional(),
     lastPausedAt: z.string().datetime().nullable(),
     lastError: z.string().nullable(),
   }),
@@ -157,11 +166,15 @@ const llmProviderHealthSchema = z.object({
   deploymentIndex: z.number().int().positive().optional(),
   selected: z.boolean().default(false),
   routeOrder: z.number().int().nonnegative().nullable().default(null),
+  generationChecked: z.boolean().optional(),
+  generationReachable: z.boolean().optional(),
+  generationError: z.string().optional(),
 });
 
 export const doctorReportSchema = z.object({
   status: doctorStatusSchema,
   checkedAt: z.string().datetime(),
+  totalDurationMs: z.number().int().nonnegative(),
   summary: doctorReasonSummarySchema,
   reasons: z.array(z.string()),
   reasonDetails: z.array(doctorReasonDetailSchema),
@@ -169,10 +182,15 @@ export const doctorReportSchema = z.object({
   db: z.object({
     reachable: z.boolean(),
     durationMs: z.number().int().nonnegative(),
+    responseMs: z.number().nonnegative(),
+    queryMs: z.number().nonnegative(),
+    totalInspectionMs: z.number().nonnegative(),
     error: z.string().optional(),
   }),
   vector: z.object({
     installed: z.boolean(),
+    healthMs: z.number().nonnegative().nullable(),
+    source: z.enum(["rust", "bun", "postgres", "unavailable"]),
   }),
   desktopReadiness: desktopReadinessSchema.optional(),
   embedding: z.object({
@@ -310,6 +328,7 @@ export const doctorReportSchema = z.object({
 const doctorDomainBaseSchema = doctorReportSchema.pick({
   status: true,
   checkedAt: true,
+  totalDurationMs: true,
   summary: true,
   reasons: true,
   reasonDetails: true,

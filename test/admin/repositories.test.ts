@@ -363,6 +363,9 @@ describe("Admin Repository", () => {
       const res = await fetchOverviewDashboard();
       expect(res).toEqual({ checkedAt: "now" });
       expect(spy).toHaveBeenCalledWith("/api/overview");
+
+      await fetchOverviewDashboard("America/New_York");
+      expect(spy).toHaveBeenLastCalledWith("/api/overview?timezone=America%2FNew_York");
     });
 
     it("fetchOverview domain payloads", async () => {
@@ -380,6 +383,11 @@ describe("Admin Repository", () => {
       expect(spy).toHaveBeenNthCalledWith(2, "/api/overview/domains/landscape-health");
       expect(spy).toHaveBeenNthCalledWith(3, "/api/overview/domains/system-quality");
       expect(spy).toHaveBeenNthCalledWith(4, "/api/overview/domains/llm-resources");
+
+      await fetchOverviewKnowledgeAssetsDomain("Asia/Tokyo");
+      expect(spy).toHaveBeenLastCalledWith(
+        "/api/overview/domains/knowledge-assets?timezone=Asia%2FTokyo",
+      );
     });
   });
 

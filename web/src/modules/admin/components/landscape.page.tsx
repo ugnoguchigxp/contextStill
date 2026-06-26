@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
+import { formatDateTimeShort, useTimezone } from "@/lib/timezone";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -32,6 +33,7 @@ const badgeOptions: Array<DeadZoneKnowledgeReviewBadge | "all"> = [
 
 export function LandscapePage() {
   const queryClient = useQueryClient();
+  const timezone = useTimezone();
   const [reason, setReason] = useState<DeadZoneKnowledgeReviewReason>("all");
   const [badge, setBadge] = useState<DeadZoneKnowledgeReviewBadge | "all">("all");
   const [minSimilarity, setMinSimilarity] = useState(0.9);
@@ -187,7 +189,11 @@ export function LandscapePage() {
     <div className="landscape-page">
       <AdminPageHeader
         title="Landscape"
-        checkedAtText={deadZoneKnowledgeReview.data?.generatedAt ?? undefined}
+        checkedAtText={
+          deadZoneKnowledgeReview.data?.generatedAt
+            ? formatDateTimeShort(deadZoneKnowledgeReview.data.generatedAt, timezone)
+            : undefined
+        }
         refreshDisabled={deadZoneKnowledgeReview.isFetching}
         onRefresh={() => void deadZoneKnowledgeReview.refetch()}
         status={deadZoneKnowledgeReview.error ? "failed" : "ok"}

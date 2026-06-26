@@ -1,4 +1,3 @@
 [workspace]
-members = ["crates/context-stilld"]
+members = ["crates/context-stilld", "crates/sqlite-vec"]
 resolver = "2"
-

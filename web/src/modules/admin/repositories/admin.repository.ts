@@ -286,6 +286,7 @@ export type DoctorReasonDetail = {
 export type DoctorReport = {
   status: "ok" | "degraded" | "failed";
   checkedAt: string;
+  totalDurationMs: number;
   summary: {
     blocking: number;
     degraded: number;
@@ -295,8 +296,19 @@ export type DoctorReport = {
   reasons: string[];
   reasonDetails?: DoctorReasonDetail[];
   skippedChecks?: DoctorReasonDetail[];
-  db: { reachable: boolean; durationMs: number; error?: string };
-  vector: { installed: boolean };
+  db: {
+    reachable: boolean;
+    durationMs: number;
+    responseMs: number;
+    queryMs: number;
+    totalInspectionMs: number;
+    error?: string;
+  };
+  vector: {
+    installed: boolean;
+    healthMs: number | null;
+    source: "rust" | "bun" | "postgres" | "unavailable";
+  };
   desktopReadiness?: {
     backendCategory: "sqlite-local" | "postgres-server" | "compat-legacy";
     modeLabel: string;
@@ -338,6 +350,9 @@ export type DoctorReport = {
       deploymentIndex?: number;
       selected?: boolean;
       routeOrder?: number | null;
+      generationChecked?: boolean;
+      generationReachable?: boolean;
+      generationError?: string;
     }>;
   };
   runs: {
@@ -454,10 +469,13 @@ export type DoctorReport = {
       lastOkRunAgeMinutes?: number | null;
     };
     jobs: {
+      total?: number;
       queued: number;
       running: number;
       paused: number;
       failed: number;
+      failedLast24h?: number;
+      failedLast7d?: number;
       lastPausedAt: string | null;
       lastError: string | null;
     };
@@ -559,7 +577,13 @@ export type DoctorReport = {
 
 export type DoctorDomainBase = Pick<
   DoctorReport,
-  "status" | "checkedAt" | "summary" | "reasons" | "reasonDetails" | "skippedChecks"
+  | "status"
+  | "checkedAt"
+  | "totalDurationMs"
+  | "summary"
+  | "reasons"
+  | "reasonDetails"
+  | "skippedChecks"
 >;
 
 export type DoctorCoreInfrastructureDomain = DoctorDomainBase &
@@ -2767,24 +2791,46 @@ export async function fetchDoctorPipelineAutomationDomain(): Promise<DoctorPipel
   return getJson<DoctorPipelineAutomationDomain>("/api/doctor/domains/pipeline-automation");
 }
 
-export async function fetchOverviewDashboard(): Promise<OverviewDashboard> {
-  return getJson<OverviewDashboard>("/api/overview");
+function withTimezoneQuery(path: string, timezone?: string): string {
+  if (!timezone) return path;
+  const params = new URLSearchParams({ timezone });
+  return `${path}?${params.toString()}`;
 }
 
-export async function fetchOverviewKnowledgeAssetsDomain(): Promise<OverviewKnowledgeAssetsDomain> {
-  return getJson<OverviewKnowledgeAssetsDomain>("/api/overview/domains/knowledge-assets");
+export async function fetchOverviewDashboard(timezone?: string): Promise<OverviewDashboard> {
+  return getJson<OverviewDashboard>(withTimezoneQuery("/api/overview", timezone));
 }
 
-export async function fetchOverviewLandscapeHealthDomain(): Promise<OverviewLandscapeHealthDomain> {
-  return getJson<OverviewLandscapeHealthDomain>("/api/overview/domains/landscape-health");
+export async function fetchOverviewKnowledgeAssetsDomain(
+  timezone?: string,
+): Promise<OverviewKnowledgeAssetsDomain> {
+  return getJson<OverviewKnowledgeAssetsDomain>(
+    withTimezoneQuery("/api/overview/domains/knowledge-assets", timezone),
+  );
 }
 
-export async function fetchOverviewSystemQualityDomain(): Promise<OverviewSystemQualityDomain> {
-  return getJson<OverviewSystemQualityDomain>("/api/overview/domains/system-quality");
+export async function fetchOverviewLandscapeHealthDomain(
+  timezone?: string,
+): Promise<OverviewLandscapeHealthDomain> {
+  return getJson<OverviewLandscapeHealthDomain>(
+    withTimezoneQuery("/api/overview/domains/landscape-health", timezone),
+  );
 }
 
-export async function fetchOverviewLlmResourcesDomain(): Promise<OverviewLlmResourcesDomain> {
-  return getJson<OverviewLlmResourcesDomain>("/api/overview/domains/llm-resources");
+export async function fetchOverviewSystemQualityDomain(
+  timezone?: string,
+): Promise<OverviewSystemQualityDomain> {
+  return getJson<OverviewSystemQualityDomain>(
+    withTimezoneQuery("/api/overview/domains/system-quality", timezone),
+  );
+}
+
+export async function fetchOverviewLlmResourcesDomain(
+  timezone?: string,
+): Promise<OverviewLlmResourcesDomain> {
+  return getJson<OverviewLlmResourcesDomain>(
+    withTimezoneQuery("/api/overview/domains/llm-resources", timezone),
+  );
 }
 
 export async function fetchGraphSnapshot(

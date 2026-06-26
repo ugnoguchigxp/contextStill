@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCheckedAt, formatNumber } from "@/lib/admin-formatters";
+import { useTimezone } from "@/lib/timezone";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Cpu, Database } from "lucide-react";
 import type { ReactNode } from "react";
@@ -29,10 +30,35 @@ type DoctorDomainReport =
 
 type DoctorStatus = DoctorDomainReport["status"];
 type Accent = "emerald" | "violet" | "cyan";
+type HealthTone = "safe" | "warning" | "danger" | "muted";
 
 function formatDurationMs(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "-";
   return `${Math.round(value)}ms`;
+}
+
+function durationTone(
+  value: number | null | undefined,
+  thresholds: { warningMs: number; dangerMs: number },
+): HealthTone {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "muted";
+  if (value >= thresholds.dangerMs) return "danger";
+  if (value >= thresholds.warningMs) return "warning";
+  return "safe";
+}
+
+function healthTextClass(tone: HealthTone): string {
+  if (tone === "safe") return "text-emerald-600";
+  if (tone === "warning") return "text-amber-600";
+  if (tone === "danger") return "text-red-600";
+  return "text-slate-400";
+}
+
+function healthBadgeClass(tone: HealthTone): string {
+  if (tone === "safe") return "border-emerald-500/20 text-emerald-700 bg-emerald-50/60";
+  if (tone === "warning") return "border-amber-500/25 text-amber-700 bg-amber-50/70";
+  if (tone === "danger") return "border-red-500/25 text-red-700 bg-red-50/70";
+  return "border-slate-200 text-slate-500 bg-slate-50";
 }
 
 function formatAgeMinutes(value: number | null | undefined): string {
@@ -61,8 +87,13 @@ function llmHealthLabel(provider: {
   configured: boolean;
   reachable: boolean;
   error?: string;
+  generationChecked?: boolean;
+  generationReachable?: boolean;
 }): string {
   if (!provider.configured) return "Unconfigured";
+  if (provider.reachable && provider.generationChecked && provider.generationReachable === false) {
+    return "Generation slow";
+  }
   if (provider.reachable) return "Reachable";
   return provider.error ? "Offline" : "Unknown";
 }
@@ -115,6 +146,7 @@ function DomainShell({
   subtitle,
   icon,
   badge,
+  badgeTone,
   children,
 }: {
   accent: Accent;
@@ -122,9 +154,13 @@ function DomainShell({
   subtitle: string;
   icon: ReactNode;
   badge: ReactNode;
+  badgeTone?: HealthTone;
   children: ReactNode;
 }) {
   const classes = accentClasses(accent);
+  const badgeClass = badgeTone
+    ? `text-[12px] font-bold py-0.5 px-2 ${healthBadgeClass(badgeTone)}`
+    : classes.badge;
   return (
     <section className={classes.section}>
       <div
@@ -141,7 +177,7 @@ function DomainShell({
             <span className="text-[12.5px] text-slate-400 font-medium mt-1">{subtitle}</span>
           </div>
         </div>
-        <Badge variant="outline" className={classes.badge}>
+        <Badge variant="outline" className={badgeClass}>
           {badge}
         </Badge>
       </div>
@@ -239,6 +275,18 @@ function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDoma
   const infraSignals = getDomainSignals(getDoctorReasonDetails(data), "infrastructure");
   const missingTables = data.tables?.missing.length ?? 0;
   const desktopReadiness = data.desktopReadiness;
+  const dbResponseMs = data.db.responseMs ?? data.db.durationMs;
+  const dbResponseTone = data.db.reachable
+    ? durationTone(dbResponseMs, { warningMs: 50, dangerMs: 250 })
+    : "danger";
+  const dbQueryTone = durationTone(data.db.queryMs, { warningMs: 100, dangerMs: 750 });
+  const vectorTone = data.vector.installed
+    ? durationTone(data.vector.healthMs, { warningMs: 750, dangerMs: 2000 })
+    : "danger";
+  const doctorTotalTone = durationTone(data.totalDurationMs, { warningMs: 5000, dangerMs: 15000 });
+  const requiredTablesTone: HealthTone = missingTables > 0 ? "danger" : "safe";
+  const embeddingDaemonTone: HealthTone = data.embedding?.daemon.reachable ? "safe" : "warning";
+  const embeddingCliTone: HealthTone = data.embedding?.cli.usable ? "safe" : "warning";
 
   return (
     <DomainShell
@@ -246,28 +294,55 @@ function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDoma
       title="Core Infrastructure"
       subtitle="Database & Vector Engine Health"
       icon={<Database className="w-4 h-4" style={{ color: "#10b981" }} />}
-      badge={`DB check: ${formatDurationMs(data.db.durationMs)}`}
+      badge={`DB response: ${formatDurationMs(dbResponseMs)}`}
+      badgeTone={dbResponseTone}
     >
       <div className="flex flex-col justify-between h-full py-1 gap-4">
-        <div className="grid grid-cols-2 gap-2 border-b border-slate-100 pb-3 mb-1 text-center md:text-left">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 border-b border-slate-100 pb-3 mb-1 text-center md:text-left">
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
               DB Status
             </span>
             <strong
-              className={`text-2xl font-extrabold mt-1 leading-none ${
-                data.db.reachable ? "text-emerald-600" : "text-red-600"
-              }`}
+              className={`text-2xl font-extrabold mt-1 leading-none ${healthTextClass(
+                data.db.reachable ? "safe" : "danger",
+              )}`}
             >
               {data.db.reachable ? "Online" : "Offline"}
             </strong>
           </div>
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
-              DB Check
+              DB Response
             </span>
-            <strong className="text-slate-800 text-2xl font-extrabold mt-1 leading-none">
-              {formatDurationMs(data.db.durationMs)}
+            <strong
+              className={`text-2xl font-extrabold mt-1 leading-none ${healthTextClass(
+                dbResponseTone,
+              )}`}
+            >
+              {formatDurationMs(dbResponseMs)}
+            </strong>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
+              DB Queries
+            </span>
+            <strong
+              className={`text-2xl font-extrabold mt-1 leading-none ${healthTextClass(
+                dbQueryTone,
+              )}`}
+            >
+              {formatDurationMs(data.db.queryMs)}
+            </strong>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
+              Vector
+            </span>
+            <strong
+              className={`text-2xl font-extrabold mt-1 leading-none ${healthTextClass(vectorTone)}`}
+            >
+              {formatDurationMs(data.vector.healthMs)}
             </strong>
           </div>
         </div>
@@ -291,21 +366,31 @@ function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDoma
           )}
           <div className="flex items-center justify-between">
             <span>Required Tables</span>
-            <strong className={missingTables > 0 ? "text-red-600" : "text-slate-700"}>
+            <strong className={healthTextClass(requiredTablesTone)}>
               {missingTables > 0 ? `Missing ${missingTables}` : "OK"}
             </strong>
           </div>
           <div className="flex items-center justify-between">
+            <span>Vector engine</span>
+            <strong className={healthTextClass(vectorTone)}>
+              {data.vector.installed ? `installed via ${data.vector.source}` : "missing"}
+            </strong>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>Doctor total</span>
+            <strong className={healthTextClass(doctorTotalTone)}>
+              {formatDurationMs(data.totalDurationMs)}
+            </strong>
+          </div>
+          <div className="flex items-center justify-between">
             <span>Embedding Daemon</span>
-            <strong
-              className={data.embedding?.daemon.reachable ? "text-emerald-600" : "text-amber-600"}
-            >
+            <strong className={healthTextClass(embeddingDaemonTone)}>
               {data.embedding?.daemon.reachable ? "Reachable" : "Offline"}
             </strong>
           </div>
           <div className="flex items-center justify-between">
             <span>Embedding CLI</span>
-            <strong className={data.embedding?.cli.usable ? "text-emerald-600" : "text-amber-600"}>
+            <strong className={healthTextClass(embeddingCliTone)}>
               {data.embedding?.cli.usable ? "Usable" : "Unavailable"}
             </strong>
           </div>
@@ -608,6 +693,7 @@ function PipelineAutomationDomain({ data }: { data: DoctorPipelineAutomationDoma
 }
 
 export function DoctorPage() {
+  const timezone = useTimezone();
   const coreInfrastructure = useQuery({
     queryKey: ["doctor", "domain", "core-infrastructure"],
     queryFn: () => fetchDoctorCoreInfrastructureDomain(),
@@ -637,7 +723,7 @@ export function DoctorPage() {
     <div className="flex h-full flex-col overflow-hidden bg-background">
       <AdminPageHeader
         title="Doctor"
-        checkedAtText={formatCheckedAt(latestCheckedAt(loadedReports))}
+        checkedAtText={formatCheckedAt(latestCheckedAt(loadedReports), timezone)}
         onRefresh={() => {
           void Promise.all([
             coreInfrastructure.refetch(),

@@ -94,6 +94,7 @@ export const validDistillationQueueHealth = {
 export const validDoctorReport: DoctorReport = {
   status: "ok",
   checkedAt: "2026-05-15T00:00:00.000Z",
+  totalDurationMs: 1,
   summary: {
     blocking: 0,
     degraded: 0,
@@ -103,8 +104,8 @@ export const validDoctorReport: DoctorReport = {
   reasons: [],
   reasonDetails: [],
   skippedChecks: [],
-  db: { reachable: true, durationMs: 1 },
-  vector: { installed: true },
+  db: { reachable: true, durationMs: 1, responseMs: 1, queryMs: 0, totalInspectionMs: 1 },
+  vector: { installed: true, healthMs: 1, source: "rust" },
   embedding: {
     configured: true,
     provider: "daemon",
@@ -236,6 +237,10 @@ export const validDoctorReport: DoctorReport = {
     nextActions: [],
   },
   vibeDistillation: {
+    inputSources: {
+      sources: 0,
+      fragments: 0,
+    },
     launchAgent: {
       label: "memory-router.vibe-distillation",
       plistPath: "/tmp/vibe-distillation.plist",
@@ -267,6 +272,10 @@ export const validDoctorReport: DoctorReport = {
     nextActions: [],
   },
   sourceDistillation: {
+    inputSources: {
+      sources: 0,
+      fragments: 0,
+    },
     launchAgent: {
       label: "memory-router.source-distillation",
       plistPath: "/tmp/source-distillation.plist",
@@ -302,6 +311,7 @@ export const validDoctorReport: DoctorReport = {
 export const validDoctorCoreInfrastructure = doctorCoreInfrastructureDomainSchema.parse({
   status: validDoctorReport.status,
   checkedAt: validDoctorReport.checkedAt,
+  totalDurationMs: validDoctorReport.totalDurationMs,
   summary: validDoctorReport.summary,
   reasons: validDoctorReport.reasons,
   reasonDetails: validDoctorReport.reasonDetails,
@@ -317,6 +327,7 @@ export const validDoctorCoreInfrastructure = doctorCoreInfrastructureDomainSchem
 export const validDoctorAiServiceTools = doctorAiServiceToolsDomainSchema.parse({
   status: validDoctorReport.status,
   checkedAt: validDoctorReport.checkedAt,
+  totalDurationMs: validDoctorReport.totalDurationMs,
   summary: validDoctorReport.summary,
   reasons: validDoctorReport.reasons,
   reasonDetails: validDoctorReport.reasonDetails,
@@ -328,6 +339,7 @@ export const validDoctorAiServiceTools = doctorAiServiceToolsDomainSchema.parse(
 export const validDoctorPipelineAutomation = doctorPipelineAutomationDomainSchema.parse({
   status: validDoctorReport.status,
   checkedAt: validDoctorReport.checkedAt,
+  totalDurationMs: validDoctorReport.totalDurationMs,
   summary: validDoctorReport.summary,
   reasons: validDoctorReport.reasons,
   reasonDetails: validDoctorReport.reasonDetails,

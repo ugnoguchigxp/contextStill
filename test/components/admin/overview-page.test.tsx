@@ -8,10 +8,11 @@ import { OverviewPage } from "../../../web/src/modules/admin/components/overview
 const defaultDoctorData = {
   status: "degraded",
   checkedAt: "2026-05-20T00:00:00.000Z",
-  db: { reachable: true },
+  totalDurationMs: 120,
+  db: { reachable: true, durationMs: 1, responseMs: 0.8, queryMs: 20, totalInspectionMs: 60 },
   storage: { writable: true },
   llm: { available: true },
-  vector: { installed: true },
+  vector: { installed: true, healthMs: 40, source: "rust" },
   mcp: {
     nextActions: ["unused active knowledge を確認する（103/112）"],
     staleKnowledgeCount: 1,

@@ -1,12 +1,13 @@
 export const doctorReportValidInput = {
   status: "ok",
   checkedAt: "2026-05-25T00:00:00.000Z",
+  totalDurationMs: 10,
   summary: { blocking: 0, degraded: 0, maintenance: 0, skipped: 0 },
   reasons: [],
   reasonDetails: [],
   skippedChecks: [],
-  db: { reachable: true, durationMs: 10 },
-  vector: { installed: true },
+  db: { reachable: true, durationMs: 1, responseMs: 0.5, queryMs: 2.5, totalInspectionMs: 3 },
+  vector: { installed: true, healthMs: 4, source: "rust" },
   embedding: {
     configured: true,
     provider: "daemon",

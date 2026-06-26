@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { formatCheckedAt } from "@/lib/admin-formatters";
+import { useTimezone } from "@/lib/timezone";
 import { useQuery } from "@tanstack/react-query";
 import React from "react";
 import {
@@ -99,21 +100,22 @@ function OverviewDomainPlaceholder({
 }
 
 export function OverviewPage() {
+  const timezone = useTimezone();
   const knowledgeAssets = useQuery({
-    queryKey: ["overview-domain", "knowledge-assets"],
-    queryFn: () => fetchOverviewKnowledgeAssetsDomain(),
+    queryKey: ["overview-domain", "knowledge-assets", timezone],
+    queryFn: () => fetchOverviewKnowledgeAssetsDomain(timezone),
   });
   const landscapeHealth = useQuery({
-    queryKey: ["overview-domain", "landscape-health"],
-    queryFn: () => fetchOverviewLandscapeHealthDomain(),
+    queryKey: ["overview-domain", "landscape-health", timezone],
+    queryFn: () => fetchOverviewLandscapeHealthDomain(timezone),
   });
   const systemQuality = useQuery({
-    queryKey: ["overview-domain", "system-quality"],
-    queryFn: () => fetchOverviewSystemQualityDomain(),
+    queryKey: ["overview-domain", "system-quality", timezone],
+    queryFn: () => fetchOverviewSystemQualityDomain(timezone),
   });
   const llmResources = useQuery({
-    queryKey: ["overview-domain", "llm-resources"],
-    queryFn: () => fetchOverviewLlmResourcesDomain(),
+    queryKey: ["overview-domain", "llm-resources", timezone],
+    queryFn: () => fetchOverviewLlmResourcesDomain(timezone),
   });
   const doctor = useQuery({ queryKey: ["doctor"], queryFn: () => fetchDoctorReport() });
 
@@ -136,7 +138,7 @@ export function OverviewPage() {
     <div className="flex h-full flex-col overflow-hidden bg-background">
       <AdminPageHeader
         title="Overview"
-        checkedAtText={formatCheckedAt(checkedAt)}
+        checkedAtText={formatCheckedAt(checkedAt, timezone)}
         onRefresh={() => {
           void Promise.all([
             knowledgeAssets.refetch(),

@@ -2,8 +2,33 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
+export function timestampToIso(raw: unknown): string | null {
+  if (raw instanceof Date) {
+    const timestamp = raw.getTime();
+    return Number.isFinite(timestamp) ? raw.toISOString() : null;
+  }
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) ? new Date(raw).toISOString() : null;
+  }
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const unixMillis = trimmed.startsWith("unix-ms:")
+    ? Number(trimmed.slice("unix-ms:".length))
+    : Number.NaN;
+  if (Number.isFinite(unixMillis)) return new Date(unixMillis).toISOString();
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)) {
+    const timestamp = Date.parse(`${trimmed.replace(" ", "T")}Z`);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+  }
+  const timestamp = Date.parse(trimmed);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
 export function minutesSince(iso: string): number {
-  const deltaMs = Date.now() - new Date(iso).getTime();
+  const timestamp = timestampToIso(iso);
+  if (!timestamp) return 0;
+  const deltaMs = Date.now() - new Date(timestamp).getTime();
   return Math.max(0, deltaMs / 1000 / 60);
 }
 
@@ -27,9 +52,7 @@ export function metadataSkipped(raw: unknown): boolean {
 export function metadataSyncedAt(raw: unknown): string | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const syncedAt = (raw as { syncedAt?: unknown }).syncedAt;
-  if (typeof syncedAt !== "string") return null;
-  const timestamp = Date.parse(syncedAt);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+  return timestampToIso(syncedAt);
 }
 
 export type ReasonCount = {
