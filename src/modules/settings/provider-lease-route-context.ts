@@ -24,21 +24,25 @@ function localLlmRouteTargetValue(model: {
   });
 }
 
-function findPoolTarget(params: {
+function routeClaimGroupId(route: RuntimeSettingsRoute): string | null {
+  if (route.provider === "auto") return null;
+  return route.providerPoolId?.trim() || `task-routing:${route.provider}`;
+}
+
+function findLeaseTarget(params: {
   settings: RuntimeSettingsEditable;
-  poolId: string;
   targetId: string;
 }): RuntimeProviderPoolTarget | null {
-  const pool = params.settings.providerPools.find((item) => item.id === params.poolId);
-  if (!pool) return null;
-  return (
-    pool.targets.find((target) => {
-      if (target.provider === "local-llm") return target.localLlmModelId === params.targetId;
-      if (target.provider === "azure-openai")
-        return String(target.deploymentSlot) === params.targetId;
-      return target.targetId === params.targetId;
-    }) ?? null
-  );
+  if (params.settings.providers["local-llm"].models.some((model) => model.id === params.targetId)) {
+    return { provider: "local-llm", localLlmModelId: params.targetId };
+  }
+  if (/^\d+$/.test(params.targetId)) {
+    return { provider: "azure-openai", deploymentSlot: Number(params.targetId) };
+  }
+  for (const provider of ["openai", "bedrock", "codex"] as const) {
+    if (params.targetId === provider) return { provider, targetId: provider };
+  }
+  return null;
 }
 
 export function runWithProviderLeaseRouteContext<T>(
@@ -54,8 +58,8 @@ export function applyProviderLeaseRouteContext(
   route: RuntimeSettingsRoute,
 ): RuntimeSettingsRoute {
   const context = storage.getStore();
-  if (!context || route.providerPoolId !== context.poolId) return route;
-  const target = findPoolTarget({ settings, poolId: context.poolId, targetId: context.targetId });
+  if (!context || routeClaimGroupId(route) !== context.poolId) return route;
+  const target = findLeaseTarget({ settings, targetId: context.targetId });
   if (!target) return route;
 
   if (target.provider === "local-llm") {

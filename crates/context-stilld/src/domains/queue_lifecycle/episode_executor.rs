@@ -7,6 +7,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::Client;
+use reqwest::header::RETRY_AFTER;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
@@ -179,10 +180,40 @@ struct ProcessCounters {
     skipped: i64,
     value_skipped: i64,
     duplicate_generation_kind_skipped: i64,
+    near_duplicate_skipped: i64,
     failed_segments: i64,
     accepted_candidate_count: i64,
     episode_ids: Vec<String>,
     saved_source_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct NearDuplicateCandidate {
+    id: String,
+    title: String,
+    situation: String,
+    observations: String,
+    action: String,
+    outcome: String,
+    lesson: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct NearDuplicateReview {
+    publish: bool,
+    #[serde(default, rename = "duplicateOfEpisodeId")]
+    duplicate_of_episode_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_score")]
+    confidence: i64,
+    #[serde(default)]
+    reason: String,
+}
+
+#[derive(Debug)]
+enum EpisodePersistOutcome {
+    Created(String),
+    SourceDeduped(String),
+    NearDuplicateSkipped(NearDuplicateReview),
 }
 
 pub(crate) fn run_episode_distiller_job_for_connection(
@@ -361,6 +392,8 @@ fn process_episode_distiller_job(
     );
     let mut skipped_value_reviews =
         json_array_at(&job.metadata, "/episodeDistiller/skippedValueReviews");
+    let mut near_duplicate_reviews =
+        json_array_at(&job.metadata, "/episodeDistiller/nearDuplicateReviews");
     let mut segment_results = json_array_at(&job.metadata, "/episodeDistiller/segmentResults");
     let completed_segments = completed_segment_indexes(&segment_results);
     let mut terminal_skip_error: Option<String> = None;
@@ -387,6 +420,7 @@ fn process_episode_distiller_job(
             &segment_errors,
             &skipped_duplicate_generation_kinds,
             &skipped_value_reviews,
+            &near_duplicate_reviews,
             None,
         ),
     )?;
@@ -411,6 +445,7 @@ fn process_episode_distiller_job(
                 &segment_errors,
                 &skipped_duplicate_generation_kinds,
                 &skipped_value_reviews,
+                &near_duplicate_reviews,
                 None,
             ),
         )?;
@@ -441,6 +476,7 @@ fn process_episode_distiller_job(
                     &segment_errors,
                     &skipped_duplicate_generation_kinds,
                     &skipped_value_reviews,
+                    &near_duplicate_reviews,
                     None,
                 ),
             )?;
@@ -485,6 +521,7 @@ fn process_episode_distiller_job(
                         &segment_errors,
                         &skipped_duplicate_generation_kinds,
                         &skipped_value_reviews,
+                        &near_duplicate_reviews,
                         None,
                     ),
                 )?;
@@ -524,6 +561,7 @@ fn process_episode_distiller_job(
                     &segment_errors,
                     &skipped_duplicate_generation_kinds,
                     &skipped_value_reviews,
+                    &near_duplicate_reviews,
                     None,
                 ),
             )?;
@@ -608,6 +646,7 @@ fn process_episode_distiller_job(
                     &segment_errors,
                     &skipped_duplicate_generation_kinds,
                     &skipped_value_reviews,
+                    &near_duplicate_reviews,
                     None,
                 ),
             )?;
@@ -619,26 +658,52 @@ fn process_episode_distiller_job(
         let mut segment_source_keys = Vec::new();
         let mut segment_generated = 0;
         let mut segment_deduped = 0;
+        let mut segment_near_duplicate_skipped = 0;
         for item in segment_pending.iter() {
-            let (episode_id, deduped) = create_episode_idempotently(
+            let persist_outcome = create_episode_idempotently(
                 connection,
                 item,
                 &document,
                 cwd.as_deref(),
                 project.as_deref(),
+                target,
+                api_key,
+                timeout_seconds,
             )?;
-            push_unique_string(&mut counters.episode_ids, episode_id.clone());
-            push_unique_string(&mut counters.saved_source_keys, item.source_key.clone());
-            segment_episode_ids.push(episode_id);
-            segment_source_keys.push(item.source_key.clone());
-            if deduped {
-                counters.deduped += 1;
-                segment_deduped += 1;
-            } else {
-                counters.generated += 1;
-                segment_generated += 1;
+            match persist_outcome {
+                EpisodePersistOutcome::Created(episode_id) => {
+                    push_unique_string(&mut counters.episode_ids, episode_id.clone());
+                    push_unique_string(&mut counters.saved_source_keys, item.source_key.clone());
+                    segment_episode_ids.push(episode_id);
+                    segment_source_keys.push(item.source_key.clone());
+                    counters.generated += 1;
+                    segment_generated += 1;
+                    last_episode_created_at = Some(now_timestamp());
+                }
+                EpisodePersistOutcome::SourceDeduped(episode_id) => {
+                    push_unique_string(&mut counters.episode_ids, episode_id.clone());
+                    push_unique_string(&mut counters.saved_source_keys, item.source_key.clone());
+                    segment_episode_ids.push(episode_id);
+                    segment_source_keys.push(item.source_key.clone());
+                    counters.deduped += 1;
+                    segment_deduped += 1;
+                    last_episode_created_at = Some(now_timestamp());
+                }
+                EpisodePersistOutcome::NearDuplicateSkipped(review) => {
+                    counters.skipped += 1;
+                    counters.near_duplicate_skipped += 1;
+                    segment_near_duplicate_skipped += 1;
+                    near_duplicate_reviews.push(json!({
+                        "segment": segment_index,
+                        "title": item.canonical.title,
+                        "sourceKey": item.source_key,
+                        "publish": false,
+                        "duplicateOfEpisodeId": review.duplicate_of_episode_id,
+                        "confidence": review.confidence,
+                        "reason": review.reason
+                    }));
+                }
             }
-            last_episode_created_at = Some(now_timestamp());
             patch_episode_progress(
                 connection,
                 job,
@@ -653,6 +718,7 @@ fn process_episode_distiller_job(
                     &segment_errors,
                     &skipped_duplicate_generation_kinds,
                     &skipped_value_reviews,
+                    &near_duplicate_reviews,
                     None,
                 ),
             )?;
@@ -662,12 +728,19 @@ fn process_episode_distiller_job(
             &mut segment_results,
             json!({
                 "segment": segment_index,
-                "status": if segment_generated > 0 { "saved" } else { "deduped" },
+                "status": if segment_generated > 0 {
+                    "saved"
+                } else if segment_deduped > 0 {
+                    "deduped"
+                } else {
+                    "near_duplicate_skipped"
+                },
                 "episodeIds": segment_episode_ids,
                 "sourceKeys": segment_source_keys,
                 "acceptedCandidateCount": segment_pending.len(),
                 "generated": segment_generated,
                 "deduped": segment_deduped,
+                "nearDuplicateSkipped": segment_near_duplicate_skipped,
                 "completedAt": last_segment_completed_at
             }),
         );
@@ -685,6 +758,7 @@ fn process_episode_distiller_job(
                 &segment_errors,
                 &skipped_duplicate_generation_kinds,
                 &skipped_value_reviews,
+                &near_duplicate_reviews,
                 None,
             ),
         )?;
@@ -764,6 +838,7 @@ fn process_episode_distiller_job(
         &segment_errors,
         &skipped_duplicate_generation_kinds,
         &skipped_value_reviews,
+        &near_duplicate_reviews,
         Some(completed_at.as_str()),
     );
     mark_completed(connection, job, status, outcome, &metadata)?;
@@ -781,6 +856,7 @@ fn process_episode_distiller_job(
                 "skipped": counters.skipped,
                 "valueSkipped": counters.value_skipped,
                 "duplicateGenerationKindSkipped": counters.duplicate_generation_kind_skipped,
+                "nearDuplicateSkipped": counters.near_duplicate_skipped,
                 "failedSegments": counters.failed_segments,
                 "episodeIds": counters.episode_ids,
                 "acceptedCandidateCount": counters.accepted_candidate_count,
@@ -1119,13 +1195,22 @@ fn distill_segment(
         .send()
         .map_err(|error| CliError::io(format!("local-llm request failed: {error}")))?;
     let status = response.status();
+    let retry_after_seconds = response
+        .headers()
+        .get(RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_retry_after_seconds);
     let body = response
         .text()
         .map_err(|error| CliError::io(format!("failed to read local-llm response: {error}")))?;
     if !status.is_success() {
+        let retry_after_message = retry_after_seconds
+            .map(|seconds| format!(" retry_after_seconds={seconds}"))
+            .unwrap_or_default();
         return Err(CliError::io(format!(
-            "local-llm HTTP {}: {}",
+            "local-llm HTTP {}{}: {}",
             status.as_u16(),
+            retry_after_message,
             truncate(&body, 1000)
         )));
     }
@@ -1246,15 +1331,366 @@ fn build_local_llm_chat_completions_url(api_base_url: &str, api_path: &str) -> S
     }
 }
 
+fn parse_json_string_array(value: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(value)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn string_array_overlap_count(left: &[String], right: &[String]) -> usize {
+    let right_set = right
+        .iter()
+        .map(|item| item.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    left.iter()
+        .filter(|item| right_set.contains(&item.to_ascii_lowercase()))
+        .count()
+}
+
+fn file_paths_for_range(document: &SourceDocument, start: usize, end: usize) -> Vec<String> {
+    let mut paths = Vec::new();
+    for event in &document.events {
+        if event.end_offset <= start || event.start_offset >= end {
+            continue;
+        }
+        if let Some(path) = event
+            .file_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            if !paths.iter().any(|item| item == path) {
+                paths.push(path.to_string());
+            }
+        }
+    }
+    paths
+}
+
+fn find_near_duplicate_candidates(
+    connection: &Connection,
+    item: &PendingEpisode,
+    document: &SourceDocument,
+    cwd: Option<&str>,
+    project: Option<&str>,
+) -> Result<Vec<NearDuplicateCandidate>, CliError> {
+    let canonical = calibrate_episode(item.canonical.clone());
+    let generation_kind = normalize_generation_kind(&canonical.generation_kind);
+    let outcome_kind = normalize_outcome_kind(&canonical.outcome_kind);
+    let current_files =
+        file_paths_for_range(document, item.source_start_offset, item.source_end_offset);
+    let mut statement = connection
+        .prepare(
+            "
+            select id, title, situation, observations, action, outcome, lesson,
+                   domains, technologies, change_types, repo_path, repo_key, source_key,
+                   outcome_kind, coalesce(metadata, '{}')
+            from episode_cards
+            where source_kind = 'vibe_memory'
+              and status = 'active'
+              and source_key <> ?1
+              and json_extract(metadata, '$.episodeDistillation.parentVibeMemoryId') = ?2
+              and (?3 is null or repo_path = ?3)
+              and (?4 is null or repo_key = ?4)
+            order by created_at desc
+            limit 25
+            ",
+        )
+        .map_err(|error| {
+            CliError::io(format!("failed to prepare near duplicate query: {error}"))
+        })?;
+    let rows = statement
+        .query_map(
+            params![item.source_key, document.vibe_memory_id, cwd, project],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                    row.get::<_, String>(12)?,
+                    row.get::<_, String>(13)?,
+                    row.get::<_, String>(14)?,
+                ))
+            },
+        )
+        .map_err(|error| {
+            CliError::io(format!(
+                "failed to query near duplicate candidates: {error}"
+            ))
+        })?;
+    let mut candidates = Vec::new();
+    for row in rows {
+        let (
+            id,
+            title,
+            situation,
+            observations,
+            action,
+            outcome,
+            lesson,
+            domains,
+            technologies,
+            change_types,
+            _repo_path,
+            _repo_key,
+            _source_key,
+            candidate_outcome_kind,
+            metadata_text,
+        ) = row
+            .map_err(|error| CliError::io(format!("failed to read near duplicate row: {error}")))?;
+        if normalize_outcome_kind(&candidate_outcome_kind) != outcome_kind {
+            continue;
+        }
+        let metadata = parse_json_or_empty(&metadata_text);
+        let candidate_generation_kind = metadata
+            .pointer("/episodeDistillation/canonical/generationKind")
+            .and_then(Value::as_str)
+            .map(normalize_generation_kind)
+            .or_else(|| {
+                metadata
+                    .pointer("/episodeDistillation/sourceStartOffset")
+                    .and_then(Value::as_u64)
+                    .map(|_| "task_episode".to_string())
+            })
+            .unwrap_or_else(|| "task_episode".to_string());
+        if candidate_generation_kind != generation_kind {
+            continue;
+        }
+        let Some(candidate_start) = metadata
+            .pointer("/episodeDistillation/sourceStartOffset")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+        else {
+            continue;
+        };
+        let Some(candidate_end) = metadata
+            .pointer("/episodeDistillation/sourceEndOffset")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+        else {
+            continue;
+        };
+        let candidate_files = file_paths_for_range(document, candidate_start, candidate_end);
+        let same_file = string_array_overlap_count(&current_files, &candidate_files) > 0;
+        let facet_overlap =
+            string_array_overlap_count(&canonical.domains, &parse_json_string_array(&domains))
+                + string_array_overlap_count(
+                    &canonical.technologies,
+                    &parse_json_string_array(&technologies),
+                )
+                + string_array_overlap_count(
+                    &canonical.change_types,
+                    &parse_json_string_array(&change_types),
+                );
+        if same_file && facet_overlap >= 2 {
+            candidates.push(NearDuplicateCandidate {
+                id,
+                title,
+                situation,
+                observations,
+                action,
+                outcome,
+                lesson,
+            });
+        }
+        if candidates.len() >= 3 {
+            break;
+        }
+    }
+    Ok(candidates)
+}
+
+fn near_duplicate_review_messages(
+    item: &PendingEpisode,
+    candidates: &[NearDuplicateCandidate],
+) -> Value {
+    let canonical = calibrate_episode(item.canonical.clone());
+    let system_content = [
+        "あなたは ContextStill の EpisodeCard 登録前レビューアです。",
+        "新規Episode候補が既存Episodeと実質的に同じ作業・判断・教訓を表す場合は登録しない判断を返してください。",
+        "同じファイルや同じ親ログでも、別の判断・失敗・結果・再利用教訓を持つなら publish=true にしてください。",
+        "出力は JSON object のみ。Markdown や説明文を付けないでください。",
+    ]
+    .join("\n");
+    let user_content = [
+        "次の shape の JSON object を返してください:".to_string(),
+        r#"{"publish":true,"duplicateOfEpisodeId":null,"confidence":0,"reason":"..."}"#.to_string(),
+        String::new(),
+        "New Episode candidate:".to_string(),
+        json!({
+            "title": canonical.title,
+            "context": canonical.context,
+            "keyDecisions": canonical.key_decisions,
+            "actionTaken": canonical.action_taken,
+            "outcome": canonical.outcome,
+            "reusableLesson": canonical.reusable_lesson,
+            "generationKind": canonical.generation_kind,
+            "outcomeKind": canonical.outcome_kind,
+            "domains": canonical.domains,
+            "technologies": canonical.technologies,
+            "changeTypes": canonical.change_types
+        })
+        .to_string(),
+        String::new(),
+        "Existing candidate episodes:".to_string(),
+        json!(candidates
+            .iter()
+            .map(|candidate| json!({
+                "id": candidate.id,
+                "title": candidate.title,
+                "situation": candidate.situation,
+                "observations": candidate.observations,
+                "action": candidate.action,
+                "outcome": candidate.outcome,
+                "lesson": candidate.lesson
+            }))
+            .collect::<Vec<_>>())
+        .to_string(),
+    ]
+    .join("\n");
+    json!([
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": user_content}
+    ])
+}
+
+fn parse_near_duplicate_review(content: &str) -> Result<NearDuplicateReview, CliError> {
+    let trimmed = content.trim();
+    let candidate = if trimmed.starts_with("```") {
+        trimmed
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("```"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        trimmed.to_string()
+    };
+    let start = candidate
+        .find('{')
+        .ok_or_else(|| CliError::io("near duplicate review did not contain JSON object"))?;
+    let end = candidate
+        .rfind('}')
+        .ok_or_else(|| CliError::io("near duplicate review did not contain JSON object end"))?;
+    serde_json::from_str(&candidate[start..=end])
+        .map_err(|error| CliError::io(format!("near duplicate review parse failed: {error}")))
+}
+
+fn review_near_duplicate_episode(
+    item: &PendingEpisode,
+    candidates: &[NearDuplicateCandidate],
+    target: &LocalLlmTargetConfig,
+    api_key: Option<&str>,
+    timeout_seconds: u64,
+) -> Result<NearDuplicateReview, CliError> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(timeout_seconds.max(30)))
+        .build()
+        .map_err(|error| CliError::io(format!("failed to build local-llm client: {error}")))?;
+    let url = build_local_llm_chat_completions_url(&target.api_base_url, &target.api_path);
+    let mut request = client.post(url).json(&json!({
+        "model": target.model,
+        "messages": near_duplicate_review_messages(item, candidates),
+        "max_tokens": 800,
+        "temperature": 0
+    }));
+    if let Some(api_key) = api_key.map(str::trim).filter(|value| !value.is_empty()) {
+        request = request.bearer_auth(api_key);
+    }
+    let response = request
+        .send()
+        .map_err(|error| CliError::io(format!("near duplicate review request failed: {error}")))?;
+    let status = response.status();
+    let retry_after_seconds = response
+        .headers()
+        .get(RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_retry_after_seconds);
+    let body = response.text().map_err(|error| {
+        CliError::io(format!(
+            "failed to read near duplicate review response: {error}"
+        ))
+    })?;
+    if !status.is_success() {
+        let retry_after_message = retry_after_seconds
+            .map(|seconds| format!(" retry_after_seconds={seconds}"))
+            .unwrap_or_default();
+        return Err(CliError::io(format!(
+            "near duplicate review HTTP {}{}: {}",
+            status.as_u16(),
+            retry_after_message,
+            truncate(&body, 1000)
+        )));
+    }
+    let parsed: Value = serde_json::from_str(&body).map_err(|error| {
+        CliError::io(format!(
+            "failed to parse near duplicate review response JSON: {error}"
+        ))
+    })?;
+    let content = parsed
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            CliError::io("near duplicate review response did not include message content")
+        })?;
+    parse_near_duplicate_review(content)
+}
+
+fn near_duplicate_review_allows_publish(
+    review: &NearDuplicateReview,
+    candidates: &[NearDuplicateCandidate],
+) -> bool {
+    if review.publish {
+        return true;
+    }
+    if review.confidence < 70 {
+        return true;
+    }
+    let Some(duplicate_id) = review
+        .duplicate_of_episode_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return true;
+    };
+    !candidates
+        .iter()
+        .any(|candidate| candidate.id == duplicate_id)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn create_episode_idempotently(
     connection: &Connection,
     item: &PendingEpisode,
     document: &SourceDocument,
     cwd: Option<&str>,
     project: Option<&str>,
-) -> Result<(String, bool), CliError> {
+    target: &LocalLlmTargetConfig,
+    api_key: Option<&str>,
+    timeout_seconds: u64,
+) -> Result<EpisodePersistOutcome, CliError> {
     if let Some(existing) = existing_episode_id(connection, &item.source_key)? {
-        return Ok((existing, true));
+        return Ok(EpisodePersistOutcome::SourceDeduped(existing));
+    }
+    let candidates = find_near_duplicate_candidates(connection, item, document, cwd, project)?;
+    if !candidates.is_empty() {
+        let review =
+            review_near_duplicate_episode(item, &candidates, target, api_key, timeout_seconds)?;
+        if !near_duplicate_review_allows_publish(&review, &candidates) {
+            return Ok(EpisodePersistOutcome::NearDuplicateSkipped(review));
+        }
     }
     connection
         .execute_batch("BEGIN IMMEDIATE")
@@ -1275,7 +1711,7 @@ fn create_episode_idempotently(
         Err(error) => {
             let _ = connection.execute_batch("ROLLBACK");
             if let Some(existing) = existing_episode_id(connection, &item.source_key)? {
-                Ok((existing, true))
+                Ok(EpisodePersistOutcome::SourceDeduped(existing))
             } else {
                 Err(error)
             }
@@ -1289,9 +1725,9 @@ fn create_episode_idempotently_in_transaction(
     document: &SourceDocument,
     cwd: Option<&str>,
     project: Option<&str>,
-) -> Result<(String, bool), CliError> {
+) -> Result<EpisodePersistOutcome, CliError> {
     if let Some(existing) = existing_episode_id(connection, &item.source_key)? {
-        return Ok((existing, true));
+        return Ok(EpisodePersistOutcome::SourceDeduped(existing));
     }
     let id = pseudo_uuid();
     let ref_id = pseudo_uuid();
@@ -1431,7 +1867,7 @@ fn create_episode_idempotently_in_transaction(
             ],
         )
         .map_err(|error| CliError::io(format!("failed to insert episode ref: {error}")))?;
-    Ok((id, false))
+    Ok(EpisodePersistOutcome::Created(id))
 }
 
 fn existing_episode_id(
@@ -1461,6 +1897,7 @@ fn counters_from_metadata(metadata: &Value) -> ProcessCounters {
             metadata,
             "/episodeDistiller/duplicateGenerationKindSkipped",
         ),
+        near_duplicate_skipped: metadata_i64_at(metadata, "/episodeDistiller/nearDuplicateSkipped"),
         failed_segments: 0,
         accepted_candidate_count: metadata_i64_at(
             metadata,
@@ -1507,6 +1944,7 @@ fn episode_progress_metadata(
     segment_errors: &[Value],
     skipped_duplicate_generation_kinds: &[Value],
     skipped_value_reviews: &[Value],
+    near_duplicate_reviews: &[Value],
     completed_at: Option<&str>,
 ) -> Value {
     let internal_chunked = internal_chunked_distillation_enabled();
@@ -1522,6 +1960,7 @@ fn episode_progress_metadata(
             "skipped": counters.skipped,
             "valueSkipped": counters.value_skipped,
             "duplicateGenerationKindSkipped": counters.duplicate_generation_kind_skipped,
+            "nearDuplicateSkipped": counters.near_duplicate_skipped,
             "failedSegments": counters.failed_segments,
             "segmentCount": segment_count,
             "currentSegment": current_segment,
@@ -1535,7 +1974,8 @@ fn episode_progress_metadata(
             "segmentResults": segment_results,
             "segmentErrors": segment_errors,
             "skippedDuplicateGenerationKinds": skipped_duplicate_generation_kinds,
-            "skippedValueReviews": skipped_value_reviews
+            "skippedValueReviews": skipped_value_reviews,
+            "nearDuplicateReviews": near_duplicate_reviews
         }
     });
     if let Some(completed_at) = completed_at {
@@ -1581,6 +2021,7 @@ fn is_completed_segment_status(status: &str) -> bool {
             | "empty"
             | "low_value_skipped"
             | "duplicate_generation_kind_skipped"
+            | "near_duplicate_skipped"
             | "no_episode"
     )
 }
@@ -1675,25 +2116,27 @@ fn mark_provider_unavailable_retry(
     job: &EpisodeDistillerJobRow,
     error: &str,
 ) -> Result<(), CliError> {
+    let retry_after_seconds = provider_retry_after_seconds(error);
     connection
         .execute(
             "
             update episode_distiller_queue
             set status = 'pending',
-                next_run_at = datetime('now', '+10 minutes'),
+                next_run_at = datetime('now', '+' || ?1 || ' seconds'),
                 locked_by = null,
                 locked_at = null,
                 heartbeat_at = null,
                 completed_at = null,
-                last_error = ?1,
+                last_error = ?2,
                 last_outcome_kind = 'provider_unavailable_retry',
-                metadata = json_patch(coalesce(nullif(metadata, ''), '{}'), ?2),
+                metadata = json_patch(coalesce(nullif(metadata, ''), '{}'), ?3),
                 updated_at = CURRENT_TIMESTAMP
-            where id = ?3
+            where id = ?4
             ",
             params![
+                retry_after_seconds,
                 truncate(error, 1000),
-                json!({"episodeDistiller": {"providerUnavailableRetriedAt": now_timestamp(), "providerUnavailableError": truncate(error, 1000), "executor": "rust"}}).to_string(),
+                json!({"episodeDistiller": {"providerUnavailableRetriedAt": now_timestamp(), "providerUnavailableError": truncate(error, 1000), "providerRetryAfterSeconds": retry_after_seconds, "executor": "rust"}}).to_string(),
                 job.id
             ],
         )
@@ -2050,6 +2493,26 @@ fn is_nonworking_local_llm_error(error: &str) -> bool {
         || lower.contains("connection closed")
 }
 
+fn parse_retry_after_seconds(value: &str) -> Option<i64> {
+    value
+        .trim()
+        .parse::<i64>()
+        .ok()
+        .map(|seconds| seconds.clamp(1, 3600))
+}
+
+fn provider_retry_after_seconds(error: &str) -> i64 {
+    let Some(index) = error.find("retry_after_seconds=") else {
+        return 30;
+    };
+    let value = &error[index + "retry_after_seconds=".len()..];
+    let token = value
+        .split(|ch: char| !ch.is_ascii_digit())
+        .next()
+        .unwrap_or_default();
+    parse_retry_after_seconds(token).unwrap_or(30)
+}
+
 fn truncate(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_string();
@@ -2390,6 +2853,10 @@ mod tests {
             .pointer("/episodeDistiller/providerUnavailableRetriedAt")
             .and_then(Value::as_str)
             .is_some());
+        assert_eq!(
+            metadata.pointer("/episodeDistiller/providerRetryAfterSeconds"),
+            Some(&json!(30))
+        );
         assert!(metadata
             .pointer("/episodeDistiller/lastEpisodeCreatedAt")
             .and_then(Value::as_str)
@@ -2418,9 +2885,27 @@ mod tests {
             event_start: segments[0].event_start.clone(),
             event_end: segments[0].event_end.clone(),
         };
-        let (saved_episode_id, deduped) =
-            create_episode_idempotently(&connection, &pending, &document, None, None).unwrap();
-        assert!(!deduped);
+        let target = LocalLlmTargetConfig {
+            target_id: "local-a".to_string(),
+            api_base_url: "http://127.0.0.1:1".to_string(),
+            api_path: "/v1/chat/completions".to_string(),
+            model: "qwen".to_string(),
+        };
+        let saved_episode_id = match create_episode_idempotently(
+            &connection,
+            &pending,
+            &document,
+            None,
+            None,
+            &target,
+            None,
+            30,
+        )
+        .unwrap()
+        {
+            EpisodePersistOutcome::Created(id) => id,
+            _ => panic!("expected new episode to be created"),
+        };
         insert_episode_job(
             &connection,
             "job-1",
@@ -2579,6 +3064,10 @@ mod tests {
             .pointer("/episodeDistiller/providerUnavailableRetriedAt")
             .and_then(Value::as_str)
             .is_some());
+        assert_eq!(
+            metadata.pointer("/episodeDistiller/providerRetryAfterSeconds"),
+            Some(&json!(30))
+        );
     }
 
     #[test]
@@ -2677,8 +3166,23 @@ mod tests {
             event_end: None,
         };
 
-        let error =
-            create_episode_idempotently(&connection, &pending, &document, None, None).unwrap_err();
+        let target = LocalLlmTargetConfig {
+            target_id: "local-a".to_string(),
+            api_base_url: "http://127.0.0.1:1".to_string(),
+            api_path: "/v1/chat/completions".to_string(),
+            model: "qwen".to_string(),
+        };
+        let error = create_episode_idempotently(
+            &connection,
+            &pending,
+            &document,
+            None,
+            None,
+            &target,
+            None,
+            30,
+        )
+        .unwrap_err();
 
         assert!(error
             .to_string()

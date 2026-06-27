@@ -25,6 +25,11 @@ const workerUnavailableBackoffSecondsSql = `
   end
 `;
 
+function normalizeRetryAfterSeconds(value: number | null | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 30;
+  return Math.max(1, Math.min(3600, Math.floor(value)));
+}
+
 async function updateSqliteQueueState(params: {
   queueName: DistillationQueueName;
   id?: string;
@@ -45,6 +50,76 @@ async function updateSqliteQueueState(params: {
     )
     .get(...params.values);
   return result ?? null;
+}
+
+export async function keepQueueJobWaitingForProvider(params: {
+  queueName: DistillationQueueName;
+  id: string;
+  reason: string;
+  retryAfterSeconds?: number | null;
+}): Promise<QueueStateRow | null> {
+  const retryAfterSeconds = normalizeRetryAfterSeconds(params.retryAfterSeconds);
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    return updateSqliteQueueState({
+      queueName: params.queueName,
+      setSql: `
+        status = 'pending',
+        ${
+          params.queueName === "finalizeDistille"
+            ? ""
+            : "next_run_at = datetime('now', '+' || ? || ' seconds'),"
+        }
+        attempt_count = attempt_count + 1,
+        last_error = ?,
+        last_outcome_kind = 'provider_unavailable_retry',
+        locked_by = null,
+        locked_at = null,
+        heartbeat_at = null,
+        updated_at = CURRENT_TIMESTAMP
+      `,
+      whereSql: "id = ? and status = 'running'",
+      values:
+        params.queueName === "finalizeDistille"
+          ? [params.reason, params.id]
+          : [retryAfterSeconds, params.reason, params.id],
+    });
+  }
+
+  const tableName = queueTableNameByQueue[params.queueName];
+  const result =
+    params.queueName === "finalizeDistille"
+      ? await db.execute(sql`
+          update ${sql.raw(tableName)}
+          set
+            status = 'pending',
+            attempt_count = attempt_count + 1,
+            last_error = ${params.reason},
+            last_outcome_kind = 'provider_unavailable_retry',
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            updated_at = now()
+          where id = ${params.id}
+            and status = 'running'
+          returning id, status
+        `)
+      : await db.execute(sql`
+          update ${sql.raw(tableName)}
+          set
+            status = 'pending',
+            next_run_at = now() + make_interval(secs => ${retryAfterSeconds}),
+            attempt_count = attempt_count + 1,
+            last_error = ${params.reason},
+            last_outcome_kind = 'provider_unavailable_retry',
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            updated_at = now()
+          where id = ${params.id}
+            and status = 'running'
+          returning id, status
+        `);
+  return (result.rows[0] as QueueStateRow | undefined) ?? null;
 }
 
 export async function pauseQueueJob(params: {

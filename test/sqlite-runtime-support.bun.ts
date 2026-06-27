@@ -296,15 +296,24 @@ describe("sqlite runtime support repositories", () => {
       payload: { ok: true },
     });
 
-    const listed = await listAuditLogs({ eventType: "SQLITE_RUNTIME_TEST", limit: 10 });
+    const listed = await listAuditLogs({
+      eventType: "SQLITE_RUNTIME_TEST",
+      limit: 10,
+    });
     expect(listed.total).toBe(2);
     expect(listed.availableEventTypes).toContain("SQLITE_RUNTIME_TEST");
     expect(listed.items.some((item) => item.actor === "agent")).toBe(true);
     expect(JSON.stringify(listed.items)).not.toContain("secret-value");
 
-    const cleanup = await cleanupExpiredAuditLogs({ retentionDays: 7, trigger: "sqlite-test" });
+    const cleanup = await cleanupExpiredAuditLogs({
+      retentionDays: 7,
+      trigger: "sqlite-test",
+    });
     expect(cleanup.deletedCount).toBe(1);
-    const remaining = await listAuditLogs({ eventType: "SQLITE_RUNTIME_TEST", limit: 10 });
+    const remaining = await listAuditLogs({
+      eventType: "SQLITE_RUNTIME_TEST",
+      limit: 10,
+    });
     expect(remaining.total).toBe(1);
   });
 
@@ -702,7 +711,13 @@ describe("sqlite runtime support repositories", () => {
     });
     const episodeFeedback = await saveRunEpisodeFeedback({
       runId,
-      items: [{ episodeId, verdict: "wrong", reason: "Wrong precedent for this run." }],
+      items: [
+        {
+          episodeId,
+          verdict: "wrong",
+          reason: "Wrong precedent for this run.",
+        },
+      ],
     });
     expect(episodeFeedback.savedCount).toBe(1);
     const detailAfterEpisodeFeedback = await getCompileRunDetail(runId);
@@ -827,7 +842,11 @@ describe("sqlite runtime support repositories", () => {
       input: {
         decisionPoint: "Should SQLite context decision run?",
         sessionId: "sqlite-decision-session",
-        retrievalHints: { technologies: ["sqlite"], changeTypes: ["migration"], domains: [] },
+        retrievalHints: {
+          technologies: ["sqlite"],
+          changeTypes: ["migration"],
+          domains: [],
+        },
         metadata: { branch: "sqlite-test" },
       },
       decision: "execute",
@@ -994,7 +1013,11 @@ describe("sqlite runtime support repositories", () => {
       episodeDistillation: expect.objectContaining({
         generatingQueueName: "episodeDistiller",
         parentVibeMemoryId: recorded.memory.id,
-        scores: expect.objectContaining({ importance: 88, confidence: 80, reusability: 85 }),
+        scores: expect.objectContaining({
+          importance: 88,
+          confidence: 80,
+          reusability: 85,
+        }),
         valueReview: expect.objectContaining({
           publish: true,
           reasons: [],
@@ -1047,14 +1070,19 @@ describe("sqlite runtime support repositories", () => {
       .run(episodes[0]?.id ?? "");
     sqlite.db.query("delete from episode_cards_fts where id = ?").run(episodes[0]?.id ?? "");
     sqlite.db.query("delete from episode_cards where id = ?").run(episodes[0]?.id ?? "");
-    const repairDryRun = await requeueEpisodeDistillerRepairCandidates({ limit: 10 });
+    const repairDryRun = await requeueEpisodeDistillerRepairCandidates({
+      limit: 10,
+    });
     expect(repairDryRun.write).toBe(false);
     expect(repairDryRun.items.map((item) => item.id)).toContain(job.id);
     expect(repairDryRun.items.find((item) => item.id === job.id)?.reason).toBe(
       "missing_episode_cards",
     );
 
-    const repairWrite = await requeueEpisodeDistillerRepairCandidates({ limit: 10, write: true });
+    const repairWrite = await requeueEpisodeDistillerRepairCandidates({
+      limit: 10,
+      write: true,
+    });
     expect(repairWrite.requeued).toBeGreaterThanOrEqual(1);
     expect(
       sqlite.db
@@ -1192,6 +1220,138 @@ describe("sqlite runtime support repositories", () => {
       generated: 1,
       acceptedCandidateCount: 1,
     });
+  });
+
+  test("uses LLM review to skip near-duplicate EpisodeCards before insert", async () => {
+    groupedConfig.distillation.internalChunkedDistillationEnabled = true;
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const recorded = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-near-duplicate-session",
+      content: "A normalize.ts utility module was added and later summarized again.",
+      memoryType: "chat",
+      metadata: {
+        projectName: "contextStill",
+        cwd: "/repo/contextStill",
+      },
+      agentDiffs: [
+        {
+          filePath: "src/shared/utils/normalize.ts",
+          diffHunk:
+            "@@ add normalize helpers @@\n+export function asStringArray(value: unknown): string[] { return []; }",
+          changeType: "add",
+          language: "typescript",
+          symbolName: "asStringArray",
+        },
+        {
+          filePath: "src/shared/utils/normalize.ts",
+          diffHunk:
+            "@@ add normalize facet helper @@\n+export function normalizeFacetArray(value: unknown): string[] { return asStringArray(value); }",
+          changeType: "add",
+          language: "typescript",
+          symbolName: "normalizeFacetArray",
+        },
+      ],
+    });
+    const job = await enqueueEpisodeDistillerJob({
+      sourceKey: recorded.memory.id,
+      metadata: { sourceType: "near-duplicate-test" },
+    });
+    let distillCall = 0;
+    setEpisodeDistillerTestHooksForTests({
+      semanticChunks: async ({ document }) =>
+        document.events
+          .filter((event) => event.filePath?.endsWith("normalize.ts"))
+          .map((event, index) => ({
+            chunkIndex: index,
+            sourceStartOffset: event.startOffset,
+            sourceEndOffset: event.endOffset,
+            eventIds: [event.id],
+            taskBoundaryKind: "implementation",
+            title: `normalize chunk ${index}`,
+            boundaryReason: "Each diff entry is a separate source block for the same file.",
+            expectedOutputs: ["episode"],
+            openBoundary: false,
+          })),
+      distillSegment: async () => {
+        distillCall += 1;
+        return [
+          {
+            title:
+              distillCall === 1
+                ? "normalize.ts ユーティリティモジュールの作成"
+                : "normalize.ts 共有ユーティリティモジュールの追加",
+            context: "contextStill で normalize.ts の共有正規化ヘルパーを追加した。",
+            intent: "型不安定な入力の正規化処理を共有化する。",
+            keyDecisions: ["asStringArray と normalizeFacetArray を共有ユーティリティとして扱う。"],
+            actionTaken:
+              "src/shared/utils/normalize.ts に文字列配列とfacet正規化のヘルパーを追加した。",
+            outcome: "normalize.ts に共有正規化ユーティリティが追加された。",
+            failedApproach: "",
+            reusableLesson:
+              "型変換と正規化の境界処理は共有ユーティリティに分けると再利用しやすい。",
+            usefulFutureTriggers: ["normalize.ts", "共有ユーティリティ", "facet正規化"],
+            openLoops: [],
+            generationKind: "task_episode",
+            outcomeKind: "success",
+            domains: ["データ正規化", "ユーティリティ関数"],
+            technologies: ["TypeScript"],
+            changeTypes: ["add"],
+            tools: ["bun"],
+            scores: {
+              importance: 72,
+              confidence: 80,
+              reusability: 80,
+              decision_density: 55,
+              failure_value: 0,
+              causal_clarity: 85,
+              project_specificity: 65,
+              evidence_quality: 80,
+              compression_quality: 75,
+              staleness_risk: 15,
+            },
+          },
+        ];
+      },
+      reviewNearDuplicate: async ({ candidates }) => ({
+        publish: false,
+        duplicateOfEpisodeId: candidates[0]?.id ?? null,
+        confidence: 92,
+        reason: "同じ親ログの同じ normalize.ts 追加作業を別segmentが再要約しているため。",
+      }),
+    });
+
+    const run = await runQueueWorkerOnce({
+      queueName: "episodeDistiller",
+      workerId: "sqlite-episode-near-duplicate-worker",
+    });
+
+    expect(run.ok).toBe(true);
+    expect(run.completedJobId).toBe(job.id);
+    const episodes = await searchEpisodes({
+      query: "normalize.ts",
+      technologies: ["TypeScript"],
+      limit: 10,
+    });
+    expect(episodes).toHaveLength(1);
+    const completedMetadataRow = sqlite.db
+      .query<{ metadata: string }, [string]>(
+        "select metadata from episode_distiller_queue where id = ?",
+      )
+      .get(job.id);
+    const metadata = JSON.parse(completedMetadataRow?.metadata ?? "{}");
+    expect(metadata.episodeDistiller).toMatchObject({
+      generated: 1,
+      skipped: 1,
+      nearDuplicateSkipped: 1,
+      acceptedCandidateCount: 2,
+    });
+    expect(metadata.episodeDistiller.nearDuplicateReviews).toContainEqual(
+      expect.objectContaining({
+        publish: false,
+        candidateCount: 1,
+        confidence: 92,
+      }),
+    );
   });
 
   test("does not generate EpisodeCards from candidate-only semantic chunks", async () => {
@@ -1568,7 +1728,12 @@ describe("sqlite runtime support repositories", () => {
     ).toBe(0);
     const jobRow = sqlite.db
       .query<
-        { status: string; priority: number; last_outcome_kind: string; metadata: string },
+        {
+          status: string;
+          priority: number;
+          last_outcome_kind: string;
+          metadata: string;
+        },
         [string]
       >(
         "select status, priority, last_outcome_kind, metadata from episode_distiller_queue where id = ?",
@@ -1724,7 +1889,12 @@ describe("sqlite runtime support repositories", () => {
     expect(run.message).toContain("worker_unavailable:");
     const row = sqlite.db
       .query<
-        { status: string; last_outcome_kind: string; last_error: string; next_run_at: string },
+        {
+          status: string;
+          last_outcome_kind: string;
+          last_error: string;
+          next_run_at: string;
+        },
         [string]
       >(
         "select status, last_outcome_kind, last_error, next_run_at from episode_distiller_queue where id = ?",
@@ -2525,7 +2695,12 @@ describe("sqlite runtime support repositories", () => {
     expect(result).toEqual({ id: "covering-retry", status: "pending" });
     const row = sqlite.db
       .query<
-        { status: string; attempt_count: number; provider_policy: string; payload: string },
+        {
+          status: string;
+          attempt_count: number;
+          provider_policy: string;
+          payload: string;
+        },
         []
       >(
         `

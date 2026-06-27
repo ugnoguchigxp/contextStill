@@ -170,11 +170,9 @@ function queueQueryRetry(failureCount: number, error: unknown): boolean {
 
 function resolveQueueLlmStatus(params: {
   running: number;
-  offline: number;
   paused: boolean;
 }): QueueLlmStatus {
   if (params.paused) return "Paused";
-  if (params.offline > 0 && params.running === 0) return "Offline";
   if (params.running > 0) return "Active";
   return "Ready";
 }
@@ -769,7 +767,7 @@ export function QueuePage() {
                   const nonRegistered = snapshot?.nonRegistered ?? 0;
                   const laneControl = statsQuery.data?.queueControls?.[tab.name];
                   const lanePaused = laneControl?.paused === true;
-                  const llmStatus = resolveQueueLlmStatus({ running, offline, paused: lanePaused });
+                  const llmStatus = resolveQueueLlmStatus({ running, paused: lanePaused });
                   const laneActionKey = `${lanePaused ? "lane-resume" : "lane-pause"}:${tab.name}`;
                   const showsNonRegistered = tab.name === "coveringEvidence";
                   const visuals = queueCardVisuals[tab.name];

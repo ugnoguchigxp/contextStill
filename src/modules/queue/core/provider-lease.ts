@@ -8,6 +8,7 @@ import type {
   RuntimeSettingsRoute,
 } from "../../settings/settings.types.js";
 import { isQueuePaused } from "./control.js";
+import { routeClaimGroupId } from "./scheduler.js";
 import type { DistillationQueueName } from "./types.js";
 import { queueTableNameByQueue } from "./types.js";
 
@@ -141,7 +142,7 @@ function preferredTargetIdsForQueue(params: {
         row: params.row,
       })
     : queueRoutes(params.settings, params.queueName)) {
-    if (route.providerPoolId !== params.poolId) continue;
+    if (routeClaimGroupId(route) !== params.poolId) continue;
     if (route.provider === "local-llm") {
       const routeTarget = parseLocalLlmRouteTarget(route.localLlmModel ?? route.model);
       const matched = routeTarget
@@ -152,7 +153,13 @@ function preferredTargetIdsForQueue(params: {
               model.model === routeTarget.model,
           )
         : params.settings.providers["local-llm"].models.find(
-            (model) => model.model === route.model || model.model === route.localLlmModel,
+            (model) =>
+              model.id === route.model ||
+              model.id === route.localLlmModel ||
+              model.name === route.model ||
+              model.name === route.localLlmModel ||
+              model.model === route.model ||
+              model.model === route.localLlmModel,
           );
       if (matched?.id) preferred.add(matched.id);
     } else if (route.provider === "azure-openai") {

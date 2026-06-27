@@ -30,6 +30,7 @@ import {
 } from "../../knowledge/applicability.js";
 import { processDeadZoneMergeReviewJob } from "../../landscape/deadzone-merge-review-queue.service.js";
 import { processMergeActivationFinalizeJob } from "../../landscape/merge-activation-finalize.worker.js";
+import { LlmProviderHttpError } from "../../llm/provider-http-error.js";
 import { runWithProviderLeaseRouteContext } from "../../settings/provider-lease-route-context.js";
 import { researchWebSourceToMarkdown } from "../../sources/web/source-research.service.js";
 import { claimNextQueueJob } from "./claim.js";
@@ -40,7 +41,11 @@ import {
   heartbeatProviderLease,
   releaseProviderLease,
 } from "./provider-lease.js";
-import { keepQueueJobWaitingForWorker, pauseQueueJob } from "./state.js";
+import {
+  keepQueueJobWaitingForProvider,
+  keepQueueJobWaitingForWorker,
+  pauseQueueJob,
+} from "./state.js";
 import { type DistillationQueueName, queueTableNameByQueue } from "./types.js";
 
 type QueueRunResult = {
@@ -574,6 +579,21 @@ function isQueueWorkerUnavailableError(message: string): boolean {
     normalized.includes("local-llm http 404") ||
     normalized.includes("unsupported model:")
   );
+}
+
+function providerUnavailableRetryAfterSeconds(error: unknown, message: string): number | null {
+  if (error instanceof LlmProviderHttpError && error.status === 503) {
+    return error.retryAfterSeconds ?? 30;
+  }
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("local-llm http 503") ||
+    normalized.includes("loading model") ||
+    normalized.includes("unavailable_error")
+  ) {
+    return 30;
+  }
+  return null;
 }
 
 function parseProvidedCandidatePayload(value: unknown): ProvidedCandidatePayload | null {
@@ -1811,6 +1831,37 @@ export async function runQueueWorkerOnce(params: {
         idle: false,
         claimedJobId: claimed.id,
         message: "paused by queue lane control",
+      };
+    }
+
+    const providerRetryAfterSeconds = providerUnavailableRetryAfterSeconds(error, message);
+    if (providerRetryAfterSeconds !== null) {
+      const reason = `provider_unavailable_retry:${message}`.slice(0, 500);
+      await keepQueueJobWaitingForProvider({
+        queueName: params.queueName,
+        id: claimed.id,
+        reason,
+        retryAfterSeconds: providerRetryAfterSeconds,
+      });
+      await appendQueueEvent({
+        queueName: params.queueName,
+        queueJobId: claimed.id,
+        eventType: "retried",
+        message: "job returned to queue because LLM provider is temporarily unavailable",
+        metadata: {
+          error: message,
+          reason,
+          retryAfterSeconds: providerRetryAfterSeconds,
+          status: error instanceof LlmProviderHttpError ? error.status : 503,
+        },
+      });
+      return {
+        ok: false,
+        queue: params.queueName,
+        worker: params.workerId,
+        idle: false,
+        claimedJobId: claimed.id,
+        message: reason,
       };
     }
 

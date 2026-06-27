@@ -1,9 +1,11 @@
 import { resolveDatabaseBackendConfig } from "../../../db/backend.js";
-import {
-  getRuntimeSettingsSnapshot,
-  resolveProviderPools,
-} from "../../settings/settings.service.js";
-import type { RuntimeSettingsRoute } from "../../settings/settings.types.js";
+import { getRuntimeSettingsSnapshot } from "../../settings/settings.service.js";
+import type {
+  RuntimeProviderPool,
+  RuntimeProviderPoolTarget,
+  RuntimeSettingsEditable,
+  RuntimeSettingsRoute,
+} from "../../settings/settings.types.js";
 import type { DistillationQueueName } from "./types.js";
 
 export const providerPoolQueuePriorityOrder: DistillationQueueName[] = [
@@ -15,36 +17,109 @@ export const providerPoolQueuePriorityOrder: DistillationQueueName[] = [
   "finalizeDistille",
 ];
 
-function routePoolId(route: RuntimeSettingsRoute | undefined): string | null {
-  return route?.providerPoolId?.trim() || null;
+export function routeClaimGroupId(route: RuntimeSettingsRoute | undefined): string | null {
+  if (!route || route.provider === "auto") return null;
+  return route.providerPoolId?.trim() || `task-routing:${route.provider}`;
+}
+
+function parseLocalLlmRouteTarget(
+  value: string | undefined,
+): { apiBaseUrl: string; apiPath?: string; model: string } | null {
+  if (!value?.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<{
+      apiBaseUrl: string;
+      apiPath: string;
+      model: string;
+    }>;
+    if (typeof parsed.apiBaseUrl === "string" && typeof parsed.model === "string") {
+      const apiBaseUrl = parsed.apiBaseUrl.trim().replace(/\/+$/, "");
+      const apiPath =
+        typeof parsed.apiPath === "string" && parsed.apiPath.trim()
+          ? parsed.apiPath.trim()
+          : undefined;
+      const model = parsed.model.trim();
+      if (apiBaseUrl && model) return { apiBaseUrl, apiPath, model };
+    }
+  } catch {
+    // Legacy route values are plain model names.
+  }
+  return null;
+}
+
+function localLlmTargetForRoute(
+  settings: RuntimeSettingsEditable,
+  route: RuntimeSettingsRoute,
+): RuntimeProviderPoolTarget | null {
+  const routeValue = route.localLlmModel ?? route.model;
+  const parsed = parseLocalLlmRouteTarget(routeValue);
+  const matched = parsed
+    ? settings.providers["local-llm"].models.find(
+        (model) =>
+          model.apiBaseUrl.trim().replace(/\/+$/, "") === parsed.apiBaseUrl &&
+          (!parsed.apiPath || model.apiPath === parsed.apiPath) &&
+          model.model === parsed.model,
+      )
+    : settings.providers["local-llm"].models.find(
+        (model) =>
+          model.id === routeValue || model.model === routeValue || model.name === routeValue,
+      );
+  return matched?.id ? { provider: "local-llm", localLlmModelId: matched.id } : null;
+}
+
+function targetsForRoute(
+  settings: RuntimeSettingsEditable,
+  route: RuntimeSettingsRoute,
+): RuntimeProviderPoolTarget[] {
+  if (route.provider === "local-llm") {
+    const target = localLlmTargetForRoute(settings, route);
+    return target ? [target] : [];
+  }
+  if (route.provider === "azure-openai") {
+    return (route.azureDeploymentSlots ?? []).map((deploymentSlot) => ({
+      provider: "azure-openai",
+      deploymentSlot,
+    }));
+  }
+  if (route.provider === "openai" || route.provider === "bedrock" || route.provider === "codex") {
+    return [{ provider: route.provider, targetId: route.provider }];
+  }
+  return [];
+}
+
+function targetKey(target: RuntimeProviderPoolTarget): string {
+  if (target.provider === "local-llm") return `${target.provider}:${target.localLlmModelId}`;
+  if (target.provider === "azure-openai") return `${target.provider}:${target.deploymentSlot}`;
+  return `${target.provider}:${target.targetId}`;
+}
+
+function queueRoutes(
+  settings: RuntimeSettingsEditable,
+  queueName: DistillationQueueName,
+): RuntimeSettingsRoute[] {
+  if (queueName === "findingCandidate") {
+    return [settings.taskRouting.findCandidate.source, settings.taskRouting.findCandidate.vibe];
+  }
+  if (queueName === "coveringEvidence") {
+    return [
+      settings.taskRouting.coverEvidence.sourceSupport,
+      settings.taskRouting.coverEvidence.externalEvidence,
+      settings.taskRouting.coverEvidence.mcpEvidence,
+    ];
+  }
+  if (queueName === "episodeDistiller") return [settings.taskRouting.episodeDistiller];
+  if (queueName === "deadZoneMergeReview") return [settings.taskRouting.deadZoneMergeReview];
+  if (queueName === "mergeActivationFinalize") {
+    return [settings.taskRouting.mergeActivationFinalize];
+  }
+  return [settings.taskRouting.finalizeDistille];
 }
 
 export function providerPoolIdsForQueue(queueName: DistillationQueueName): string[] {
   const settings = getRuntimeSettingsSnapshot();
   const ids = new Set<string>();
-  if (queueName === "findingCandidate") {
-    const source = routePoolId(settings.taskRouting.findCandidate.source);
-    const vibe = routePoolId(settings.taskRouting.findCandidate.vibe);
-    if (source) ids.add(source);
-    if (vibe) ids.add(vibe);
-  } else if (queueName === "coveringEvidence") {
-    const sourceSupport = routePoolId(settings.taskRouting.coverEvidence.sourceSupport);
-    const externalEvidence = routePoolId(settings.taskRouting.coverEvidence.externalEvidence);
-    const mcpEvidence = routePoolId(settings.taskRouting.coverEvidence.mcpEvidence);
-    if (sourceSupport) ids.add(sourceSupport);
-    if (externalEvidence) ids.add(externalEvidence);
-    if (mcpEvidence) ids.add(mcpEvidence);
-  } else if (queueName === "episodeDistiller") {
-    const id = routePoolId(settings.taskRouting.episodeDistiller);
-    if (id) ids.add(id);
-  } else if (queueName === "deadZoneMergeReview") {
-    const id = routePoolId(settings.taskRouting.deadZoneMergeReview);
-    if (id) ids.add(id);
-  } else if (queueName === "mergeActivationFinalize") {
-    const id = routePoolId(settings.taskRouting.mergeActivationFinalize);
-    if (id) ids.add(id);
-  } else {
-    const id = routePoolId(settings.taskRouting.finalizeDistille);
+  for (const route of queueRoutes(settings, queueName)) {
+    const id = routeClaimGroupId(route);
     if (id) ids.add(id);
   }
   return [...ids];
@@ -63,16 +138,50 @@ export function priorityQueuesForProviderPool(params: {
 
 export function enabledProviderPoolsForQueues(
   queueNames: DistillationQueueName[],
-): ReturnType<typeof resolveProviderPools> {
+): RuntimeProviderPool[] {
   if (resolveDatabaseBackendConfig().kind !== "sqlite") return [];
   const queueNameSet = new Set(queueNames);
-  return resolveProviderPools().filter((pool) => {
-    if (!pool.enabled || pool.targets.length === 0) return false;
-    return providerPoolQueuePriorityOrder.some(
-      (queueName) =>
-        queueNameSet.has(queueName) && providerPoolIdsForQueue(queueName).includes(pool.id),
-    );
-  });
+  const settings = getRuntimeSettingsSnapshot();
+  const legacyPools = new Map(settings.providerPools.map((pool) => [pool.id, pool]));
+  const groups = new Map<string, RuntimeProviderPool>();
+
+  for (const queueName of providerPoolQueuePriorityOrder) {
+    if (!queueNameSet.has(queueName)) continue;
+    for (const route of queueRoutes(settings, queueName)) {
+      const groupId = routeClaimGroupId(route);
+      if (!groupId) continue;
+      const routeTargets = targetsForRoute(settings, route);
+      if (routeTargets.length === 0) continue;
+      const legacy = legacyPools.get(groupId);
+      const group =
+        groups.get(groupId) ??
+        ({
+          id: groupId,
+          label: legacy?.label ?? groupId,
+          targets: [],
+          maxConcurrent: legacy?.maxConcurrent ?? routeTargets.length,
+          staleLeaseSeconds: legacy?.staleLeaseSeconds ?? 120,
+          enabled: legacy?.enabled ?? true,
+          lowPriorityAgingSeconds: legacy?.lowPriorityAgingSeconds ?? 1800,
+        } satisfies RuntimeProviderPool);
+      const seen = new Set(group.targets.map(targetKey));
+      for (const target of routeTargets) {
+        const key = targetKey(target);
+        if (!seen.has(key)) {
+          group.targets.push(target);
+          seen.add(key);
+        }
+      }
+      groups.set(groupId, group);
+    }
+  }
+
+  return [...groups.values()]
+    .filter((group) => group.enabled && group.targets.length > 0)
+    .map((group) => ({
+      ...group,
+      maxConcurrent: Math.max(1, Math.min(group.maxConcurrent, group.targets.length)),
+    }));
 }
 
 export function unpooledQueues(queueNames: DistillationQueueName[]): DistillationQueueName[] {

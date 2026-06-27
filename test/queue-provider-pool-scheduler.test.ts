@@ -17,43 +17,86 @@ const mocks = vi.hoisted(() => ({
         ],
       },
     ],
+    providers: {
+      "local-llm": {
+        models: [
+          {
+            id: "local-a",
+            name: "Local A",
+            apiBaseUrl: "http://localhost:50041/v1",
+            apiPath: "/v1/chat/completions",
+            model: "local-a-model",
+          },
+          {
+            id: "local-b",
+            name: "Local B",
+            apiBaseUrl: "http://localhost:50042/v1",
+            apiPath: "/v1/chat/completions",
+            model: "local-b-model",
+          },
+          {
+            id: "local-c",
+            name: "Local C",
+            apiBaseUrl: "http://localhost:50043/v1",
+            apiPath: "/v1/chat/completions",
+            model: "local-c-model",
+          },
+        ],
+      },
+    },
     taskRouting: {
       findCandidate: {
-        source: { provider: "local-llm", providerPoolId: "local-llm-default", fallback: [] },
-        vibe: { provider: "local-llm", providerPoolId: "local-llm-default", fallback: [] },
+        source: {
+          provider: "local-llm",
+          providerPoolId: "local-llm-default",
+          model: "local-a-model",
+          fallback: [],
+        },
+        vibe: {
+          provider: "local-llm",
+          providerPoolId: "local-llm-default",
+          model: "local-b-model",
+          fallback: [],
+        },
       },
-      webSourceResearch: { provider: "local-llm", fallback: [] },
+      webSourceResearch: { provider: "local-llm", model: "local-a-model", fallback: [] },
       episodeDistiller: {
         provider: "local-llm",
         providerPoolId: "local-llm-default",
+        model: "local-b-model",
         fallback: [],
       },
       coverEvidence: {
         sourceSupport: {
           provider: "local-llm",
           providerPoolId: "local-llm-default",
+          model: "local-a-model",
           fallback: [],
         },
         externalEvidence: {
           provider: "local-llm",
           providerPoolId: "local-llm-default",
+          model: "local-b-model",
           fallback: [],
         },
         mcpEvidence: {
           provider: "local-llm",
           providerPoolId: "local-llm-default",
+          model: "local-b-model",
           fallback: [],
         },
       },
-      deadZoneMergeReview: { provider: "local-llm", fallback: [] },
+      deadZoneMergeReview: { provider: "local-llm", model: "local-a-model", fallback: [] },
       finalizeDistille: {
         provider: "local-llm",
         providerPoolId: "local-llm-default",
+        model: "local-b-model",
         fallback: [],
       },
       mergeActivationFinalize: {
         provider: "local-llm",
         providerPoolId: "local-llm-default",
+        model: "local-b-model",
         fallback: [],
       },
     },
@@ -72,6 +115,12 @@ vi.mock("../src/modules/settings/settings.service.js", () => ({
 describe("provider pool scheduler", () => {
   beforeEach(() => {
     mocks.backendKind = "sqlite";
+    mocks.settings.taskRouting.episodeDistiller = {
+      provider: "local-llm",
+      providerPoolId: "local-llm-default",
+      model: "local-b-model",
+      fallback: [],
+    };
   });
 
   test("uses enabled provider pools on SQLite", async () => {
@@ -80,9 +129,38 @@ describe("provider pool scheduler", () => {
     );
 
     expect(enabledProviderPoolsForQueues(["findingCandidate"])).toHaveLength(1);
-    expect(unpooledQueues(["findingCandidate", "deadZoneMergeReview"])).toEqual([
-      "deadZoneMergeReview",
-    ]);
+    expect(unpooledQueues(["findingCandidate", "deadZoneMergeReview"])).toEqual([]);
+  });
+
+  test("derives claim targets from task routing even when the target is outside the legacy pool", async () => {
+    mocks.settings.taskRouting.episodeDistiller = {
+      provider: "local-llm",
+      providerPoolId: "local-llm-default",
+      model: "local-c-model",
+      fallback: [],
+    };
+
+    const { enabledProviderPoolsForQueues } = await import(
+      "../src/modules/queue/core/scheduler.js"
+    );
+
+    expect(enabledProviderPoolsForQueues(["episodeDistiller"])[0]).toMatchObject({
+      id: "local-llm-default",
+      targets: [{ provider: "local-llm", localLlmModelId: "local-c" }],
+    });
+  });
+
+  test("keeps finalizeDistille in the shared local pool after coveringEvidence", async () => {
+    const { priorityQueuesForProviderPool } = await import(
+      "../src/modules/queue/core/scheduler.js"
+    );
+
+    expect(
+      priorityQueuesForProviderPool({
+        poolId: "local-llm-default",
+        allowedQueues: ["coveringEvidence", "finalizeDistille"],
+      }),
+    ).toEqual(["coveringEvidence", "finalizeDistille"]);
   });
 
   test("falls back to legacy unpooled queue execution outside SQLite", async () => {

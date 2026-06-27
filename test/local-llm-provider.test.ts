@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { groupedConfig } from "../src/config.js";
+import type { LlmProviderHttpError } from "../src/modules/llm/provider-http-error.js";
 import { createLocalLlmProvider } from "../src/modules/llm/providers/local-llm.provider.js";
 
 vi.mock("../src/config.js", () => ({
@@ -183,6 +184,33 @@ describe("local-llm provider", () => {
     expect(spy.mock.calls[0]?.[1]?.headers).toMatchObject({
       Authorization: "Bearer qwen-key",
     });
+  });
+
+  test("chat preserves 503 Retry-After as LlmProviderHttpError", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 503,
+      headers: new Headers({
+        "retry-after": "30",
+        "x-request-id": "busy-1",
+      }),
+      text: async () => JSON.stringify({ error: "llm_busy", retryable: true }),
+    } as unknown as Response);
+
+    const provider = createLocalLlmProvider({ timeoutMs: 1000 });
+    await expect(
+      provider.chat({
+        messages: [{ role: "user", content: "ping" }],
+        maxTokens: 8,
+        temperature: 0,
+      }),
+    ).rejects.toMatchObject({
+      name: "LlmProviderHttpError",
+      provider: "local-llm",
+      status: 503,
+      retryAfterSeconds: 30,
+      requestId: "busy-1",
+    } satisfies Partial<LlmProviderHttpError>);
   });
 
   test("uses providerOptions.modelConfig when request model is missing", async () => {

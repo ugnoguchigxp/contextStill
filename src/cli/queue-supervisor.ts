@@ -22,12 +22,37 @@ type CliOptions = {
   queueNames: DistillationQueueName[];
 };
 
-function parseArgs(args: string[]): CliOptions {
+function appendQueueNames(
+  queueNames: DistillationQueueName[],
+  raw: string,
+): DistillationQueueName[] {
+  const requested = raw
+    .split(",")
+    .map((queueName) => queueName.trim())
+    .filter(Boolean);
+  if (requested.length === 0) {
+    throw new Error("--queue requires a value");
+  }
+
+  const nextQueueNames = [...queueNames];
+  for (const queueName of requested) {
+    if (!distillationQueueNames.includes(queueName as DistillationQueueName)) {
+      throw new Error(`--queue must be one of: ${distillationQueueNames.join(", ")}`);
+    }
+    const typedQueueName = queueName as DistillationQueueName;
+    if (!nextQueueNames.includes(typedQueueName)) {
+      nextQueueNames.push(typedQueueName);
+    }
+  }
+  return nextQueueNames;
+}
+
+export function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     continuous: false,
     limit: 1,
     worker: "queue-supervisor",
-    queueNames: [...distillationQueueNames],
+    queueNames: [],
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -59,11 +84,7 @@ function parseArgs(args: string[]): CliOptions {
               index += 1;
               return next;
             })();
-      const queue = raw.trim() as DistillationQueueName;
-      if (!distillationQueueNames.includes(queue)) {
-        throw new Error(`--queue must be one of: ${distillationQueueNames.join(", ")}`);
-      }
-      options.queueNames = [queue];
+      options.queueNames = appendQueueNames(options.queueNames, raw);
     } else if (arg === "--limit" || arg.startsWith("--limit=")) {
       const inline = arg.match(/^--limit=(.*)$/)?.[1];
       const raw =
@@ -87,7 +108,10 @@ function parseArgs(args: string[]): CliOptions {
     }
   }
 
-  return options;
+  return {
+    ...options,
+    queueNames: options.queueNames.length > 0 ? options.queueNames : [...distillationQueueNames],
+  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -311,9 +335,6 @@ const shutdown = async (signal: string) => {
   }
 };
 
-process.on("SIGINT", () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   if (options.continuous) {
@@ -324,15 +345,20 @@ async function main(): Promise<void> {
   await runOnce(options);
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    // Only close pool here if we are running in once mode, as continuous mode handles it in shutdown()
-    const options = parseArgs(process.argv.slice(2));
-    if (!options.continuous) {
-      await closeDbPool();
-    }
-  });
+if (import.meta.main) {
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+  main()
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      // Only close pool here if we are running in once mode, as continuous mode handles it in shutdown()
+      const options = parseArgs(process.argv.slice(2));
+      if (!options.continuous) {
+        await closeDbPool();
+      }
+    });
+}

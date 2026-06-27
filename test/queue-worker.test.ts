@@ -6,6 +6,7 @@ import {
   findingCandidateQueue,
   foundCandidates,
 } from "../src/db/schema.js";
+import { LlmProviderHttpError } from "../src/modules/llm/provider-http-error.js";
 import {
   enqueueFindingJob,
   findFindingJob,
@@ -719,6 +720,59 @@ describe("runQueueWorkerOnce", () => {
         queueJobId: "finding-job-1",
         eventType: "retried",
         message: "job kept waiting because worker dependency is unavailable",
+      }),
+    );
+  });
+
+  test("returns finding candidate jobs to the queue when LLM provider returns busy 503", async () => {
+    mocks.claimNextQueueJob.mockResolvedValue({ id: "finding-job-1" });
+    mocks.selectRows = [
+      [
+        {
+          id: "finding-job-1",
+          inputKind: "source_target",
+          sourceKind: "vibe_memory",
+          sourceKey: "memory-1",
+          sourceUri: "vibe_memory:memory-1",
+          distillationVersion: "v-test",
+          payload: {},
+          priority: 50,
+        },
+      ],
+    ];
+    mocks.runFindCandidate.mockRejectedValue(
+      new LlmProviderHttpError({
+        provider: "local-llm",
+        status: 503,
+        retryAfterSeconds: 30,
+        message: "local-llm HTTP 503: llm_busy",
+      }),
+    );
+
+    const result = await runQueueWorkerOnce({
+      queueName: "findingCandidate",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("provider_unavailable_retry");
+    expect(mocks.db.execute).toHaveBeenCalled();
+    expect(mocks.updateCalls).not.toContainEqual(
+      expect.objectContaining({
+        table: findingCandidateQueue,
+        values: expect.objectContaining({ status: "failed" }),
+      }),
+    );
+    expect(mocks.appendQueueEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queueName: "findingCandidate",
+        queueJobId: "finding-job-1",
+        eventType: "retried",
+        message: "job returned to queue because LLM provider is temporarily unavailable",
+        metadata: expect.objectContaining({
+          retryAfterSeconds: 30,
+          status: 503,
+        }),
       }),
     );
   });

@@ -7,6 +7,7 @@ import type {
 import {
   createEpisodeCard,
   getEpisodeCardBySource,
+  searchEpisodeCards,
 } from "../episodic-memory/episode-card.repository.js";
 import {
   type DistillationMessage,
@@ -59,6 +60,7 @@ type EpisodeDistillerProcessResult = {
   skipped: number;
   valueSkipped: number;
   duplicateGenerationKindSkipped: number;
+  nearDuplicateSkipped: number;
   failedSegments: number;
   episodeIds: string[];
 };
@@ -78,6 +80,23 @@ type EpisodeValueReview = {
 
 type PendingEpisode = {
   input: EpisodeCardCreateInput;
+  segmentIndex: number;
+};
+
+type NearDuplicateCandidate = {
+  id: string;
+  title: string;
+  situation: string;
+  action: string;
+  outcome: string;
+  lesson: string;
+};
+
+type NearDuplicateReview = {
+  publish: boolean;
+  duplicateOfEpisodeId: string | null;
+  confidence: number;
+  reason: string;
 };
 
 const MIN_EPISODE_VALUE_SCORE = 60;
@@ -96,6 +115,13 @@ type EpisodeDistillerTestHooks = {
   }) => Promise<unknown>;
   distillSegment?: (params: {
     segment: Segment;
+    document: EpisodeSourceDocument;
+    job: EpisodeDistillerJob;
+    signal?: AbortSignal;
+  }) => Promise<unknown>;
+  reviewNearDuplicate?: (params: {
+    input: EpisodeCardCreateInput;
+    candidates: NearDuplicateCandidate[];
     document: EpisodeSourceDocument;
     job: EpisodeDistillerJob;
     signal?: AbortSignal;
@@ -124,6 +150,23 @@ function recordFromUnknown(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function numberFromUnknown(value: unknown): number | null {
+  const numeric =
+    typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function stringArrayFromUnknown(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim())
+    : [];
+}
+
+function overlapCount(left: string[] | undefined, right: string[] | undefined): number {
+  const rightSet = new Set((right ?? []).map((item) => item.toLowerCase()));
+  return (left ?? []).filter((item) => rightSet.has(item.toLowerCase())).length;
 }
 
 function estimateTokenCount(text: string): number {
@@ -166,6 +209,189 @@ function reviewEpisodeValue(canonical: EpisodeDistillerCanonical): EpisodeValueR
     score,
     reasons,
   };
+}
+
+function parseNearDuplicateReview(value: unknown): NearDuplicateReview {
+  const record = recordFromUnknown(value);
+  if (typeof record.publish !== "boolean") {
+    throw new Error("near duplicate review output did not include publish boolean");
+  }
+  return {
+    publish: record.publish === true,
+    duplicateOfEpisodeId:
+      typeof record.duplicateOfEpisodeId === "string" && record.duplicateOfEpisodeId.trim()
+        ? record.duplicateOfEpisodeId.trim()
+        : null,
+    confidence: Math.max(0, Math.min(100, Math.round(numberFromUnknown(record.confidence) ?? 0))),
+    reason:
+      typeof record.reason === "string" && record.reason.trim()
+        ? record.reason.trim()
+        : "near duplicate review did not provide a reason",
+  };
+}
+
+function reviewAllowsPublish(
+  review: NearDuplicateReview,
+  candidates: NearDuplicateCandidate[],
+): boolean {
+  if (review.publish) return true;
+  if (review.confidence < 70) return true;
+  return !candidates.some((candidate) => candidate.id === review.duplicateOfEpisodeId);
+}
+
+function eventFilePathsForRange(
+  document: EpisodeSourceDocument,
+  start: number,
+  end: number,
+): string[] {
+  return [
+    ...new Set(
+      document.events
+        .filter((event) => event.endOffset > start && event.startOffset < end)
+        .map((event) => event.filePath?.trim())
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+}
+
+async function findNearDuplicateCandidates(params: {
+  input: EpisodeCardCreateInput;
+  document: EpisodeSourceDocument;
+}): Promise<NearDuplicateCandidate[]> {
+  const inputMetadata = recordFromUnknown(params.input.metadata);
+  const episodeDistillation = recordFromUnknown(inputMetadata.episodeDistillation);
+  const generationKind = recordFromUnknown(params.input.applicability).generationKind;
+  const sourceStartOffset = numberFromUnknown(episodeDistillation.sourceStartOffset);
+  const sourceEndOffset = numberFromUnknown(episodeDistillation.sourceEndOffset);
+  if (sourceStartOffset === null || sourceEndOffset === null) return [];
+  const currentFiles = eventFilePathsForRange(params.document, sourceStartOffset, sourceEndOffset);
+  const parentVibeMemoryId = episodeDistillation.parentVibeMemoryId;
+  if (typeof parentVibeMemoryId !== "string" || !parentVibeMemoryId.trim()) return [];
+
+  const episodes = await searchEpisodeCards({
+    repoPath: params.input.repoPath ?? undefined,
+    repoKey: params.input.repoKey ?? undefined,
+    outcomeKinds: [params.input.outcomeKind ?? "unknown"],
+    limit: 100,
+  });
+  return episodes
+    .filter((episode) => episode.sourceKey !== params.input.sourceKey)
+    .filter((episode) => {
+      const metadata = recordFromUnknown(episode.metadata);
+      const distillation = recordFromUnknown(metadata.episodeDistillation);
+      if (distillation.parentVibeMemoryId !== parentVibeMemoryId) return false;
+      const applicability = recordFromUnknown(episode.applicability);
+      if (applicability.generationKind !== generationKind) return false;
+      const candidateStart = numberFromUnknown(distillation.sourceStartOffset);
+      const candidateEnd = numberFromUnknown(distillation.sourceEndOffset);
+      if (candidateStart === null || candidateEnd === null) return false;
+      const candidateFiles = eventFilePathsForRange(params.document, candidateStart, candidateEnd);
+      const sameFile = overlapCount(currentFiles, candidateFiles) > 0;
+      const facetOverlap =
+        overlapCount(params.input.domains, episode.domains) +
+        overlapCount(params.input.technologies, episode.technologies) +
+        overlapCount(params.input.changeTypes, episode.changeTypes);
+      return sameFile && facetOverlap >= 2;
+    })
+    .slice(0, 3)
+    .map((episode) => ({
+      id: episode.id,
+      title: episode.title,
+      situation: episode.situation,
+      action: episode.action,
+      outcome: episode.outcome,
+      lesson: episode.lesson,
+    }));
+}
+
+function buildNearDuplicateReviewMessages(params: {
+  input: EpisodeCardCreateInput;
+  candidates: NearDuplicateCandidate[];
+}): DistillationMessage[] {
+  return [
+    {
+      role: "system",
+      content: [
+        "あなたは ContextStill の EpisodeCard 登録前レビューアです。",
+        "新規Episode候補が既存Episodeと実質的に同じ作業・判断・教訓を表す場合は登録しない判断を返してください。",
+        "同じファイルや同じ親ログでも、別の判断・失敗・結果・再利用教訓を持つなら publish=true にしてください。",
+        "出力は JSON object のみ。Markdown や説明文を付けないでください。",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: [
+        "次の shape の JSON object を返してください:",
+        '{"publish":true,"duplicateOfEpisodeId":null,"confidence":0,"reason":"..."}',
+        "",
+        "New Episode candidate:",
+        JSON.stringify({
+          title: params.input.title,
+          situation: params.input.situation,
+          observations: params.input.observations,
+          action: params.input.action,
+          outcome: params.input.outcome,
+          lesson: params.input.lesson,
+          domains: params.input.domains,
+          technologies: params.input.technologies,
+          changeTypes: params.input.changeTypes,
+          outcomeKind: params.input.outcomeKind,
+        }),
+        "",
+        "Existing candidate episodes:",
+        JSON.stringify(params.candidates),
+      ].join("\n"),
+    },
+  ];
+}
+
+async function reviewNearDuplicate(params: {
+  input: EpisodeCardCreateInput;
+  candidates: NearDuplicateCandidate[];
+  document: EpisodeSourceDocument;
+  job: EpisodeDistillerJob;
+  signal?: AbortSignal;
+}): Promise<NearDuplicateReview> {
+  if (params.candidates.length === 0) {
+    return {
+      publish: true,
+      duplicateOfEpisodeId: null,
+      confidence: 100,
+      reason: "no near duplicate candidates",
+    };
+  }
+  if (testHooks.reviewNearDuplicate) {
+    return parseNearDuplicateReview(await testHooks.reviewNearDuplicate(params));
+  }
+  await ensureRuntimeSettingsLoaded();
+  const route = resolveEpisodeDistillerRoute();
+  const provider = route.provider;
+  const model = resolveRouteModelForProvider({
+    provider,
+    routeModel: route.model,
+    localLlmModel: route.localLlmModel,
+  });
+  const completion = await runDistillationCompletion(
+    {
+      model,
+      messages: buildNearDuplicateReviewMessages(params),
+      maxTokens: 800,
+    },
+    {
+      providerSetting: provider,
+      fallbackOrder: route.fallback,
+      azureDeploymentSlots: route.azureDeploymentSlots,
+      localLlmModel: route.localLlmModel,
+      enableTools: false,
+      maxToolRounds: 0,
+      usageSource: "episode-distiller:near-duplicate-review",
+      signal: params.signal,
+      blankResponseReminder: [
+        "空の応答です。publish, duplicateOfEpisodeId, confidence, reason を持つ JSON object だけを返してください。",
+      ],
+    },
+  );
+  return parseNearDuplicateReview(parseLlmJsonLike(completion.content)?.value);
 }
 
 function splitLargeSegment(segment: Segment, maxBytes: number): Segment[] {
@@ -390,7 +616,10 @@ async function createSemanticChunks(params: {
   if (params.windows.length === 0) return [];
   if (testHooks.semanticChunks) {
     const chunkOutput = await testHooks.semanticChunks(params);
-    const validated = validateSemanticChunks({ windows: params.windows, chunks: chunkOutput });
+    const validated = validateSemanticChunks({
+      windows: params.windows,
+      chunks: chunkOutput,
+    });
     if (validated.length > 0) return validated;
     return deterministicSemanticChunksFromWindows(params.windows);
   }
@@ -424,7 +653,10 @@ async function createSemanticChunks(params: {
       },
     );
     const parsed = parseLlmJsonLike(completion.content)?.value;
-    const validated = validateSemanticChunks({ windows: params.windows, chunks: parsed });
+    const validated = validateSemanticChunks({
+      windows: params.windows,
+      chunks: parsed,
+    });
     return validated.length > 0
       ? validated
       : deterministicSemanticChunksFromWindows(params.windows);
@@ -575,6 +807,7 @@ export async function processEpisodeDistillerJob(
   let skipped = 0;
   let valueSkipped = 0;
   let duplicateGenerationKindSkipped = 0;
+  let nearDuplicateSkipped = 0;
   let failedSegments = 0;
   const episodeIds: string[] = [];
   const pendingEpisodes: PendingEpisode[] = [];
@@ -589,6 +822,16 @@ export async function processEpisodeDistillerJob(
     title: string;
     valueReview: EpisodeValueReview;
   }> = [];
+  const nearDuplicateReviews: Array<{
+    segment: number;
+    title: string;
+    sourceKey: string;
+    candidateCount: number;
+    publish: boolean;
+    duplicateOfEpisodeId: string | null;
+    confidence: number;
+    reason: string;
+  }> = [];
 
   for (const [segmentIndex, segment] of segments.entries()) {
     if (signal?.aborted) throw new Error("episode distiller aborted");
@@ -598,7 +841,12 @@ export async function processEpisodeDistillerJob(
     }
     let canonicalEpisodes: EpisodeDistillerCanonical[];
     try {
-      canonicalEpisodes = await distillSegmentWithRetry({ segment, document, job, signal });
+      canonicalEpisodes = await distillSegmentWithRetry({
+        segment,
+        document,
+        job,
+        signal,
+      });
     } catch (error) {
       failedSegments += 1;
       segmentErrors.push({
@@ -670,7 +918,7 @@ export async function processEpisodeDistillerJob(
           valueReview,
         },
       };
-      pendingEpisodes.push({ input });
+      pendingEpisodes.push({ input, segmentIndex });
     }
   }
 
@@ -692,6 +940,33 @@ export async function processEpisodeDistillerJob(
   }
 
   for (const pending of pendingEpisodes) {
+    const candidates = await findNearDuplicateCandidates({
+      input: pending.input,
+      document,
+    });
+    const review = await reviewNearDuplicate({
+      input: pending.input,
+      candidates,
+      document,
+      job,
+      signal,
+    });
+    const publish = reviewAllowsPublish(review, candidates);
+    nearDuplicateReviews.push({
+      segment: pending.segmentIndex,
+      title: pending.input.title,
+      sourceKey: pending.input.sourceKey,
+      candidateCount: candidates.length,
+      publish,
+      duplicateOfEpisodeId: review.duplicateOfEpisodeId,
+      confidence: review.confidence,
+      reason: review.reason,
+    });
+    if (!publish) {
+      skipped += 1;
+      nearDuplicateSkipped += 1;
+      continue;
+    }
     const saved = await createEpisodeIdempotently(pending.input);
     episodeIds.push(saved.episode.id);
     if (saved.deduped) deduped += 1;
@@ -716,6 +991,7 @@ export async function processEpisodeDistillerJob(
         skipped,
         valueSkipped,
         duplicateGenerationKindSkipped,
+        nearDuplicateSkipped,
         failedSegments,
         segmentCount: segments.length,
         sourceWindowCount: segmentPlan.sourceWindows.length,
@@ -725,6 +1001,7 @@ export async function processEpisodeDistillerJob(
         segmentErrors,
         skippedDuplicateGenerationKinds,
         skippedValueReviews,
+        nearDuplicateReviews,
         completedAt: new Date().toISOString(),
       },
     },
@@ -740,6 +1017,7 @@ export async function processEpisodeDistillerJob(
       skipped,
       valueSkipped,
       duplicateGenerationKindSkipped,
+      nearDuplicateSkipped,
       failedSegments,
       episodeIds,
       acceptedCandidateCount: pendingEpisodes.length,
@@ -751,6 +1029,7 @@ export async function processEpisodeDistillerJob(
     skipped,
     valueSkipped,
     duplicateGenerationKindSkipped,
+    nearDuplicateSkipped,
     failedSegments,
     episodeIds,
   };

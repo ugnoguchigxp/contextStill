@@ -685,6 +685,24 @@ describe("coverEvidence prompts", () => {
     expect(prompt).toContain("insufficient にせず知識として再構成");
     expect(prompt).toContain("推測で足してはいけません");
   });
+
+  test("lets source-only value assessment accept faithful agent-log generalizations", () => {
+    const prompt = valueAssessmentSystemPrompt();
+
+    expect(prompt).toContain("agent log や vibe memory の断片");
+    expect(prompt).toContain("忠実に一般化");
+    expect(prompt).toContain("逐語一致しないだけで unsupported_by_source にしない");
+    expect(prompt).toContain("中核主張が source evidence に存在しない");
+  });
+
+  test("allows conservative applicability tags from candidate and source context", () => {
+    const valuePrompt = valueAssessmentSystemPrompt();
+    const refinementPrompt = applicabilityRefinementSystemPrompt();
+
+    expect(valuePrompt).toContain("source evidence と candidate から保守的に推定");
+    expect(refinementPrompt).toContain("保守的に推定できるカテゴリ");
+    expect(refinementPrompt).toContain("狭く正確な tag");
+  });
 });
 
 describe("runCoverEvidence", () => {

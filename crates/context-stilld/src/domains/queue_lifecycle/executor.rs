@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OpenFlags};
@@ -335,6 +335,44 @@ fn load_paused_queues(connection: &Connection) -> Result<HashSet<String>, CliErr
 }
 
 fn provider_pools(settings: &Value) -> Vec<ProviderPoolClaimConfig> {
+    let legacy_pools = legacy_provider_pool_configs(settings);
+    let mut route_targets: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for route in task_routing_routes(settings) {
+        let Some(group_id) = route_claim_group_id(route) else {
+            continue;
+        };
+        let targets = local_llm_route_target_ids(settings, route);
+        if targets.is_empty() {
+            continue;
+        }
+        route_targets
+            .entry(group_id)
+            .or_default()
+            .extend(targets.into_iter());
+    }
+
+    route_targets
+        .into_iter()
+        .map(|(pool_id, targets)| {
+            let target_count = targets.len() as u64;
+            let legacy = legacy_pools.get(&pool_id);
+            ProviderPoolClaimConfig {
+                pool_id,
+                targets: targets.into_iter().collect(),
+                max_concurrent: legacy
+                    .map(|pool| pool.max_concurrent)
+                    .unwrap_or(target_count)
+                    .max(1),
+                stale_lease_seconds: legacy.map(|pool| pool.stale_lease_seconds).unwrap_or(120),
+                low_priority_aging_seconds: legacy
+                    .map(|pool| pool.low_priority_aging_seconds)
+                    .unwrap_or(1800),
+            }
+        })
+        .collect()
+}
+
+fn legacy_provider_pool_configs(settings: &Value) -> BTreeMap<String, ProviderPoolClaimConfig> {
     settings
         .get("providerPools")
         .and_then(Value::as_array)
@@ -376,7 +414,26 @@ fn provider_pools(settings: &Value) -> Vec<ProviderPoolClaimConfig> {
                     .unwrap_or(1800),
             })
         })
+        .map(|pool| (pool.pool_id.clone(), pool))
         .collect()
+}
+
+fn task_routing_routes(settings: &Value) -> Vec<&Value> {
+    [
+        "/taskRouting/findCandidate/source",
+        "/taskRouting/findCandidate/vibe",
+        "/taskRouting/webSourceResearch",
+        "/taskRouting/episodeDistiller",
+        "/taskRouting/coverEvidence/sourceSupport",
+        "/taskRouting/coverEvidence/externalEvidence",
+        "/taskRouting/coverEvidence/mcpEvidence",
+        "/taskRouting/deadZoneMergeReview",
+        "/taskRouting/mergeActivationFinalize",
+        "/taskRouting/finalizeDistille",
+    ]
+    .into_iter()
+    .filter_map(|pointer| settings.pointer(pointer))
+    .collect()
 }
 
 fn priority_queues_for_pool(
@@ -520,9 +577,23 @@ fn route_preferred_targets(settings: &Value, route: Option<&Value>, pool_id: &st
     let Some(route) = route else {
         return Vec::new();
     };
-    if string_field(route, "providerPoolId").as_deref() != Some(pool_id) {
+    if route_claim_group_id(route).as_deref() != Some(pool_id) {
         return Vec::new();
     }
+    local_llm_route_target_ids(settings, route)
+}
+
+fn route_claim_group_id(route: &Value) -> Option<String> {
+    if string_field(route, "provider").as_deref() != Some("local-llm") {
+        return None;
+    }
+    string_field(route, "providerPoolId")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| Some("task-routing:local-llm".to_string()))
+}
+
+fn local_llm_route_target_ids(settings: &Value, route: &Value) -> Vec<String> {
     if string_field(route, "provider").as_deref() != Some("local-llm") {
         return Vec::new();
     }
@@ -927,5 +998,45 @@ mod tests {
         assert_eq!(queues[0].preferred_target_ids, vec![target_id.clone()]);
         let target = local_llm_target_config(&settings, &target_id).unwrap();
         assert_eq!(target.model, "Qwen 3.6 27B");
+    }
+
+    #[test]
+    fn rust_executor_derives_targets_from_task_routing_not_pool_membership() {
+        let settings = json!({
+            "providerPools": [{
+                "id": "local-llm-default",
+                "enabled": true,
+                "targets": [{"provider": "local-llm", "localLlmModelId": "local-a"}],
+                "maxConcurrent": 2,
+                "staleLeaseSeconds": 120,
+                "lowPriorityAgingSeconds": 1800
+            }],
+            "providers": {
+                "local-llm": {
+                    "models": [
+                        {"id": "local-a", "apiBaseUrl": "http://localhost:1", "apiPath": "/v1/chat/completions", "model": "old"},
+                        {"id": "local-b", "apiBaseUrl": "http://localhost:2", "apiPath": "/v1/chat/completions", "model": "route-target"}
+                    ]
+                }
+            },
+            "taskRouting": {
+                "episodeDistiller": {
+                    "provider": "local-llm",
+                    "providerPoolId": "local-llm-default",
+                    "model": "route-target"
+                }
+            }
+        });
+
+        let pools = provider_pools(&settings);
+        assert_eq!(pools.len(), 1);
+        assert_eq!(pools[0].pool_id, "local-llm-default");
+        assert_eq!(pools[0].targets, vec!["local-b".to_string()]);
+
+        let queues =
+            executor_priority_queues_for_pool(&settings, "local-llm-default", &HashSet::new());
+        assert_eq!(queues.len(), 1);
+        assert_eq!(queues[0].queue_name, "episodeDistiller");
+        assert_eq!(queues[0].preferred_target_ids, vec!["local-b".to_string()]);
     }
 }

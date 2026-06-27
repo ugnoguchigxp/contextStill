@@ -4,6 +4,7 @@ import type {
   LlmHealthStatus,
   LlmProvider,
 } from "../llm-provider.js";
+import { LlmProviderHttpError, parseRetryAfterSeconds } from "../provider-http-error.js";
 import { normalizeLlmUsage } from "../usage-normalizer.js";
 import { buildLocalLlmChatCompletionsUrl, resolveLocalLlmModelConfig } from "./local-llm-config.js";
 
@@ -125,7 +126,13 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
 
         if (!response.ok) {
           const body = await response.text().catch(() => "");
-          throw new Error(`local-llm HTTP ${response.status}: ${body.slice(0, 500)}`);
+          throw new LlmProviderHttpError({
+            provider: "local-llm",
+            status: response.status,
+            retryAfterSeconds: parseRetryAfterSeconds(response.headers),
+            requestId: response.headers.get("x-request-id") || undefined,
+            message: `local-llm HTTP ${response.status}: ${body.slice(0, 500)}`,
+          });
         }
 
         return parseResponse(response);
