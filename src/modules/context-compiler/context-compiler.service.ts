@@ -53,6 +53,7 @@ import { renderContextPackMarkdown } from "./pack-renderer.js";
 import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
 import { explainRankableScore, type Rankable, rankAndDedupe } from "./ranking.service.js";
 import { applySectionTokenBudget, estimateTokens } from "./token-budget.js";
+import { collectUtilityTraceCandidates } from "./utility-retrieval.service.js";
 
 const CONTEXT_COMPILE_SECTION_RATIOS = {
   rules: 0.55,
@@ -853,6 +854,26 @@ function sortCandidateTraceRows(rows: CandidateTraceDraftRow[]): CandidateTraceD
   });
 }
 
+function candidateDropClassification(params: {
+  selected: boolean;
+  duplicateSuppression: DuplicateSuppressionInfo | undefined;
+  suppressionReason: string | null;
+}): { dropStage: string; dropReason: string } {
+  if (params.selected) {
+    return { dropStage: "selected", dropReason: "selected" };
+  }
+  if (params.duplicateSuppression) {
+    return { dropStage: "suppressed_duplicate", dropReason: "near_duplicate" };
+  }
+  if (params.suppressionReason === "agentic_rejected") {
+    return { dropStage: "agentic_rejected", dropReason: "agentic_rejected" };
+  }
+  if (params.suppressionReason === "token_budget_section_limit") {
+    return { dropStage: "ranked_but_budgeted_out", dropReason: "section_token_budget" };
+  }
+  return { dropStage: "retrieved_but_ranked_out", dropReason: "below_final_rank_limit" };
+}
+
 function buildCandidateTraceRows(params: {
   knowledgeItems: Array<{
     id: string;
@@ -962,6 +983,11 @@ function buildCandidateTraceRows(params: {
         : filteredIds.has(itemId)
           ? "rejected"
           : "skipped";
+    const drop = candidateDropClassification({
+      selected,
+      duplicateSuppression,
+      suppressionReason,
+    });
 
     rows.push({
       itemKind,
@@ -985,6 +1011,8 @@ function buildCandidateTraceRows(params: {
           : suppressionReason),
       communityKey: resolveCommunityKeyFromMetadata(knowledge.metadata),
       evidence: {
+        dropStage: drop.dropStage,
+        dropReason: drop.dropReason,
         status: knowledge.status,
         candidateEvidence: knowledge.candidateEvidence ?? null,
         rankingScore: rankable
@@ -1011,6 +1039,57 @@ function buildCandidateTraceRows(params: {
   return sortCandidateTraceRows(rows);
 }
 
+function mergeUtilityTraceCandidates(
+  rows: CandidateTraceDraftRow[],
+  utilityCandidates: Awaited<ReturnType<typeof collectUtilityTraceCandidates>>,
+): CandidateTraceDraftRow[] {
+  if (utilityCandidates.length === 0) return rows;
+  const byKey = new Map<string, CandidateTraceDraftRow>(
+    rows.map((row) => [`${row.itemKind}:${row.itemId}`, row]),
+  );
+  const mergedRows = [...rows];
+  for (const candidate of utilityCandidates) {
+    const key = `${candidate.itemKind}:${candidate.itemId}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      const utilitySignals = asRecord(existing.evidence.utilitySignals);
+      existing.evidence = {
+        ...existing.evidence,
+        utilitySignals: {
+          ...utilitySignals,
+          [candidate.lane]: candidate.evidence,
+        },
+      };
+      continue;
+    }
+    const row: CandidateTraceDraftRow = {
+      itemKind: candidate.itemKind,
+      itemId: candidate.itemId,
+      textRank: null,
+      textScore: null,
+      vectorRank: null,
+      vectorScore: null,
+      mergedRank: null,
+      mergedScore: null,
+      finalRank: null,
+      finalScore: null,
+      selected: false,
+      suppressed: false,
+      suppressionReason: null,
+      agenticDecision: "not_evaluated",
+      rankingReason: candidate.rankingReason,
+      communityKey: null,
+      evidence: {
+        ...candidate.evidence,
+        utilityScore: candidate.score,
+      },
+    };
+    byKey.set(key, row);
+    mergedRows.push(row);
+  }
+  return sortCandidateTraceRows(mergedRows);
+}
+
 function applyCandidateTraceLimit(
   rows: CandidateTraceDraftRow[],
   traceLimit: number,
@@ -1021,8 +1100,20 @@ function applyCandidateTraceLimit(
 
   const selectedRows = rows.filter((row) => row.selected);
   const selectedIds = new Set(selectedRows.map((row) => row.itemId));
+  const isUtilityTraceRow = (row: CandidateTraceDraftRow) =>
+    row.evidence.traceOnly === true || typeof row.evidence.utilityLane === "string";
+  const utilityTraceScore = (row: CandidateTraceDraftRow) =>
+    typeof row.evidence.utilityScore === "number" ? row.evidence.utilityScore : 0;
+  const utilityRows = rows
+    .filter((row) => !selectedIds.has(row.itemId) && isUtilityTraceRow(row))
+    .sort(
+      (left, right) =>
+        utilityTraceScore(right) - utilityTraceScore(left) ||
+        left.itemId.localeCompare(right.itemId),
+    );
+  const utilityIds = new Set(utilityRows.map((row) => row.itemId));
   const remaining = rows
-    .filter((row) => !selectedIds.has(row.itemId))
+    .filter((row) => !selectedIds.has(row.itemId) && !utilityIds.has(row.itemId))
     .sort((left, right) => {
       const leftMerged = left.mergedRank ?? Number.MAX_SAFE_INTEGER;
       const rightMerged = right.mergedRank ?? Number.MAX_SAFE_INTEGER;
@@ -1034,7 +1125,13 @@ function applyCandidateTraceLimit(
     });
 
   const remainingCapacity = Math.max(0, traceLimit - selectedRows.length);
-  const limited = [...selectedRows, ...remaining.slice(0, remainingCapacity)];
+  const selectedUtilityRows = utilityRows.slice(0, remainingCapacity);
+  const finalRemainingCapacity = Math.max(0, remainingCapacity - selectedUtilityRows.length);
+  const limited = [
+    ...selectedRows,
+    ...selectedUtilityRows,
+    ...remaining.slice(0, finalRemainingCapacity),
+  ];
   return {
     rows: sortCandidateTraceRows(limited),
     truncated: limited.length < rows.length,
@@ -1437,11 +1534,18 @@ export async function compileContextPack(
     ...budgetedProcedures.items,
     ...budgetedGuardrails.items,
   ];
+  const selectedKnowledgeIds = [
+    ...new Set(
+      selectedPackItems
+        .filter((item) => item.itemKind === "rule" || item.itemKind === "procedure")
+        .map((item) => item.itemId),
+    ),
+  ];
   const selectedPackItemCount = selectedPackItems.length;
   if (selectedPackItemCount === 0) {
     pushUnique(degradedReasons, "NO_RELEVANT_CONTEXT");
   }
-  const candidateTraceRows = buildCandidateTraceRows({
+  const directCandidateTraceRows = buildCandidateTraceRows({
     knowledgeItems: combinedItems.map((item) => ({
       id: item.id,
       type: normalizeKnowledgeType(item.type),
@@ -1471,6 +1575,21 @@ export async function compileContextPack(
     },
     agenticUsed: agenticResult.agenticUsed,
   });
+  const utilityTraceCandidates = await collectUtilityTraceCandidates({
+    input,
+    retrievalMode,
+    selectedKnowledgeIds,
+    existingCandidateIds: directCandidateTraceRows.map((row) => row.itemId),
+    facets: {
+      technologies: matchedTechnologies,
+      changeTypes: matchedChangeTypes,
+      domains: matchedDomains,
+    },
+  });
+  const candidateTraceRows = mergeUtilityTraceCandidates(
+    directCandidateTraceRows,
+    utilityTraceCandidates,
+  );
   const composedResponse = await composeContextResponse({
     input,
     retrievalMode,
@@ -1585,13 +1704,6 @@ export async function compileContextPack(
     embeddingDimensions: taskTraceEmbeddingStats.embeddingDimensions ?? null,
     embedding: taskTraceEmbeddingStats.queryEmbedding ?? null,
   });
-  const selectedKnowledgeIds = [
-    ...new Set(
-      selectedPackItems
-        .filter((item) => item.itemKind === "rule" || item.itemKind === "procedure")
-        .map((item) => item.itemId),
-    ),
-  ];
   const selectedRankMap = new Map<string, number>();
   for (const [index, item] of selectedPackItems.entries()) {
     if (item.itemKind !== "rule" && item.itemKind !== "procedure") continue;

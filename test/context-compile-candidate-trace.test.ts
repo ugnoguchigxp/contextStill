@@ -18,6 +18,10 @@ const { agenticRefineMock } = vi.hoisted(() => ({
   agenticRefineMock: vi.fn(),
 }));
 
+const { collectUtilityTraceCandidatesMock } = vi.hoisted(() => ({
+  collectUtilityTraceCandidatesMock: vi.fn(),
+}));
+
 vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/sources/source-retrieval.service.js");
 vi.mock("../src/modules/episodic-memory/episode-card.service.js");
@@ -30,6 +34,9 @@ vi.mock("../src/modules/context-compiler/pack-renderer.js", () => ({
 }));
 vi.mock("../src/modules/context-compiler/agentic-refine.service.js", () => ({
   agenticRefine: agenticRefineMock,
+}));
+vi.mock("../src/modules/context-compiler/utility-retrieval.service.js", () => ({
+  collectUtilityTraceCandidates: collectUtilityTraceCandidatesMock,
 }));
 vi.mock("../src/modules/context-compiler/context-response-composer.service.js", () => ({
   composeContextResponse: vi.fn(() => ({
@@ -70,6 +77,7 @@ describe("context compile candidate trace", () => {
     vi.mocked(recordKnowledgeCompileSelectionSafe).mockResolvedValue();
     vi.mocked(recordAuditLogSafe).mockResolvedValue(undefined);
     vi.mocked(searchEpisodes).mockResolvedValue([]);
+    collectUtilityTraceCandidatesMock.mockResolvedValue([]);
 
     vi.mocked(retrieveKnowledge).mockResolvedValue({
       items: [
@@ -239,6 +247,8 @@ describe("context compile candidate trace", () => {
         selected: true,
         finalScore: expect.any(Number),
         evidence: expect.objectContaining({
+          dropStage: "selected",
+          dropReason: "selected",
           rankingScore: expect.objectContaining({
             rawScore: 0.65,
             weightedScore: expect.any(Number),
@@ -255,5 +265,97 @@ describe("context compile candidate trace", () => {
     expect(retrievalStats.candidateTraceTruncated).toBe(true);
     expect(retrievalStats.candidateTraceLimit).toBe(1);
     expect(retrievalStats.candidateTraceSkippedReason).toBeNull();
+  });
+
+  test("persists utility candidates as trace-only without adding them to pack items", async () => {
+    groupedConfig.compile.candidateTraceLimit = 2;
+    collectUtilityTraceCandidatesMock.mockResolvedValue([
+      {
+        itemKind: "rule",
+        itemId: "k5",
+        score: 12,
+        lane: "exploration",
+        rankingReason: "utility_trace_only:exploration",
+        evidence: {
+          utilityLane: "exploration",
+          traceOnly: true,
+          dropStage: "trace_only",
+          dropReason: "utility_trace_only",
+          adoptionReason: "test exploration",
+          rejectIf: ["test reject"],
+        },
+      },
+    ]);
+
+    await compileContextPack({ goal: "trace utility candidate" });
+
+    const [, traceRows] = vi.mocked(insertContextCompileCandidateTraces).mock.calls[0] ?? [];
+    expect(traceRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          itemId: "k4",
+          selected: true,
+        }),
+        expect.objectContaining({
+          itemId: "k5",
+          selected: false,
+          rankingReason: "utility_trace_only:exploration",
+          evidence: expect.objectContaining({
+            utilityLane: "exploration",
+            traceOnly: true,
+            dropStage: "trace_only",
+            dropReason: "utility_trace_only",
+            utilityScore: 12,
+          }),
+        }),
+      ]),
+    );
+
+    const [, packItems] = vi.mocked(insertContextPackItems).mock.calls[0] ?? [];
+    expect(packItems).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ itemId: "k5" })]),
+    );
+  });
+
+  test("merges utility signals into existing candidate trace rows", async () => {
+    groupedConfig.compile.candidateTraceLimit = 20;
+    collectUtilityTraceCandidatesMock.mockResolvedValue([
+      {
+        itemKind: "rule",
+        itemId: "k1",
+        score: 8,
+        lane: "co_selection",
+        rankingReason: "utility_trace_only:co_selection",
+        evidence: {
+          utilityLane: "co_selection",
+          traceOnly: true,
+          dropStage: "trace_only",
+          dropReason: "utility_trace_only",
+          adoptionReason: "test co-selection",
+          rejectIf: ["test reject"],
+        },
+      },
+    ]);
+
+    await compileContextPack({ goal: "merge utility signal" });
+
+    const [, traceRows] = vi.mocked(insertContextCompileCandidateTraces).mock.calls[0] ?? [];
+    const k1Rows = traceRows.filter((row: any) => row.itemId === "k1");
+    expect(k1Rows).toHaveLength(1);
+    expect(k1Rows[0]).toEqual(
+      expect.objectContaining({
+        itemId: "k1",
+        rankingReason: expect.not.stringContaining("utility_trace_only"),
+        evidence: expect.objectContaining({
+          utilitySignals: expect.objectContaining({
+            co_selection: expect.objectContaining({
+              utilityLane: "co_selection",
+              traceOnly: true,
+              adoptionReason: "test co-selection",
+            }),
+          }),
+        }),
+      }),
+    );
   });
 });

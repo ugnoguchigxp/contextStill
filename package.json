@@ -52,6 +52,7 @@
     "find-candidate": "bun run src/cli/find-candidate.ts",
     "cover-evidence": "bun run src/cli/cover-evidence.ts",
     "eval:context": "bun run src/cli/eval-context.ts",
+    "utility:retrieval-report": "bun run src/cli/utility-retrieval-report.ts",
     "finalize-distille": "bun run src/cli/finalize-distille.ts",
     "queue:finding:once": "bun run src/cli/queue.ts --queue findingCandidate --once --limit 1",
     "queue:episode-distiller:once": "bun run src/cli/queue.ts --queue episodeDistiller --once --limit 1",
