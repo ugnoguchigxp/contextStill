@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { groupedConfig } from "../src/config.js";
 import {
   cloneDefaultSettings,
+  normalizeRuntimeSettingsEditable,
   parseDocumentValue,
 } from "../src/modules/settings/settings.defaults.js";
 import {
@@ -558,5 +559,72 @@ describe("settings runtime cache", () => {
     );
     expect(parsed.taskRouting.episodeDistiller.providerPoolId).toBe("local-llm-default");
     expect(parsed.taskRouting.finalizeDistille.providerPoolId).toBe("local-llm-default");
+  });
+
+  test("normalizes provider pool settings into a read-after-write stable document", () => {
+    const input = cloneDefaultSettings();
+    input.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: "http://127.0.0.1:44448",
+      apiPath: "/v1/chat/completions",
+      model: "local-primary",
+      models: [
+        {
+          id: "local-primary",
+          name: "Primary",
+          apiBaseUrl: "http://127.0.0.1:44448/",
+          apiPath: "/v1/chat/completions",
+          model: "local-primary",
+        },
+        {
+          id: "local-qwen",
+          name: "Qwen",
+          apiBaseUrl: "http://127.0.0.1:44449/",
+          apiPath: "/v1/chat/completions",
+          model: "local-qwen",
+        },
+      ],
+    };
+    input.providerPools = [
+      {
+        id: "local-llm-default",
+        label: "Persisted Local LLM Pool",
+        targets: [
+          { provider: "local-llm", localLlmModelId: "local-primary" },
+          { provider: "local-llm", localLlmModelId: "local-qwen" },
+        ],
+        maxConcurrent: 10,
+        staleLeaseSeconds: 660,
+        enabled: true,
+        lowPriorityAgingSeconds: 1800,
+      },
+    ];
+
+    const normalized = normalizeRuntimeSettingsEditable(input);
+    const reparsed = parseDocumentValue({
+      id: "settings",
+      namespace: "runtime",
+      key: "settings.v1",
+      value: { settings: normalized },
+      valueKind: "json",
+      secretRef: null,
+      isSecret: false,
+      description: null,
+      schemaVersion: 1,
+      updatedBy: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    expect(normalized).toEqual(reparsed);
+    expect(normalized.providerPools[0]).toMatchObject({
+      id: "local-llm-default",
+      label: "Persisted Local LLM Pool",
+      maxConcurrent: 2,
+      targets: [
+        { provider: "local-llm", localLlmModelId: "local-primary" },
+        { provider: "local-llm", localLlmModelId: "local-qwen" },
+      ],
+    });
   });
 });

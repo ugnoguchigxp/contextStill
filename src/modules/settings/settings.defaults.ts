@@ -1073,11 +1073,17 @@ function mergeRuntimeSettings(
 }
 
 export function parseDocumentValue(row: SettingsRow | null): RuntimeSettingsEditable {
-  const defaults = cloneDefaultSettings();
-  if (!row) return defaults;
+  if (!row) return cloneDefaultSettings();
   const root = asRecord(row.value);
   const raw = asRecord(root.settings ?? root);
-  const merged = mergeRuntimeSettings(defaults, raw);
+  return normalizeRuntimeSettingsEditable(raw);
+}
+
+export function normalizeRuntimeSettingsEditable(
+  input: RuntimeSettingsEditable | Record<string, unknown>,
+): RuntimeSettingsEditable {
+  const defaults = cloneDefaultSettings();
+  const merged = mergeRuntimeSettings(defaults, input as Record<string, unknown>);
   const parsed = runtimeSettingsEditableSchema.safeParse(merged);
   if (!parsed.success) return defaults;
   return parsed.data;

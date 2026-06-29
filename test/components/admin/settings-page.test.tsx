@@ -880,18 +880,20 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
     const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
     expect(payload.settings.providers["local-llm"].models).toEqual([
-      {
+      expect.objectContaining({
+        id: expect.stringMatching(/^local-llm-[a-f0-9]{12}$/),
         name: "Primary",
         apiBaseUrl: "http://127.0.0.1:44448",
         apiPath: "/v1/chat/completions",
         model: "gemma-4-e4b-it",
-      },
-      {
+      }),
+      expect.objectContaining({
+        id: expect.stringMatching(/^local-llm-[a-f0-9]{12}$/),
         name: "Qwen",
         apiBaseUrl: "http://127.0.0.1:44449",
         apiPath: "/v1/chat/completions",
         model: "qwen-3.6-14b-it",
-      },
+      }),
     ]);
   });
 
@@ -917,12 +919,15 @@ describe("SettingsPage", () => {
 
     await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
     const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
-    expect(payload.settings.providers["local-llm"].models).toContainEqual({
-      name: "Reasoner",
-      apiBaseUrl: "http://127.0.0.1:44450",
-      apiPath: "/openai/v1/chat/completions",
-      model: "local-reasoner",
-    });
+    expect(payload.settings.providers["local-llm"].models).toContainEqual(
+      expect.objectContaining({
+        id: expect.stringMatching(/^local-llm-[a-f0-9]{12}$/),
+        name: "Reasoner",
+        apiBaseUrl: "http://127.0.0.1:44450",
+        apiPath: "/openai/v1/chat/completions",
+        model: "local-reasoner",
+      }),
+    );
   });
 
   it("deletes Local LLM and Azure OpenAI endpoints from the save payload", async () => {
@@ -939,12 +944,13 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
     const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
     expect(payload.settings.providers["local-llm"].models).toEqual([
-      {
+      expect.objectContaining({
+        id: expect.stringMatching(/^local-llm-[a-f0-9]{12}$/),
         name: "Primary",
         apiBaseUrl: "http://127.0.0.1:44448",
         apiPath: "/v1/chat/completions",
         model: "gemma-4-e4b-it",
-      },
+      }),
     ]);
     expect(payload.settings.providers["azure-openai"].deployments).toEqual([]);
   });
@@ -1038,6 +1044,60 @@ describe("SettingsPage", () => {
     expect(
       payload.settings.providers["local-llm"].models.map((model: { id?: string }) => model.id),
     ).toEqual(["local-primary", "local-qwen", "local-reasoner"]);
+  });
+
+  it("preserves Provider Pool targets when Local LLM models initially have no ids", async () => {
+    const settings = buildSettingsView();
+    settings.providerPools = [];
+    settings.providers["local-llm"].models = [
+      {
+        name: "Primary",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
+        model: "gemma-4-e4b-it",
+      },
+      {
+        name: "Qwen",
+        apiBaseUrl: "http://127.0.0.1:44449",
+        apiPath: "/v1/chat/completions",
+        model: "qwen-3.6-14b-it",
+      },
+    ];
+    repositoryMocks.fetchRuntimeSettings.mockResolvedValue({
+      ...buildSnapshot(),
+      settings,
+      effective: settings,
+    });
+    routerState.pathname = "/setting/taskrouting";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Pool Name"), {
+      target: { value: "Persisted Local LLM Pool" },
+    });
+    fireEvent.change(screen.getByLabelText("Queue Pool Concurrent Jobs"), {
+      target: { value: "2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    const modelIds = payload.settings.providers["local-llm"].models.map(
+      (model: { id?: string }) => model.id,
+    );
+    expect(modelIds).toHaveLength(2);
+    expect(
+      modelIds.every((id: string | undefined) => /^local-llm-[a-f0-9]{12}$/.test(id ?? "")),
+    ).toBe(true);
+    expect(payload.settings.providerPools[0]).toMatchObject({
+      id: "local-llm-default",
+      label: "Persisted Local LLM Pool",
+      maxConcurrent: 2,
+      targets: [
+        { provider: "local-llm", localLlmModelId: modelIds[0] },
+        { provider: "local-llm", localLlmModelId: modelIds[1] },
+      ],
+    });
   });
 
   it("saves added Azure OpenAI deployments and separate legacy API keys", async () => {

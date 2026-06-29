@@ -3,6 +3,7 @@ import {
   bootstrap,
   cloneDefaultSettings,
   normalizeDistillationTargetPriorityOrder,
+  normalizeRuntimeSettingsEditable,
   parseDocumentValue,
   secretRowKeys,
 } from "./settings.defaults.js";
@@ -218,13 +219,14 @@ export async function saveRuntimeSettings(
   input: RuntimeSettingsUpdateRequest,
 ): Promise<{ revision: number; updatedAt: string }> {
   const parsed = runtimeSettingsEditableSchema.parse(input.settings);
+  const normalized = normalizeRuntimeSettingsEditable(parsed);
   const existing = await findSettingsRow(SETTINGS_DOCUMENT_NAMESPACE, SETTINGS_DOCUMENT_KEY);
   const nextRevision = Math.max(1, (existing?.schemaVersion ?? 0) + 1);
 
   const written = await upsertSettingsRow({
     namespace: SETTINGS_DOCUMENT_NAMESPACE,
     key: SETTINGS_DOCUMENT_KEY,
-    value: { settings: parsed },
+    value: { settings: normalized },
     schemaVersion: nextRevision,
     updatedBy: input.updatedBy ?? null,
     description: "Runtime settings control-plane document",
