@@ -38,10 +38,18 @@ import {
 } from "../repositories/admin.repository";
 import { AdminPageHeader } from "./admin-page-header";
 
-type SettingsTabId = "general" | "providers" | "taskRouting" | "search" | "embedding" | "advanced";
+type SettingsTabId =
+  | "general"
+  | "providers"
+  | "pools"
+  | "taskRouting"
+  | "search"
+  | "embedding"
+  | "advanced";
 type SettingsTabPath =
   | "general"
   | "llmprovider"
+  | "llmpool"
   | "taskrouting"
   | "search"
   | "embedding"
@@ -70,6 +78,7 @@ function emptyRuntimeSecretStatus(): RuntimeSecretStatus {
 const settingsTabs: Array<{ id: SettingsTabId; label: string; path: SettingsTabPath }> = [
   { id: "general", label: "General", path: "general" },
   { id: "providers", label: "LLM Providers", path: "llmprovider" },
+  { id: "pools", label: "LLM Pool", path: "llmpool" },
   { id: "taskRouting", label: "Task Routing", path: "taskrouting" },
   { id: "search", label: "Search", path: "search" },
   { id: "embedding", label: "Embedding / Local Runtime", path: "embedding" },
@@ -160,6 +169,7 @@ function resolveConfiguredRouteModel(
 }
 
 type LocalLlmRouteOption = {
+  id?: string;
   value: string;
   label: string;
   model: string;
@@ -267,7 +277,10 @@ function routeEndpointOptions(settings: RuntimeSettingsEditable): RouteEndpointO
     });
   }
   if (settings.providers["local-llm"].enabled) {
-    for (const option of localLlmRouteModelOptions(settings)) {
+    const pooledModelIds = pooledLocalLlmModelIds(settings);
+    for (const option of localLlmRouteModelOptions(settings).filter(
+      (option) => !option.id || !pooledModelIds.has(option.id),
+    )) {
       options.push({
         value: `local-llm:${option.value}`,
         label: option.label,
@@ -286,6 +299,17 @@ function routeEndpointOptions(settings: RuntimeSettingsEditable): RouteEndpointO
     });
   }
   return options;
+}
+
+function pooledLocalLlmModelIds(settings: RuntimeSettingsEditable): Set<string> {
+  const ids = new Set<string>();
+  for (const pool of settings.providerPools) {
+    if (!pool.enabled) continue;
+    for (const target of pool.targets) {
+      if (target.provider === "local-llm") ids.add(target.localLlmModelId);
+    }
+  }
+  return ids;
 }
 
 function localLlmRouteTargetValue(
@@ -355,6 +379,7 @@ function localLlmRouteModelOptions(settings: RuntimeSettingsEditable): LocalLlmR
   return models.map((model) => {
     const duplicateModelName = (modelCounts.get(model.model) ?? 0) > 1;
     return {
+      id: model.id?.trim(),
       value: duplicateModelName ? localLlmRouteTargetValue(model) : model.model,
       label: localLlmRouteOptionLabel(model, duplicateModelName),
       model: model.model,
@@ -1016,6 +1041,7 @@ function RouteEditor({
   const selectedPool = route.providerPoolId
     ? poolOptions.find((pool) => pool.id === route.providerPoolId)
     : undefined;
+  const selectedPrimaryOption = endpointOptionByValue.get(primaryValue);
   const fallbackOptionsFor = (index: 0 | 1): RouteEndpointOption[] => {
     const currentValue = selectedFallbackValues[index];
     const blockedProviders = new Set<RuntimeProviderName>([
@@ -1038,10 +1064,14 @@ function RouteEditor({
           },
         ]
       : []),
-    {
-      label: "Primary",
-      value: endpointOptionByValue.get(primaryValue)?.label ?? "not configured",
-    },
+    ...(selectedPrimaryOption || !selectedPool
+      ? [
+          {
+            label: "Primary",
+            value: selectedPrimaryOption?.label ?? "not configured",
+          },
+        ]
+      : []),
     ...selectedFallbackValues.filter(Boolean).map((value, index) => ({
       label: `Fallback ${index + 1}`,
       value: endpointOptionByValue.get(value)?.label ?? "not configured",
@@ -1056,6 +1086,22 @@ function RouteEditor({
       </div>
       <div className="settings-route-fields settings-route-fields-routing">
         <label className="settings-field">
+          <span>LLM Pool</span>
+          <Select
+            value={route.providerPoolId ?? ""}
+            onChange={(event) => {
+              onChange(routeWithProviderPool(route, event.target.value || undefined));
+            }}
+          >
+            <option value="">direct endpoint</option>
+            {poolOptions.map((pool) => (
+              <option key={pool.id} value={pool.id}>
+                {pool.label || pool.id}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label className="settings-field">
           <span>Primary Endpoint</span>
           <Select
             value={primaryValue}
@@ -1066,7 +1112,7 @@ function RouteEditor({
             disabled={endpointOptions.length === 0}
           >
             {endpointOptions.length === 0 ? (
-              <option value="">No configured endpoints</option>
+              <option value="">No configured direct endpoints</option>
             ) : (
               <>
                 {primaryValue ? null : (
@@ -1081,22 +1127,6 @@ function RouteEditor({
                 ))}
               </>
             )}
-          </Select>
-        </label>
-        <label className="settings-field">
-          <span>Provider Pool</span>
-          <Select
-            value={route.providerPoolId ?? ""}
-            onChange={(event) => {
-              onChange(routeWithProviderPool(route, event.target.value || undefined));
-            }}
-          >
-            <option value="">direct endpoint</option>
-            {poolOptions.map((pool) => (
-              <option key={pool.id} value={pool.id}>
-                {pool.label || pool.id}
-              </option>
-            ))}
           </Select>
         </label>
         <label className="settings-field">
@@ -1573,8 +1603,8 @@ export function SettingsPage() {
     return (
       <section className="settings-route-section">
         <div className="settings-route-section-header">
-          <h3>Provider Pools</h3>
-          <p>Provider lease targets and concurrency for queue-backed LLM work.</p>
+          <h3>Local LLM Pools</h3>
+          <p>Choose which Local LLM endpoints belong to each named routing pool.</p>
           <Button type="button" size="sm" variant="outline" onClick={addPool}>
             <Plus size={14} />
             Add Pool
@@ -2948,6 +2978,20 @@ export function SettingsPage() {
 
             {activeTab === "providers" ? renderProviderEndpointsPanel() : null}
 
+            {activeTab === "pools" ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>LLM Pool</CardTitle>
+                  <p className="settings-task-routing-intro">
+                    Group Local LLM endpoints into named pools for queue-backed task routing.
+                  </p>
+                </CardHeader>
+                <CardContent className="settings-routes">
+                  {renderLocalLlmProviderPoolControls()}
+                </CardContent>
+              </Card>
+            ) : null}
+
             {activeTab === "taskRouting" ? (
               <Card>
                 <CardHeader>
@@ -3662,7 +3706,6 @@ export function SettingsPage() {
                       </div>
                     </div>
                   </section>
-                  {renderLocalLlmProviderPoolControls()}
                 </CardContent>
               </Card>
             ) : null}

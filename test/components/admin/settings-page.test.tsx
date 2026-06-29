@@ -131,12 +131,14 @@ function buildSettingsView(): RuntimeSettingsView {
         model: "gemma-4-e4b-it",
         models: [
           {
+            id: "local-primary",
             name: "Primary",
             apiBaseUrl: "http://127.0.0.1:44448",
             apiPath: "/v1/chat/completions",
             model: "gemma-4-e4b-it",
           },
           {
+            id: "local-qwen",
             name: "Qwen",
             apiBaseUrl: "http://127.0.0.1:44449",
             apiPath: "/v1/chat/completions",
@@ -445,10 +447,15 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText("LLM Max Input Tokens")).toHaveValue(80000);
     expect(screen.getByLabelText("LLM Input Safety Margin Tokens")).toHaveValue(4096);
     expect(screen.getByText("Agentic Compile")).toBeInTheDocument();
+    expect(screen.queryByText("Local LLM Pools")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Distillation Runtime" })).not.toBeInTheDocument();
 
     const tabLink = screen.getByRole("link", { name: "LLM Providers" });
     expect(tabLink).toHaveAttribute("href", "/setting/llmprovider");
+    expect(screen.getByRole("link", { name: "LLM Pool" })).toHaveAttribute(
+      "href",
+      "/setting/llmpool",
+    );
 
     const primaryEndpointSelects = screen.getAllByLabelText("Primary Endpoint");
     const firstPrimaryEndpointSelect = primaryEndpointSelects[0];
@@ -461,7 +468,12 @@ describe("SettingsPage", () => {
       within(firstPrimaryEndpointSelect).getByRole("option", { name: /Primary \/ gpt-5-4-mini/ }),
     ).toBeInTheDocument();
     expect(
-      within(firstPrimaryEndpointSelect).getByRole("option", { name: /Primary \/ gemma-4-e4b-it/ }),
+      within(firstPrimaryEndpointSelect).queryByRole("option", {
+        name: /Primary \/ gemma-4-e4b-it/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(firstPrimaryEndpointSelect).getByRole("option", { name: /Qwen \/ qwen-3\.6-14b-it/ }),
     ).toBeInTheDocument();
     expect(
       within(firstPrimaryEndpointSelect).queryByRole("option", { name: /Local LLM/ }),
@@ -582,18 +594,18 @@ describe("SettingsPage", () => {
     expect(payload.settings.advanced.coveringQueueTaskIntervalSeconds).toBe(10);
   });
 
-  it("saves route Provider Pool selection from Task Routing", async () => {
+  it("saves route LLM Pool selection from Task Routing", async () => {
     routerState.pathname = "/setting/taskrouting";
     renderPage();
     expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
 
     const rowScope = within(getRouteRow("findCandidate"));
     expect(
-      within(rowScope.getByLabelText("Provider Pool")).getByRole("option", {
+      within(rowScope.getByLabelText("LLM Pool")).getByRole("option", {
         name: "Local LLM pool",
       }),
     ).toBeInTheDocument();
-    fireEvent.change(rowScope.getByLabelText("Provider Pool"), {
+    fireEvent.change(rowScope.getByLabelText("LLM Pool"), {
       target: { value: "local-llm-default" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
@@ -623,7 +635,7 @@ describe("SettingsPage", () => {
       target: { value: "azure-openai:1" },
     });
     fireEvent.change(rowScope.getByLabelText("Fallback 1 Endpoint"), {
-      target: { value: "local-llm:gemma-4-e4b-it" },
+      target: { value: "local-llm:qwen-3.6-14b-it" },
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
@@ -633,7 +645,7 @@ describe("SettingsPage", () => {
     const route = {
       provider: "azure-openai",
       model: "gpt-5-4-mini",
-      localLlmModel: "gemma-4-e4b-it",
+      localLlmModel: "qwen-3.6-14b-it",
       fallback: ["local-llm"],
       azureDeploymentSlots: [1],
     };
@@ -881,14 +893,14 @@ describe("SettingsPage", () => {
     const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
     expect(payload.settings.providers["local-llm"].models).toEqual([
       expect.objectContaining({
-        id: expect.stringMatching(/^local-llm-[a-f0-9]{12}$/),
+        id: "local-primary",
         name: "Primary",
         apiBaseUrl: "http://127.0.0.1:44448",
         apiPath: "/v1/chat/completions",
         model: "gemma-4-e4b-it",
       }),
       expect.objectContaining({
-        id: expect.stringMatching(/^local-llm-[a-f0-9]{12}$/),
+        id: "local-qwen",
         name: "Qwen",
         apiBaseUrl: "http://127.0.0.1:44449",
         apiPath: "/v1/chat/completions",
@@ -945,7 +957,7 @@ describe("SettingsPage", () => {
     const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
     expect(payload.settings.providers["local-llm"].models).toEqual([
       expect.objectContaining({
-        id: expect.stringMatching(/^local-llm-[a-f0-9]{12}$/),
+        id: "local-primary",
         name: "Primary",
         apiBaseUrl: "http://127.0.0.1:44448",
         apiPath: "/v1/chat/completions",
@@ -978,7 +990,7 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("saves Local LLM queue pool targets and concurrency from Task Routing", async () => {
+  it("saves Local LLM queue pool targets and concurrency from LLM Pool", async () => {
     const settings = buildSettingsView();
     settings.providerPools = [
       {
@@ -1019,9 +1031,10 @@ describe("SettingsPage", () => {
       settings,
       effective: settings,
     });
-    routerState.pathname = "/setting/taskrouting";
+    routerState.pathname = "/setting/llmpool";
     renderPage();
-    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "LLM Pool" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "LLM Pool" })).toHaveClass("active");
 
     fireEvent.click(screen.getByLabelText(/Use Qwen .* for Local LLM pool/));
     fireEvent.click(screen.getByLabelText(/Use Reasoner .* for Local LLM pool/));
@@ -1068,9 +1081,9 @@ describe("SettingsPage", () => {
       settings,
       effective: settings,
     });
-    routerState.pathname = "/setting/taskrouting";
+    routerState.pathname = "/setting/llmpool";
     renderPage();
-    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "LLM Pool" })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Pool Name"), {
       target: { value: "Persisted Local LLM Pool" },
