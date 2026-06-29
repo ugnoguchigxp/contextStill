@@ -93,6 +93,18 @@ function targetKey(target: RuntimeProviderPoolTarget): string {
   return `${target.provider}:${target.targetId}`;
 }
 
+function dedupeTargets(targets: RuntimeProviderPoolTarget[]): RuntimeProviderPoolTarget[] {
+  const seen = new Set<string>();
+  const deduped: RuntimeProviderPoolTarget[] = [];
+  for (const target of targets) {
+    const key = targetKey(target);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(target);
+  }
+  return deduped;
+}
+
 function queueRoutes(
   settings: RuntimeSettingsEditable,
   queueName: DistillationQueueName,
@@ -150,9 +162,11 @@ export function enabledProviderPoolsForQueues(
     for (const route of queueRoutes(settings, queueName)) {
       const groupId = routeClaimGroupId(route);
       if (!groupId) continue;
-      const routeTargets = targetsForRoute(settings, route);
-      if (routeTargets.length === 0) continue;
       const legacy = legacyPools.get(groupId);
+      const routeTargets = route.providerPoolId?.trim()
+        ? dedupeTargets(legacy?.targets ?? [])
+        : targetsForRoute(settings, route);
+      if (routeTargets.length === 0) continue;
       const group =
         groups.get(groupId) ??
         ({

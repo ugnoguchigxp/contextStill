@@ -20,6 +20,7 @@ import {
   buildReadableTranscript,
   chunkMessages,
   extractUnifiedDiffsFromText,
+  isExcludedAgentLogMetadata,
 } from "../src/modules/agent-log-sync/sync.service.js";
 import { parseVibeMemoryTurns } from "../web/src/modules/admin/components/chat-rendering.ts";
 
@@ -107,6 +108,15 @@ describe("agent log sync ingestion", () => {
     expect(transcript).toContain("USER: READMEを直してください");
     expect(transcript).toContain("ASSISTANT: 修正しました");
     expect(transcript).not.toContain("*** Begin Patch");
+  });
+
+  test("excludes Codex finding escalation generated metadata", () => {
+    expect(
+      isExcludedAgentLogMetadata({
+        generatedBy: "contextStill.codexFindingEscalation",
+        excludedFromVibeMemory: true,
+      }),
+    ).toBe(true);
   });
 
   test("buildReadableTranscript strips embedded diffs from natural chat records", () => {

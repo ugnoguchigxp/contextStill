@@ -132,7 +132,7 @@ describe("provider pool scheduler", () => {
     expect(unpooledQueues(["findingCandidate", "deadZoneMergeReview"])).toEqual([]);
   });
 
-  test("derives claim targets from task routing even when the target is outside the legacy pool", async () => {
+  test("keeps explicit provider pools as the source of truth even when route model differs", async () => {
     mocks.settings.taskRouting.episodeDistiller = {
       provider: "local-llm",
       providerPoolId: "local-llm-default",
@@ -146,6 +146,29 @@ describe("provider pool scheduler", () => {
 
     expect(enabledProviderPoolsForQueues(["episodeDistiller"])[0]).toMatchObject({
       id: "local-llm-default",
+      targets: [
+        { provider: "local-llm", localLlmModelId: "local-a" },
+        { provider: "local-llm", localLlmModelId: "local-b" },
+      ],
+    });
+  });
+
+  test("synthesizes direct provider routes only when no provider pool is configured", async () => {
+    mocks.settings.taskRouting.episodeDistiller = {
+      provider: "local-llm",
+      providerPoolId: "local-llm-default",
+      model: "local-c-model",
+      fallback: [],
+    };
+    (mocks.settings.taskRouting.episodeDistiller as { providerPoolId?: string }).providerPoolId =
+      undefined;
+
+    const { enabledProviderPoolsForQueues } = await import(
+      "../src/modules/queue/core/scheduler.js"
+    );
+
+    expect(enabledProviderPoolsForQueues(["episodeDistiller"])[0]).toMatchObject({
+      id: "task-routing:local-llm",
       targets: [{ provider: "local-llm", localLlmModelId: "local-c" }],
     });
   });

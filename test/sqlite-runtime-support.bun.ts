@@ -1950,7 +1950,7 @@ describe("sqlite runtime support repositories", () => {
     });
 
     expect(run.ok).toBe(false);
-    expect(run.message).toContain("worker_unavailable:");
+    expect(run.message).toContain("provider_unavailable_retry:");
     const row = sqlite.db
       .query<
         {
@@ -1967,7 +1967,7 @@ describe("sqlite runtime support repositories", () => {
       .get(job.id);
     expect(row).toMatchObject({
       status: "pending",
-      last_outcome_kind: "worker_unavailable",
+      last_outcome_kind: "provider_unavailable_retry",
     });
     expect(row?.last_error).toContain("Loading model");
     expect(row?.next_run_at).toBeTruthy();
@@ -2555,6 +2555,121 @@ describe("sqlite runtime support repositories", () => {
       .all()
       .map((row) => row.target_id);
     expect(activeLeases).toEqual([coveringTarget.id, episodeTarget.id].sort());
+  });
+
+  test("prevents the same provider target from being leased through different pools", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const settings = structuredClone(getRuntimeSettingsSnapshot());
+    const sharedTarget = {
+      id: "local-shared-global-lease",
+      name: "Shared global lease model",
+      apiBaseUrl: "http://127.0.0.1:44456",
+      apiPath: "/v1/chat/completions",
+      model: "qwen-test",
+    };
+    const routeTarget = JSON.stringify({
+      apiBaseUrl: sharedTarget.apiBaseUrl,
+      apiPath: sharedTarget.apiPath,
+      model: sharedTarget.model,
+    });
+    settings.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: sharedTarget.apiBaseUrl,
+      apiPath: sharedTarget.apiPath,
+      model: sharedTarget.model,
+      models: [sharedTarget],
+    };
+    settings.providerPools = [
+      {
+        id: "episode-pool",
+        label: "Episode Pool",
+        enabled: true,
+        maxConcurrent: 1,
+        staleLeaseSeconds: 120,
+        lowPriorityAgingSeconds: 1800,
+        targets: [{ provider: "local-llm", localLlmModelId: sharedTarget.id }],
+      },
+      {
+        id: "covering-pool",
+        label: "Covering Pool",
+        enabled: true,
+        maxConcurrent: 1,
+        staleLeaseSeconds: 120,
+        lowPriorityAgingSeconds: 1800,
+        targets: [{ provider: "local-llm", localLlmModelId: sharedTarget.id }],
+      },
+    ];
+    settings.taskRouting.episodeDistiller = {
+      provider: "local-llm",
+      model: routeTarget,
+      localLlmModel: routeTarget,
+      providerPoolId: "episode-pool",
+      fallback: [],
+    };
+    settings.taskRouting.coverEvidence.sourceSupport = {
+      provider: "local-llm",
+      model: routeTarget,
+      localLlmModel: routeTarget,
+      providerPoolId: "covering-pool",
+      fallback: [],
+    };
+    settings.taskRouting.coverEvidence.externalEvidence = {
+      provider: "local-llm",
+      model: routeTarget,
+      localLlmModel: routeTarget,
+      providerPoolId: "covering-pool",
+      fallback: [],
+    };
+    settings.taskRouting.coverEvidence.mcpEvidence = {
+      provider: "local-llm",
+      model: routeTarget,
+      localLlmModel: routeTarget,
+      providerPoolId: "covering-pool",
+      fallback: [],
+    };
+    await saveRuntimeSettings({ settings, updatedBy: "sqlite-runtime-test" });
+
+    sqlite.db
+      .query(
+        `
+        insert into episode_distiller_queue (
+          id, source_kind, source_key, source_uri, distillation_version,
+          status, priority, payload, metadata, created_at, updated_at
+        ) values (
+          'episode-global-lease', 'vibe_memory', 'episode-global-lease-source',
+          'vibe-memory://episode-global-lease-source', 'v-test',
+          'pending', 50, '{}', '{}', '2026-06-22 01:00:00', '2026-06-22 01:00:00'
+        );
+        insert into covering_evidence_queue (
+          id, found_candidate_id, status, priority, payload, metadata, next_run_at, created_at, updated_at
+        ) values (
+          'covering-global-lease', 'candidate-global-lease', 'pending', 50, '{}', '{}',
+          '2026-06-22 01:00:00', '2026-06-22 01:00:00', '2026-06-22 01:00:00'
+        );
+        `,
+      )
+      .run();
+
+    const episodeClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["episodeDistiller"],
+      workerId: "sqlite-global-lease-worker-1",
+    });
+    const blockedCoveringClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[1],
+      priorityQueues: ["coveringEvidence"],
+      workerId: "sqlite-global-lease-worker-2",
+    });
+
+    expect(episodeClaim?.providerLease.targetId).toBe(sharedTarget.id);
+    expect(blockedCoveringClaim).toBeNull();
+    expect(
+      sqlite.db
+        .query<{ count: number }, []>(
+          "select count(*) as count from llm_provider_leases where target_id = 'local-shared-global-lease' and status = 'active'",
+        )
+        .get()?.count ?? 0,
+    ).toBe(1);
   });
 
   test("keeps same-route findingCandidate work waiting even when another pool target is free", async () => {

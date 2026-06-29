@@ -357,6 +357,43 @@ export const foundCandidates = pgTable(
   }),
 );
 
+export const findingCandidateEscalations = pgTable(
+  "finding_candidate_escalations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceKind: text("source_kind").notNull(),
+    sourceKey: text("source_key").notNull(),
+    distillationVersion: text("distillation_version").notNull(),
+    sourceDedupeKey: text("source_dedupe_key"),
+    primaryJobId: uuid("primary_job_id").references(() => findingCandidateQueue.id, {
+      onDelete: "set null",
+    }),
+    escalationProvider: text("escalation_provider").notNull(),
+    escalationModel: text("escalation_model").notNull(),
+    status: text("status").notNull(),
+    reason: text("reason"),
+    outputSummary: text("output_summary"),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    sourceProviderModelUniqueIdx: uniqueIndex(
+      "finding_candidate_escalations_source_provider_model_unique_idx",
+    ).on(
+      table.sourceKind,
+      table.sourceKey,
+      table.distillationVersion,
+      table.escalationProvider,
+      table.escalationModel,
+    ),
+    sourceDedupeIdx: index("finding_candidate_escalations_source_dedupe_idx").on(
+      table.sourceDedupeKey,
+    ),
+    primaryJobIdx: index("finding_candidate_escalations_primary_job_idx").on(table.primaryJobId),
+  }),
+);
+
 export const coveringEvidenceQueue = pgTable(
   "covering_evidence_queue",
   {

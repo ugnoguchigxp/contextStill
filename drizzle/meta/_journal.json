@@ -484,6 +484,13 @@
       "when": 1782432000000,
       "tag": "0069_episode_retrieval_wrong_verdict",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1782518400000,
+      "tag": "0070_finding_candidate_escalations",
+      "breakpoints": true
     }
   ]
 }

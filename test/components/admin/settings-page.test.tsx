@@ -582,6 +582,32 @@ describe("SettingsPage", () => {
     expect(payload.settings.advanced.coveringQueueTaskIntervalSeconds).toBe(10);
   });
 
+  it("saves route Provider Pool selection from Task Routing", async () => {
+    routerState.pathname = "/setting/taskrouting";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+
+    const rowScope = within(getRouteRow("findCandidate"));
+    expect(
+      within(rowScope.getByLabelText("Provider Pool")).getByRole("option", {
+        name: "Local LLM pool",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.change(rowScope.getByLabelText("Provider Pool"), {
+      target: { value: "local-llm-default" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.taskRouting.findCandidate.source.providerPoolId).toBe(
+      "local-llm-default",
+    );
+    expect(payload.settings.taskRouting.findCandidate.vibe.providerPoolId).toBe(
+      "local-llm-default",
+    );
+  });
+
   it("edits Cover Evidence as one queue processing route", async () => {
     routerState.pathname = "/setting/taskrouting";
     renderPage();
@@ -991,8 +1017,8 @@ describe("SettingsPage", () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByLabelText(/Use Qwen .* for Queue Pool/));
-    fireEvent.click(screen.getByLabelText(/Use Reasoner .* for Queue Pool/));
+    fireEvent.click(screen.getByLabelText(/Use Qwen .* for Local LLM pool/));
+    fireEvent.click(screen.getByLabelText(/Use Reasoner .* for Local LLM pool/));
     fireEvent.change(screen.getByLabelText("Queue Pool Concurrent Jobs"), {
       target: { value: "3" },
     });

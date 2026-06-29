@@ -360,6 +360,60 @@ fn rust_provider_claim_blocks_when_pool_capacity_is_full() {
 }
 
 #[test]
+fn rust_provider_claim_blocks_target_active_in_another_pool() {
+    let app_dir = temp_app_dir("provider_claim_global_target");
+    let sqlite_path = app_dir.join("queue.sqlite");
+    let mut connection = Connection::open(&sqlite_path).unwrap();
+    create_provider_claim_queue_table(&connection, "finding_candidate_queue");
+    create_provider_lease_table(&connection);
+    connection
+        .execute_batch(
+            r#"
+            insert into finding_candidate_queue (
+              id, status, priority, created_at, updated_at, next_run_at, source_kind
+            ) values (
+              'job-source', 'pending', 10, '2026-06-22 01:00:00', '2026-06-22 01:00:00', null, 'source'
+            );
+            insert into llm_provider_leases (
+              id, pool_id, target_id, queue_name, queue_job_id, worker_id, status,
+              locked_at, heartbeat_at, expires_at, metadata, created_at, updated_at
+            ) values (
+              'lease-other-pool', 'episode-pool', 'local-a', 'episodeDistiller', 'job-episode',
+              'worker-old', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+              datetime(CURRENT_TIMESTAMP, '+120 seconds'), '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            );
+            "#,
+        )
+        .unwrap();
+    let mut pool = provider_pool();
+    pool.pool_id = "covering-pool".to_string();
+    pool.targets = vec!["local-a".to_string()];
+    pool.max_concurrent = 1;
+
+    let claimed = claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &[finding_candidate_spec()],
+        "worker-1",
+        "lease-1",
+        90,
+    )
+    .unwrap();
+
+    assert_eq!(claimed, None);
+    let active_count = connection
+        .query_row(
+            "select count(*) from llm_provider_leases where target_id = 'local-a' and status = 'active'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    assert_eq!(active_count, 1);
+
+    std::fs::remove_dir_all(&app_dir).unwrap();
+}
+
+#[test]
 fn rust_provider_lease_manager_counts_slots_after_stale_recovery() {
     let app_dir = temp_app_dir("provider_slots");
     let sqlite_path = app_dir.join("queue.sqlite");

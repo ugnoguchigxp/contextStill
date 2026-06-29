@@ -62,7 +62,7 @@ pub fn claim_next_job_with_provider_lease_for_connection(
         return Ok(None);
     }
 
-    let active_targets = active_provider_targets(&tx, &pool.pool_id)?;
+    let active_targets = active_provider_targets(&tx)?;
     let free_targets = pool
         .targets
         .iter()
@@ -275,21 +275,16 @@ fn normalized_stale_lease_seconds(pool: &ProviderPoolClaimConfig) -> u64 {
     pool.stale_lease_seconds.clamp(30, 120)
 }
 
-fn active_provider_targets(
-    tx: &Transaction<'_>,
-    pool_id: &str,
-) -> Result<BTreeSet<String>, CliError> {
+fn active_provider_targets(tx: &Transaction<'_>) -> Result<BTreeSet<String>, CliError> {
     let mut statement = tx
-        .prepare(
-            "select target_id from llm_provider_leases where pool_id = ?1 and status = 'active'",
-        )
+        .prepare("select target_id from llm_provider_leases where status = 'active'")
         .map_err(|error| {
             CliError::io(format!(
                 "failed to prepare active provider target query: {error}"
             ))
         })?;
     let rows = statement
-        .query_map([pool_id], |row| row.get::<_, String>(0))
+        .query_map([], |row| row.get::<_, String>(0))
         .map_err(|error| {
             CliError::io(format!("failed to query active provider targets: {error}"))
         })?;

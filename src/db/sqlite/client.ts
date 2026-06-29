@@ -94,6 +94,17 @@ DROP INDEX IF EXISTS episode_cards_evidence_status_idx;
 ALTER TABLE episode_cards DROP COLUMN evidence_status;
 `);
   }
+  if (!hasColumn(db, "finding_candidate_escalations", "distillation_version")) {
+    db.exec(`
+ALTER TABLE finding_candidate_escalations
+  ADD COLUMN distillation_version TEXT NOT NULL DEFAULT 'v1';
+`);
+  }
+  db.exec(`
+DROP INDEX IF EXISTS finding_candidate_escalations_source_provider_model_unique_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS finding_candidate_escalations_source_provider_model_unique_idx
+  ON finding_candidate_escalations(source_kind, source_key, distillation_version, escalation_provider, escalation_model);
+`);
 }
 
 function disabledVectorCapability(): SqliteVectorCapability {

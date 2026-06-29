@@ -341,7 +341,14 @@ fn provider_pools(settings: &Value) -> Vec<ProviderPoolClaimConfig> {
         let Some(group_id) = route_claim_group_id(route) else {
             continue;
         };
-        let targets = local_llm_route_target_ids(settings, route);
+        let targets = if route_provider_pool_id(route).is_some() {
+            legacy_pools
+                .get(&group_id)
+                .map(|pool| pool.targets.clone())
+                .unwrap_or_default()
+        } else {
+            local_llm_route_target_ids(settings, route)
+        };
         if targets.is_empty() {
             continue;
         }
@@ -587,10 +594,16 @@ fn route_claim_group_id(route: &Value) -> Option<String> {
     if string_field(route, "provider").as_deref() != Some("local-llm") {
         return None;
     }
-    string_field(route, "providerPoolId")
+    route_provider_pool_id(route)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .or_else(|| Some("task-routing:local-llm".to_string()))
+}
+
+fn route_provider_pool_id(route: &Value) -> Option<String> {
+    string_field(route, "providerPoolId")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn local_llm_route_target_ids(settings: &Value, route: &Value) -> Vec<String> {
@@ -1001,7 +1014,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_executor_derives_targets_from_task_routing_not_pool_membership() {
+    fn rust_executor_keeps_provider_pool_targets_as_membership_source_of_truth() {
         let settings = json!({
             "providerPools": [{
                 "id": "local-llm-default",
@@ -1031,7 +1044,7 @@ mod tests {
         let pools = provider_pools(&settings);
         assert_eq!(pools.len(), 1);
         assert_eq!(pools[0].pool_id, "local-llm-default");
-        assert_eq!(pools[0].targets, vec!["local-b".to_string()]);
+        assert_eq!(pools[0].targets, vec!["local-a".to_string()]);
 
         let queues =
             executor_priority_queues_for_pool(&settings, "local-llm-default", &HashSet::new());

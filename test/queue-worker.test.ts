@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   appendQueueEvent: vi.fn(),
   claimNextQueueJob: vi.fn(),
   runCoverEvidence: vi.fn(),
+  isVibeMemorySelfIngestionBlocked: vi.fn(),
+  maybeRunFindingCodexEscalation: vi.fn(),
+  markFindingCodexEscalationAccepted: vi.fn(),
   runFindCandidate: vi.fn(),
   runFinalizeDistille: vi.fn(),
   processMergeActivationFinalizeJob: vi.fn(),
@@ -48,6 +51,13 @@ vi.mock("../src/modules/queue/core/events.js", () => ({
 
 vi.mock("../src/modules/coverEvidence/domain.js", () => ({
   runCoverEvidence: mocks.runCoverEvidence,
+}));
+
+vi.mock("../src/modules/findCandidate/codex-escalation.service.js", () => ({
+  codexFindingEscalationGeneratedBy: "contextStill.codexFindingEscalation",
+  isVibeMemorySelfIngestionBlocked: mocks.isVibeMemorySelfIngestionBlocked,
+  maybeRunFindingCodexEscalation: mocks.maybeRunFindingCodexEscalation,
+  markFindingCodexEscalationAccepted: mocks.markFindingCodexEscalationAccepted,
 }));
 
 vi.mock("../src/modules/findCandidate/domain.js", () => ({
@@ -113,6 +123,14 @@ describe("runQueueWorkerOnce", () => {
     mocks.claimNextQueueJob.mockResolvedValue({ id: "cover-job-1" });
     mocks.isQueuePaused.mockResolvedValue(false);
     mocks.setQueuePaused.mockResolvedValue({});
+    mocks.isVibeMemorySelfIngestionBlocked.mockResolvedValue(false);
+    mocks.maybeRunFindingCodexEscalation.mockResolvedValue({
+      mode: "off",
+      status: "skipped",
+      reason: "disabled",
+      candidates: [],
+    });
+    mocks.markFindingCodexEscalationAccepted.mockResolvedValue(undefined);
     mocks.db.select.mockImplementation(() => selectChain(mocks.selectRows.shift() ?? []));
     mocks.db.insert.mockImplementation((table: unknown) => insertChain(table));
     mocks.db.update.mockImplementation((table: unknown) => updateChain(table));
@@ -1056,6 +1074,132 @@ describe("runQueueWorkerOnce", () => {
           status: "failed",
           attemptCount: 1,
           lastOutcomeKind: "failed",
+        }),
+      }),
+    );
+  });
+
+  test("runQueueWorkerOnce writes Codex escalated candidates after covering enqueue succeeds", async () => {
+    mocks.claimNextQueueJob.mockResolvedValue({ id: "finding-job-1" });
+    mocks.selectRows = [
+      [
+        {
+          id: "finding-job-1",
+          inputKind: "source_target",
+          sourceKind: "vibe_memory",
+          sourceKey: "memory-1",
+          sourceUri: "vibe_memory:memory-1",
+          distillationVersion: "v-test",
+          payload: {},
+          metadata: {},
+          priority: 50,
+        },
+      ],
+    ];
+    mocks.runFindCandidate.mockResolvedValue({
+      targetStateId: null,
+      targetKind: "vibe_memory",
+      targetKey: "memory-1",
+      callerMode: "cli_text",
+      candidates: [],
+      readRanges: [{ from: 0, toExclusive: 80 }],
+      parseDiagnostics: {
+        rawWasEmptyArray: true,
+        rawCandidateLikeCount: 0,
+        droppedMissingType: 0,
+        droppedMissingPolarity: 0,
+        droppedNeutral: 0,
+        droppedNegativeProcedure: 0,
+        droppedInvalidProcedureShape: 0,
+        plainTextFallbackUsed: false,
+      },
+    });
+    mocks.maybeRunFindingCodexEscalation.mockResolvedValue({
+      mode: "write",
+      status: "candidate_ready",
+      reason: "primary_no_candidate",
+      escalationId: "escalation-1",
+      readRanges: [{ from: 0, toExclusive: 120 }],
+      candidates: [
+        {
+          type: "rule",
+          polarity: "negative",
+          title: "Separate provider failure from missing source",
+          content:
+            "When a findingCandidate job fails, classify provider failures separately from source_missing before requeueing.",
+        },
+      ],
+    });
+
+    const result = await runQueueWorkerOnce({
+      queueName: "findingCandidate",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mocks.insertCalls).toContainEqual(
+      expect.objectContaining({
+        table: foundCandidates,
+        values: expect.objectContaining({
+          title: "Separate provider failure from missing source",
+          origin: expect.objectContaining({
+            codexEscalation: true,
+            escalationId: "escalation-1",
+          }),
+          metadata: expect.objectContaining({
+            generatedBy: "contextStill.codexFindingEscalation",
+            excludedFromVibeMemory: true,
+            escalationId: "escalation-1",
+          }),
+        }),
+      }),
+    );
+    expect(mocks.insertCalls.map((call) => call.table)).toContain(coveringEvidenceQueue);
+    expect(mocks.markFindingCodexEscalationAccepted).toHaveBeenCalledWith("escalation-1", 1);
+    expect(mocks.updateCalls).toContainEqual(
+      expect.objectContaining({
+        table: findingCandidateQueue,
+        values: expect.objectContaining({
+          status: "completed",
+          lastOutcomeKind: "codex_escalated_candidates_found",
+        }),
+      }),
+    );
+  });
+
+  test("runQueueWorkerOnce skips self-ingested vibe memories before primary finding", async () => {
+    mocks.claimNextQueueJob.mockResolvedValue({ id: "finding-job-1" });
+    mocks.isVibeMemorySelfIngestionBlocked.mockResolvedValue(true);
+    mocks.selectRows = [
+      [
+        {
+          id: "finding-job-1",
+          inputKind: "source_target",
+          sourceKind: "vibe_memory",
+          sourceKey: "memory-1",
+          sourceUri: "vibe_memory:memory-1",
+          distillationVersion: "v-test",
+          payload: {},
+          metadata: {},
+          priority: 50,
+        },
+      ],
+    ];
+
+    const result = await runQueueWorkerOnce({
+      queueName: "findingCandidate",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mocks.runFindCandidate).not.toHaveBeenCalled();
+    expect(mocks.maybeRunFindingCodexEscalation).not.toHaveBeenCalled();
+    expect(mocks.updateCalls).toContainEqual(
+      expect.objectContaining({
+        table: findingCandidateQueue,
+        values: expect.objectContaining({
+          status: "skipped",
+          lastOutcomeKind: "self_ingestion_blocked",
         }),
       }),
     );

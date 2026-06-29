@@ -93,7 +93,7 @@ pub(crate) fn create_provider_lease_table(connection: &Connection) {
               updated_at text not null default CURRENT_TIMESTAMP
             );
             create unique index llm_provider_leases_active_target_unique_idx
-              on llm_provider_leases(pool_id, target_id)
+              on llm_provider_leases(target_id)
               where status = 'active';
             "#,
         )

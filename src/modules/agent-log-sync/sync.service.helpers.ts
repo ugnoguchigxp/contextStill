@@ -4,6 +4,7 @@ import {
   extractAgentDiffContentFromText,
   stripAgentDiffContentFromText,
 } from "../vibe-memory/agent-diff-ingestion.service.js";
+import { isCodexFindingEscalationMetadata } from "../findCandidate/self-ingestion-guard.js";
 import type { ChatMessage } from "./ingest.service.js";
 
 export type AgentLogSourceDescriptor = {
@@ -74,6 +75,8 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
 }
 
 export function isExcludedAgentLogMetadata(metadata: Record<string, unknown>): boolean {
+  if (isCodexFindingEscalationMetadata(metadata)) return true;
+
   const projectNames = normalizedSet(groupedConfig.agentLogSync.excludedProjectNames);
   const sessionIds = normalizedSet(groupedConfig.agentLogSync.excludedSessionIds);
   const titleContains = groupedConfig.agentLogSync.excludedSessionTitleContains

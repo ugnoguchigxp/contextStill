@@ -79,6 +79,36 @@ describe("planVibeFindingEnqueueRows", () => {
     expect(report.items[0]?.rejectReasons).toContain("progress_only");
   });
 
+  test("rejects Codex escalation generated memories before eligibility scoring", () => {
+    const report = planVibeFindingEnqueueRows(
+      [
+        {
+          id: "memory-1",
+          sessionId: "session-1",
+          content: [
+            "USER: provider failure を source_missing と分けてください。",
+            "ASSISTANT: 原因を修正し、verify が通りました。",
+          ].join("\n\n"),
+          metadata: {
+            sourceId: "codex_logs",
+            generatedBy: "contextStill.codexFindingEscalation",
+            excludedFromVibeMemory: true,
+          },
+          createdAt: new Date().toISOString(),
+          agentDiffCount: 1,
+        },
+      ],
+      { mode: "dry-run", limit: 10, minScore: 0, sinceDays: 7 },
+    );
+
+    expect(report.eligible).toBe(0);
+    expect(report.rejected).toBe(1);
+    expect(report.items[0]).toMatchObject({
+      action: "rejected",
+      rejectReasons: ["codex_finding_escalation_self_ingestion"],
+    });
+  });
+
   test("parses sqlite unix-ms timestamps", () => {
     expect(parseVibeMemoryCreatedAt("unix-ms:1782735151897")).toBe(1782735151897);
     expect(parseVibeMemoryCreatedAt("2026-06-29T12:00:00.000Z")).toBe(

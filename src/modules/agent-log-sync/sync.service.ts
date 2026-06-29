@@ -112,6 +112,7 @@ export {
   extractUnifiedDiffsFromText,
   filterDistillableAgentLogMessages,
   isCodexInternalProviderPromptMessage,
+  isExcludedAgentLogMetadata,
   isNonDistillableAgentTaskLogMessage,
   shouldDeleteLegacyAntigravityVibeMemories,
 };

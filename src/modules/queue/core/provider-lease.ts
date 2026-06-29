@@ -378,10 +378,10 @@ export async function claimNextJobWithProviderLease(params: {
     const activeTargets = new Set(
       (
         sqlite.db
-          .query<{ target_id: string }, [string]>(
-            "select target_id from llm_provider_leases where pool_id = ? and status = 'active'",
+          .query<{ target_id: string }, []>(
+            "select target_id from llm_provider_leases where status = 'active'",
           )
-          .all(params.pool.id) ?? []
+          .all() ?? []
       ).map((row) => row.target_id),
     );
     const freeTargets = params.pool.targets.filter(

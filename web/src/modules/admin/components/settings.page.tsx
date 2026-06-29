@@ -494,6 +494,52 @@ function routeWithFallbackEndpoint(
   };
 }
 
+function providerPoolTargetKey(target: RuntimeProviderPoolTarget): string {
+  if (target.provider === "local-llm") return `${target.provider}:${target.localLlmModelId}`;
+  if (target.provider === "azure-openai") return `${target.provider}:${target.deploymentSlot}`;
+  return `${target.provider}:${target.targetId}`;
+}
+
+function providerPoolTargetLabel(
+  settings: RuntimeSettingsEditable,
+  target: RuntimeProviderPoolTarget,
+): string {
+  if (target.provider === "local-llm") {
+    const model = settings.providers["local-llm"].models.find(
+      (item) => item.id === target.localLlmModelId,
+    );
+    return model
+      ? localLlmRouteOptionLabel(
+          {
+            ...model,
+            apiBaseUrl: model.apiBaseUrl.trim(),
+            apiPath: model.apiPath.trim() || "/v1/chat/completions",
+            model: model.model.trim(),
+          },
+          true,
+        )
+      : target.localLlmModelId;
+  }
+  if (target.provider === "azure-openai") {
+    const deployment = settings.providers["azure-openai"].deployments[target.deploymentSlot - 1];
+    return deployment
+      ? azureRouteOptionLabel(deployment, target.deploymentSlot - 1)
+      : target.provider;
+  }
+  return target.provider;
+}
+
+function routeWithProviderPool(
+  route: RuntimeSettingsRoute,
+  providerPoolId: string | undefined,
+): RuntimeSettingsRoute {
+  const normalized = providerPoolId?.trim();
+  return {
+    ...route,
+    providerPoolId: normalized || undefined,
+  };
+}
+
 function resolveActiveSettingsTab(pathname: string): SettingsTabId {
   const match = pathname.match(/^\/(?:setting|settings)\/([^/]+)\/?$/);
   if (!match) return "providers";
@@ -871,6 +917,10 @@ function RouteEditor({
     fallbackRouteEndpointValue(settings, route, 0),
     fallbackRouteEndpointValue(settings, route, 1),
   ];
+  const poolOptions = settings.providerPools.filter((pool) => pool.targets.length > 0);
+  const selectedPool = route.providerPoolId
+    ? poolOptions.find((pool) => pool.id === route.providerPoolId)
+    : undefined;
   const fallbackOptionsFor = (index: 0 | 1): RouteEndpointOption[] => {
     const currentValue = selectedFallbackValues[index];
     const blockedProviders = new Set<RuntimeProviderName>([
@@ -885,6 +935,14 @@ function RouteEditor({
     );
   };
   const routeChain = [
+    ...(selectedPool
+      ? [
+          {
+            label: "Pool",
+            value: selectedPool.label || selectedPool.id,
+          },
+        ]
+      : []),
     {
       label: "Primary",
       value: endpointOptionByValue.get(primaryValue)?.label ?? "not configured",
@@ -928,6 +986,22 @@ function RouteEditor({
                 ))}
               </>
             )}
+          </Select>
+        </label>
+        <label className="settings-field">
+          <span>Provider Pool</span>
+          <Select
+            value={route.providerPoolId ?? ""}
+            onChange={(event) => {
+              onChange(routeWithProviderPool(route, event.target.value || undefined));
+            }}
+          >
+            <option value="">direct endpoint</option>
+            {poolOptions.map((pool) => (
+              <option key={pool.id} value={pool.id}>
+                {pool.label || pool.id}
+              </option>
+            ))}
           </Select>
         </label>
         <label className="settings-field">
@@ -985,6 +1059,16 @@ function RouteEditor({
           </span>
         ))}
       </div>
+      {selectedPool ? (
+        <div className="settings-route-chain" aria-label={`${label} effective pool targets`}>
+          {selectedPool.targets.map((target) => (
+            <span key={providerPoolTargetKey(target)} className="settings-route-chain-item">
+              <strong>{target.provider}</strong>
+              {providerPoolTargetLabel(settings, target)}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1236,10 +1320,6 @@ export function SettingsPage() {
 
   const renderLocalLlmProviderPoolControls = () => {
     if (!draft) return null;
-    const pool = localLlmProviderPool(draft);
-    const selectedTargetIds = new Set(
-      pool.targets.filter(isLocalLlmPoolTarget).map((target) => target.localLlmModelId),
-    );
     const localModels = draft.providers["local-llm"].models
       .map((model, index) => ({
         id: localLlmPoolTargetId(model),
@@ -1248,20 +1328,99 @@ export function SettingsPage() {
         complete: Boolean(model.apiBaseUrl.trim() && model.model.trim()),
       }))
       .filter((model) => model.complete);
-    const selectedCount = localModels.filter(
-      (model) => model.id && selectedTargetIds.has(model.id),
-    ).length;
-    const concurrencyLimit = Math.max(1, selectedCount);
-    const displayedMaxConcurrent = Math.min(Math.max(1, pool.maxConcurrent), concurrencyLimit);
+    const localTargetIds = new Set(localModels.map((model) => model.id).filter(Boolean));
+    const poolList = draft.providerPools.length
+      ? draft.providerPools
+      : [localLlmProviderPool(draft)];
 
-    const patchLocalLlmPool = (nextPool: RuntimeProviderPool) =>
-      patchDraft((current) => withLocalLlmProviderPool(current, nextPool));
+    const patchPool = (poolId: string, nextPool: RuntimeProviderPool) =>
+      patchDraft((current) => ({
+        ...current,
+        providerPools: current.providerPools.some((pool) => pool.id === poolId)
+          ? current.providerPools.map((pool) => (pool.id === poolId ? nextPool : pool))
+          : [...current.providerPools, nextPool],
+      }));
 
-    const setTargetEnabled = (targetId: string, enabled: boolean) =>
+    const removePool = (poolId: string) =>
+      patchDraft((current) => ({
+        ...current,
+        providerPools: current.providerPools.filter((pool) => pool.id !== poolId),
+        taskRouting: {
+          ...current.taskRouting,
+          findCandidate: {
+            ...current.taskRouting.findCandidate,
+            source: routeWithProviderPool(
+              current.taskRouting.findCandidate.source,
+              current.taskRouting.findCandidate.source.providerPoolId === poolId
+                ? undefined
+                : current.taskRouting.findCandidate.source.providerPoolId,
+            ),
+            vibe: routeWithProviderPool(
+              current.taskRouting.findCandidate.vibe,
+              current.taskRouting.findCandidate.vibe.providerPoolId === poolId
+                ? undefined
+                : current.taskRouting.findCandidate.vibe.providerPoolId,
+            ),
+            throttling: current.taskRouting.findCandidate.throttling,
+          },
+          webSourceResearch: routeWithProviderPool(
+            current.taskRouting.webSourceResearch,
+            current.taskRouting.webSourceResearch.providerPoolId === poolId
+              ? undefined
+              : current.taskRouting.webSourceResearch.providerPoolId,
+          ),
+          episodeDistiller: routeWithProviderPool(
+            current.taskRouting.episodeDistiller,
+            current.taskRouting.episodeDistiller.providerPoolId === poolId
+              ? undefined
+              : current.taskRouting.episodeDistiller.providerPoolId,
+          ),
+          coverEvidence: {
+            sourceSupport: routeWithProviderPool(
+              current.taskRouting.coverEvidence.sourceSupport,
+              current.taskRouting.coverEvidence.sourceSupport.providerPoolId === poolId
+                ? undefined
+                : current.taskRouting.coverEvidence.sourceSupport.providerPoolId,
+            ),
+            externalEvidence: routeWithProviderPool(
+              current.taskRouting.coverEvidence.externalEvidence,
+              current.taskRouting.coverEvidence.externalEvidence.providerPoolId === poolId
+                ? undefined
+                : current.taskRouting.coverEvidence.externalEvidence.providerPoolId,
+            ),
+            mcpEvidence: routeWithProviderPool(
+              current.taskRouting.coverEvidence.mcpEvidence,
+              current.taskRouting.coverEvidence.mcpEvidence.providerPoolId === poolId
+                ? undefined
+                : current.taskRouting.coverEvidence.mcpEvidence.providerPoolId,
+            ),
+          },
+          finalizeDistille: routeWithProviderPool(
+            current.taskRouting.finalizeDistille,
+            current.taskRouting.finalizeDistille.providerPoolId === poolId
+              ? undefined
+              : current.taskRouting.finalizeDistille.providerPoolId,
+          ),
+          mergeActivationFinalize: routeWithProviderPool(
+            current.taskRouting.mergeActivationFinalize,
+            current.taskRouting.mergeActivationFinalize.providerPoolId === poolId
+              ? undefined
+              : current.taskRouting.mergeActivationFinalize.providerPoolId,
+          ),
+          deadZoneMergeReview: routeWithProviderPool(
+            current.taskRouting.deadZoneMergeReview,
+            current.taskRouting.deadZoneMergeReview.providerPoolId === poolId
+              ? undefined
+              : current.taskRouting.deadZoneMergeReview.providerPoolId,
+          ),
+          agenticCompile: current.taskRouting.agenticCompile,
+        },
+      }));
+
+    const setTargetEnabled = (pool: RuntimeProviderPool, targetId: string, enabled: boolean) =>
       patchDraft((current) => {
-        const currentPool = localLlmProviderPool(current);
         const ids = new Set(
-          currentPool.targets.filter(isLocalLlmPoolTarget).map((target) => target.localLlmModelId),
+          pool.targets.filter(isLocalLlmPoolTarget).map((target) => target.localLlmModelId),
         );
         if (enabled) {
           ids.add(targetId);
@@ -1272,80 +1431,196 @@ export function SettingsPage() {
           provider: "local-llm" as const,
           localLlmModelId,
         }));
-        return withLocalLlmProviderPool(current, {
-          ...currentPool,
-          label: currentPool.label.trim() || "Local LLM Pool",
+        const nextPool = {
+          ...pool,
+          label: pool.label.trim() || pool.id,
           targets,
-          maxConcurrent: Math.min(Math.max(1, currentPool.maxConcurrent), targets.length),
-        });
+          maxConcurrent: Math.min(Math.max(1, pool.maxConcurrent), targets.length),
+        };
+        return {
+          ...current,
+          providerPools: current.providerPools.some((item) => item.id === pool.id)
+            ? current.providerPools.map((item) => (item.id === pool.id ? nextPool : item))
+            : [...current.providerPools, nextPool],
+        };
+      });
+
+    const addPool = () =>
+      patchDraft((current) => {
+        const firstTarget = current.providers["local-llm"].models
+          .map(localLlmPoolTargetId)
+          .find((id): id is string => Boolean(id));
+        if (!firstTarget) return current;
+        const existingIds = new Set(current.providerPools.map((pool) => pool.id));
+        let index = current.providerPools.length + 1;
+        let id = `local-llm-pool-${index}`;
+        while (existingIds.has(id)) {
+          index += 1;
+          id = `local-llm-pool-${index}`;
+        }
+        return {
+          ...current,
+          providerPools: [
+            ...current.providerPools,
+            {
+              id,
+              label: `Local LLM Pool ${index}`,
+              enabled: true,
+              targets: [{ provider: "local-llm", localLlmModelId: firstTarget }],
+              maxConcurrent: 1,
+              staleLeaseSeconds: 660,
+              lowPriorityAgingSeconds: 1800,
+            },
+          ],
+        };
       });
 
     return (
       <section className="settings-route-section">
         <div className="settings-route-section-header">
-          <h3>Local LLM Queue Pool</h3>
-          <p>Provider lease targets and concurrency for queue-backed Local LLM work.</p>
+          <h3>Provider Pools</h3>
+          <p>Provider lease targets and concurrency for queue-backed LLM work.</p>
+          <Button type="button" size="sm" variant="outline" onClick={addPool}>
+            <Plus size={14} />
+            Add Pool
+          </Button>
         </div>
-        <div className="settings-route-row">
-          <div className="settings-route-header">
-            <div className="settings-route-label">local-llm-default</div>
-            <p className="settings-route-description">
-              Active endpoints define the maximum number of concurrent queue leases.
-            </p>
-          </div>
-          <div className="settings-route-fields settings-route-fields-pool">
-            <label className="settings-field">
-              <span>Queue Pool Concurrent Jobs</span>
-              <Input
-                type="number"
-                min={1}
-                max={concurrencyLimit}
-                value={displayedMaxConcurrent}
-                disabled={selectedCount === 0}
-                onChange={(event) => {
-                  const next = parseIntegerInput(event.target.value, pool.maxConcurrent);
-                  patchLocalLlmPool({
-                    ...pool,
-                    maxConcurrent: Math.max(1, Math.min(concurrencyLimit, next)),
-                  });
-                }}
-              />
-            </label>
-          </div>
-          <div className="settings-provider-pool-targets">
-            {localModels.map((model) => {
-              const checked = Boolean(model.id && selectedTargetIds.has(model.id));
-              const disabled = !model.id || (checked && selectedCount <= 1);
-              return (
-                <label
-                  key={`${model.index}:${model.label}`}
-                  className="settings-provider-pool-target"
-                >
-                  <Checkbox
-                    aria-label={`Use ${model.label} for Queue Pool`}
-                    checked={checked}
-                    disabled={disabled}
+        {poolList.map((pool) => {
+          const selectedTargetIds = new Set(
+            pool.targets.filter(isLocalLlmPoolTarget).map((target) => target.localLlmModelId),
+          );
+          const selectedCount = localModels.filter(
+            (model) => model.id && selectedTargetIds.has(model.id),
+          ).length;
+          const concurrencyLimit = Math.max(1, selectedCount);
+          const displayedMaxConcurrent = Math.min(
+            Math.max(1, pool.maxConcurrent),
+            concurrencyLimit,
+          );
+          return (
+            <div key={pool.id} className="settings-route-row">
+              <div className="settings-route-header">
+                <div className="settings-route-label">{pool.id}</div>
+                <p className="settings-route-description">
+                  Active endpoints define the maximum number of concurrent queue leases.
+                </p>
+              </div>
+              <div className="settings-route-fields settings-route-fields-pool">
+                <label className="settings-field">
+                  <span>Pool Name</span>
+                  <Input
+                    value={pool.label}
+                    onChange={(event) => patchPool(pool.id, { ...pool, label: event.target.value })}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>Queue Pool Concurrent Jobs</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={concurrencyLimit}
+                    value={displayedMaxConcurrent}
+                    disabled={selectedCount === 0}
                     onChange={(event) => {
-                      if (!model.id) return;
-                      setTargetEnabled(model.id, event.target.checked);
+                      const next = parseIntegerInput(event.target.value, pool.maxConcurrent);
+                      patchPool(pool.id, {
+                        ...pool,
+                        maxConcurrent: Math.max(1, Math.min(concurrencyLimit, next)),
+                      });
                     }}
                   />
-                  <span>{model.label}</span>
                 </label>
-              );
-            })}
-          </div>
-          <div className="settings-route-chain" aria-label="Local LLM Queue Pool capacity">
-            <span className="settings-route-chain-item">
-              <strong>Targets</strong>
-              {selectedCount}
-            </span>
-            <span className="settings-route-chain-item">
-              <strong>Concurrent</strong>
-              {displayedMaxConcurrent}
-            </span>
-          </div>
-        </div>
+                <label className="settings-field">
+                  <span>Stale Lease Seconds</span>
+                  <Input
+                    type="number"
+                    min={30}
+                    value={pool.staleLeaseSeconds}
+                    onChange={(event) =>
+                      patchPool(pool.id, {
+                        ...pool,
+                        staleLeaseSeconds: Math.max(
+                          30,
+                          parseIntegerInput(event.target.value, pool.staleLeaseSeconds),
+                        ),
+                      })
+                    }
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>Aging Seconds</span>
+                  <Input
+                    type="number"
+                    min={60}
+                    value={pool.lowPriorityAgingSeconds}
+                    onChange={(event) =>
+                      patchPool(pool.id, {
+                        ...pool,
+                        lowPriorityAgingSeconds: Math.max(
+                          60,
+                          parseIntegerInput(event.target.value, pool.lowPriorityAgingSeconds),
+                        ),
+                      })
+                    }
+                  />
+                </label>
+                <label className="settings-check">
+                  <Checkbox
+                    checked={pool.enabled}
+                    onChange={(event) =>
+                      patchPool(pool.id, { ...pool, enabled: event.target.checked })
+                    }
+                  />
+                  Enabled
+                </label>
+                {pool.id !== localLlmDefaultProviderPoolId ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => removePool(pool.id)}
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </Button>
+                ) : null}
+              </div>
+              <div className="settings-provider-pool-targets">
+                {localModels.map((model) => {
+                  const checked = Boolean(model.id && selectedTargetIds.has(model.id));
+                  const disabled = !model.id || (checked && selectedCount <= 1);
+                  return (
+                    <label
+                      key={`${pool.id}:${model.index}:${model.label}`}
+                      className="settings-provider-pool-target"
+                    >
+                      <Checkbox
+                        aria-label={`Use ${model.label} for ${pool.label || pool.id}`}
+                        checked={checked}
+                        disabled={disabled}
+                        onChange={(event) => {
+                          if (!model.id) return;
+                          setTargetEnabled(pool, model.id, event.target.checked);
+                        }}
+                      />
+                      <span>{model.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="settings-route-chain" aria-label={`${pool.label} capacity`}>
+                <span className="settings-route-chain-item">
+                  <strong>Targets</strong>
+                  {selectedCount}
+                </span>
+                <span className="settings-route-chain-item">
+                  <strong>Concurrent</strong>
+                  {displayedMaxConcurrent}
+                </span>
+              </div>
+            </div>
+          );
+        })}
       </section>
     );
   };

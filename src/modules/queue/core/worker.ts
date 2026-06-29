@@ -21,6 +21,12 @@ import {
   processEpisodeDistillerJob,
 } from "../../episodeDistiller/worker.js";
 import { type FinalizeDistilleInput, runFinalizeDistille } from "../../finalizeDistille/domain.js";
+import {
+  codexFindingEscalationGeneratedBy,
+  isVibeMemorySelfIngestionBlocked,
+  markFindingCodexEscalationAccepted,
+  maybeRunFindingCodexEscalation,
+} from "../../findCandidate/codex-escalation.service.js";
 import { type FindCandidateResult, runFindCandidate } from "../../findCandidate/domain.js";
 import {
   type KnowledgeApplicability,
@@ -986,6 +992,26 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
     return;
   }
 
+  if (job.sourceKind === "vibe_memory" && (await isVibeMemorySelfIngestionBlocked(job.sourceKey))) {
+    await markFindingCompleted({
+      jobId: job.id,
+      status: "skipped",
+      outcome: "self_ingestion_blocked",
+    });
+    await appendQueueEvent({
+      queueName: "findingCandidate",
+      queueJobId: job.id,
+      eventType: "completed",
+      message: "self ingestion blocked",
+      metadata: {
+        sourceKind: job.sourceKind,
+        sourceKey: job.sourceKey,
+        reason: "codex_finding_escalation_self_ingestion",
+      },
+    });
+    return;
+  }
+
   const findResult = await runSourceTargetFindCandidate({ findingJob: job, signal });
   const candidates = findResult.candidates;
   const foundCandidateIds: string[] = [];
@@ -1022,6 +1048,72 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
   }
 
   if (foundCandidateIds.length === 0) {
+    const escalation = await maybeRunFindingCodexEscalation({
+      findingJob: job,
+      findResult,
+      signal,
+    });
+    if (
+      escalation.mode === "write" &&
+      escalation.escalationId &&
+      escalation.candidates.length > 0
+    ) {
+      for (const [index, candidate] of escalation.candidates.entries()) {
+        const foundCandidateId = await upsertFoundCandidateRow({
+          findingJobId: job.id,
+          candidateIndex: index,
+          type: candidate.type,
+          title: candidate.title,
+          content: candidate.content,
+          origin: {
+            queueVersion: "v2",
+            sourceKind: job.sourceKind,
+            sourceKey: job.sourceKey,
+            sourceUri: job.sourceUri,
+            polarity: candidate.polarity,
+            codexEscalation: true,
+            escalationId: escalation.escalationId,
+          },
+          metadata: {
+            sourceKind: job.sourceKind,
+            sourceKey: job.sourceKey,
+            sourceUri: job.sourceUri,
+            readRanges: escalation.readRanges ?? [],
+            polarity: candidate.polarity,
+            generatedBy: codexFindingEscalationGeneratedBy,
+            excludedFromVibeMemory: true,
+            escalationId: escalation.escalationId,
+          },
+        });
+        foundCandidateIds.push(foundCandidateId);
+        await enqueueCoveringJob({
+          foundCandidateId,
+          distillationVersion: job.distillationVersion,
+          providerPolicy: "default",
+          priority: job.priority,
+        });
+      }
+      await markFindingCodexEscalationAccepted(escalation.escalationId, foundCandidateIds.length);
+      await markFindingCompleted({
+        jobId: job.id,
+        status: "completed",
+        outcome: "codex_escalated_candidates_found",
+      });
+      await appendQueueEvent({
+        queueName: "findingCandidate",
+        queueJobId: job.id,
+        eventType: "completed",
+        message: "codex escalated candidates moved to covering queue",
+        metadata: {
+          candidateCount: foundCandidateIds.length,
+          foundCandidateIds,
+          escalationId: escalation.escalationId,
+          escalationStatus: escalation.status,
+        },
+      });
+      return;
+    }
+
     await markFindingCompleted({
       jobId: job.id,
       status: "skipped",
@@ -1032,13 +1124,23 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
       queueJobId: job.id,
       eventType: "completed",
       message: "no candidate found",
-      metadata: findResult.parseDiagnostics
-        ? {
-            noCandidateDiagnostics: {
-              parseDiagnostics: findResult.parseDiagnostics,
-            },
-          }
-        : undefined,
+      metadata:
+        findResult.parseDiagnostics || escalation.escalationId
+          ? {
+              noCandidateDiagnostics: {
+                parseDiagnostics: findResult.parseDiagnostics,
+                codexEscalation: escalation.escalationId
+                  ? {
+                      id: escalation.escalationId,
+                      mode: escalation.mode,
+                      status: escalation.status,
+                      reason: escalation.reason,
+                      candidateCount: escalation.candidates.length,
+                    }
+                  : undefined,
+              },
+            }
+          : undefined,
     });
     return;
   }

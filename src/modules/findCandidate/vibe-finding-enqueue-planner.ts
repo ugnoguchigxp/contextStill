@@ -1,4 +1,5 @@
 import { evaluateVibeFindingEligibility } from "./vibe-finding-eligibility.js";
+import { isCodexFindingEscalationMetadata } from "./self-ingestion-guard.js";
 
 export type VibeFindingEnqueueMode = "dry-run" | "write";
 export type VibeFindingEnqueueSource = "codex_logs" | "antigravity_logs" | "claude_logs" | "all";
@@ -126,6 +127,23 @@ export function planVibeFindingEnqueueRows(
     if (!isVibeMemoryWithinSinceDays(row.createdAt, normalized.sinceDays)) continue;
 
     const sourceId = sourceIdFromVibeMetadata(row.metadata);
+    if (isCodexFindingEscalationMetadata(row.metadata)) {
+      report.rejected += 1;
+      if (report.items.length < maxReportedItems) {
+        report.items.push({
+          vibeMemoryId: row.id,
+          sessionId: row.sessionId,
+          sourceId,
+          createdAt: row.createdAt,
+          action: "rejected",
+          score: 0,
+          signals: [],
+          rejectReasons: ["codex_finding_escalation_self_ingestion"],
+        });
+      }
+      continue;
+    }
+
     const eligibility = evaluateVibeFindingEligibility({
       id: row.id,
       sessionId: row.sessionId,

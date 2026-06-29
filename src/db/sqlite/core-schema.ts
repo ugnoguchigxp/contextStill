@@ -481,8 +481,9 @@ CREATE TABLE IF NOT EXISTS llm_provider_leases (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) STRICT;
 
+DROP INDEX IF EXISTS llm_provider_leases_active_target_unique_idx;
 CREATE UNIQUE INDEX IF NOT EXISTS llm_provider_leases_active_target_unique_idx
-  ON llm_provider_leases(pool_id, target_id)
+  ON llm_provider_leases(target_id)
   WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS llm_provider_leases_pool_status_expires_idx
   ON llm_provider_leases(pool_id, status, expires_at);
@@ -885,6 +886,31 @@ CREATE TABLE IF NOT EXISTS found_candidates (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS finding_candidate_escalations (
+  id TEXT PRIMARY KEY,
+  source_kind TEXT NOT NULL,
+  source_key TEXT NOT NULL,
+  distillation_version TEXT NOT NULL DEFAULT 'v1',
+  source_dedupe_key TEXT,
+  primary_job_id TEXT,
+  escalation_provider TEXT NOT NULL,
+  escalation_model TEXT NOT NULL,
+  status TEXT NOT NULL,
+  reason TEXT,
+  output_summary TEXT,
+  candidate_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+) STRICT;
+
+DROP INDEX IF EXISTS finding_candidate_escalations_source_provider_model_unique_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS finding_candidate_escalations_source_provider_model_unique_idx
+  ON finding_candidate_escalations(source_kind, source_key, distillation_version, escalation_provider, escalation_model);
+CREATE INDEX IF NOT EXISTS finding_candidate_escalations_source_dedupe_idx
+  ON finding_candidate_escalations(source_dedupe_key);
+CREATE INDEX IF NOT EXISTS finding_candidate_escalations_primary_job_idx
+  ON finding_candidate_escalations(primary_job_id);
 
 CREATE TABLE IF NOT EXISTS evidence_coverage_results (
   id TEXT PRIMARY KEY,
