@@ -36,6 +36,65 @@ fn ingest_codex(source: &AgentLogSource, cursor: IngestCursor) -> Result<IngestR
     })
 }
 
+pub(crate) fn ingest_codex_paths(
+    cursor: IngestCursor,
+    file_paths: &[std::path::PathBuf],
+) -> Result<IngestResult, String> {
+    let mut cursor = cursor;
+    let mut messages = Vec::new();
+    let mut warnings = Vec::new();
+    let mut max_observed_mtime_ms = 0;
+    let mut checked_files = 0;
+
+    for file_path in file_paths {
+        checked_files += 1;
+        let stat = match fs::metadata(file_path) {
+            Ok(stat) => stat,
+            Err(error) if optional_fs_error(&error) => continue,
+            Err(error) => {
+                warnings.push(format!(
+                    "Codex file stat failed ({}): {error}",
+                    file_path.to_string_lossy()
+                ));
+                continue;
+            }
+        };
+        let size = stat.len();
+        let mtime_ms = mtime_ms(&stat);
+        max_observed_mtime_ms = max_observed_mtime_ms.max(mtime_ms);
+        let key = file_path.to_string_lossy().to_string();
+        let mut start_offset = cursor.get(&key).map(|entry| entry.offset).unwrap_or(0);
+        if start_offset > size {
+            start_offset = 0;
+        }
+        if start_offset == size {
+            cursor.insert(key, cursor_entry(size, mtime_ms));
+            continue;
+        }
+        match read_delta(file_path, start_offset) {
+            Ok(text) => {
+                messages.extend(parse_codex_delta(file_path, &text, start_offset));
+                cursor.insert(key, cursor_entry(size, mtime_ms));
+            }
+            Err(error) => warnings.push(format!(
+                "Codex file ingest failed ({}): {error}",
+                file_path.to_string_lossy()
+            )),
+        }
+    }
+
+    Ok(IngestResult {
+        ok: true,
+        errors: Vec::new(),
+        warnings,
+        messages,
+        cursor,
+        max_observed_mtime_ms,
+        checked_files,
+        skipped: false,
+    })
+}
+
 fn ingest_antigravity(
     source: &AgentLogSource,
     cursor: IngestCursor,
@@ -161,6 +220,14 @@ fn parse_codex_delta(file_path: &Path, text: &str, _start_offset: u64) -> Vec<Ch
             }
             continue;
         }
+        if value.get("type").and_then(Value::as_str) == Some("turn_context") {
+            if let Some(payload) = value.get("payload") {
+                if let Some(value) = payload.get("cwd").and_then(Value::as_str) {
+                    cwd = Some(value.to_string());
+                }
+            }
+            continue;
+        }
         if value.get("type").and_then(Value::as_str) != Some("response_item") {
             continue;
         }
@@ -185,7 +252,11 @@ fn parse_codex_delta(file_path: &Path, text: &str, _start_offset: u64) -> Vec<Ch
                     session_id: &session_id,
                     file_path,
                     timestamp: value.get("timestamp").and_then(Value::as_str),
-                    extra: json!({"messageKind":"tool_call","toolName":"apply_patch","cwd":cwd,"sessionStartedAt":session_started_at}),
+                    extra: codex_extra(
+                        &cwd,
+                        &session_started_at,
+                        json!({"messageKind":"tool_call","toolName":"apply_patch"}),
+                    ),
                 }));
             }
             continue;
@@ -210,7 +281,7 @@ fn parse_codex_delta(file_path: &Path, text: &str, _start_offset: u64) -> Vec<Ch
                 session_id: &session_id,
                 file_path,
                 timestamp: value.get("timestamp").and_then(Value::as_str),
-                extra: json!({"cwd":cwd,"sessionStartedAt":session_started_at}),
+                extra: codex_extra(&cwd, &session_started_at, json!({})),
             }));
         }
     }
@@ -295,6 +366,31 @@ fn message(params: MessageParams<'_>) -> ChatMessage {
         content: params.content.to_string(),
         metadata: Value::Object(metadata),
     }
+}
+
+fn codex_extra(cwd: &Option<String>, session_started_at: &Option<String>, extra: Value) -> Value {
+    let mut metadata = extra.as_object().cloned().unwrap_or_default();
+    if let Some(value) = cwd.as_ref().filter(|value| !value.trim().is_empty()) {
+        metadata.insert("cwd".to_string(), json!(value));
+        metadata.insert("projectRoot".to_string(), json!(value));
+        if let Some(project_name) = project_name_from_path(value) {
+            metadata.insert("projectName".to_string(), json!(project_name));
+        }
+    }
+    if let Some(value) = session_started_at
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        metadata.insert("sessionStartedAt".to_string(), json!(value));
+    }
+    Value::Object(metadata)
+}
+
+fn project_name_from_path(value: &str) -> Option<String> {
+    Path::new(value)
+        .file_name()
+        .map(|name| name.to_string_lossy().trim().to_string())
+        .filter(|name| !name.is_empty())
 }
 
 fn extract_codex_text(value: &Value) -> String {

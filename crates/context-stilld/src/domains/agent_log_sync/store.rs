@@ -119,6 +119,17 @@ pub(crate) fn store_source_result(
                 chunk_index,
                 &dedupe_key,
             )?;
+            enqueue_finding_candidate_if_eligible(
+                &tx,
+                &memory_id,
+                source_id,
+                &memory_session_id,
+                chunk_index,
+                &dedupe_key,
+                &content,
+                &metadata,
+                &now,
+            )?;
             inserted_memories += 1;
         }
     }
@@ -216,6 +227,307 @@ fn append_queue_event(
     Ok(())
 }
 
+fn enqueue_finding_candidate_if_eligible(
+    tx: &rusqlite::Transaction<'_>,
+    memory_id: &str,
+    source_id: &str,
+    memory_session_id: &str,
+    chunk_index: usize,
+    dedupe_key: &str,
+    content: &str,
+    metadata: &Value,
+    memory_created_at: &str,
+) -> Result<(), CliError> {
+    let Some(eligibility) = evaluate_finding_eligibility(content, metadata) else {
+        return Ok(());
+    };
+    if finding_candidate_already_enqueued(tx, memory_id, dedupe_key)? {
+        return Ok(());
+    }
+    let id = next_id("finding-job");
+    let now = now_timestamp();
+    tx.execute(
+        "
+        insert into finding_candidate_queue (
+          id, input_kind, source_kind, source_key, source_uri, distillation_version,
+          payload, metadata, priority, status, created_at, updated_at
+        ) values (?, 'source_target', 'vibe_memory', ?, ?, ?, '{}', ?, 50, 'pending', ?, ?)
+        ",
+        params![
+            id,
+            memory_id,
+            format!("vibe_memory:{memory_id}"),
+            DISTILLATION_VERSION,
+            json!({
+                "enqueuedBy": "vibe-finding-controlled-enqueue",
+                "enqueueReason": "eligible_vibe_memory",
+                "sourceId": source_id,
+                "sessionId": memory_session_id,
+                "chunkIndex": chunk_index,
+                "dedupeKey": dedupe_key,
+                "eligibilityScore": eligibility.score,
+                "eligibilitySignals": eligibility.signals,
+                "sourceCreatedAt": memory_created_at,
+                "backfill": false
+            })
+            .to_string(),
+            now,
+            now
+        ],
+    )
+    .map_err(sql_error)?;
+    append_queue_event(
+        tx,
+        "findingCandidate",
+        &id,
+        "finding candidate enqueued from Rust controlled vibe memory selector",
+    )
+}
+
+fn finding_candidate_already_enqueued(
+    tx: &rusqlite::Transaction<'_>,
+    memory_id: &str,
+    dedupe_key: &str,
+) -> Result<bool, CliError> {
+    let existing: Option<String> = tx
+        .query_row(
+            "
+            select id
+            from finding_candidate_queue
+            where source_kind = 'vibe_memory'
+              and distillation_version = ?
+              and (
+                source_key = ?
+                or json_extract(metadata, '$.dedupeKey') = ?
+              )
+            limit 1
+            ",
+            params![DISTILLATION_VERSION, memory_id, dedupe_key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    Ok(existing.is_some())
+}
+
+struct FindingEligibility {
+    score: i64,
+    signals: Vec<&'static str>,
+}
+
+fn evaluate_finding_eligibility(content: &str, metadata: &Value) -> Option<FindingEligibility> {
+    let normalized = content.to_lowercase();
+    let mut score = 0;
+    let mut signals = Vec::new();
+
+    if content.trim().chars().count() < 120 {
+        score -= 30;
+    }
+    if contains_any(
+        &normalized,
+        &[
+            "検証",
+            "確認",
+            "通りました",
+            "失敗",
+            "原因",
+            "修正",
+            "完了",
+            "問題",
+            "エラー",
+            "レビュー",
+            "復旧",
+            "再発",
+            "test",
+            "build",
+            "lint",
+            "verify",
+            "failed",
+            "failure",
+            "error",
+            "timeout",
+            "panic",
+            "assertion",
+            "review",
+            "fixed",
+            "root cause",
+        ],
+    ) {
+        score += 40;
+        signals.push("verification_or_failure_terms");
+    }
+    if metadata
+        .get("roles")
+        .and_then(Value::as_array)
+        .is_some_and(|roles| {
+            let has_user = roles.iter().any(|role| role.as_str() == Some("user"));
+            let has_assistant = roles.iter().any(|role| role.as_str() == Some("assistant"));
+            has_user && has_assistant
+        })
+    {
+        score += 20;
+        signals.push("mixed_roles");
+    }
+    if contains_any(
+        &normalized,
+        &[
+            "queue",
+            "db",
+            "database",
+            "sqlite",
+            "daemon",
+            "provider",
+            "runtime",
+            "worker",
+            "launchagent",
+            "process",
+            "heartbeat",
+            "requeue",
+            "retry",
+            "finding",
+            "candidate",
+            "distillation",
+        ],
+    ) {
+        score += 15;
+        signals.push("runtime_or_queue_terms");
+    }
+    if contains_any(
+        &normalized,
+        &[
+            "bun", "npm", "pnpm", "cargo", "sqlite3", "git", "rg", "test", "build", "lint",
+            "verify", "curl", "lsof", "ps aux",
+        ],
+    ) {
+        score += 10;
+        signals.push("command_terms");
+    }
+    if contains_any(
+        &normalized,
+        &[
+            "必ず",
+            "禁止",
+            "避け",
+            "しない",
+            "してください",
+            "方針",
+            "境界",
+            "優先",
+            "好み",
+            "prefer",
+            "avoid",
+            "must",
+            "never",
+            "do not",
+            "should",
+        ],
+    ) {
+        score += 20;
+        signals.push("preference_terms");
+    }
+    let boilerplate = boilerplate_heavy(content);
+    if boilerplate {
+        score -= 40;
+    }
+    let progress_only = progress_only(content);
+    if progress_only {
+        score -= 40;
+    }
+    if boilerplate || progress_only || signals.is_empty() || score < 50 {
+        return None;
+    }
+    Some(FindingEligibility { score, signals })
+}
+
+fn contains_any(value: &str, terms: &[&str]) -> bool {
+    terms.iter().any(|term| value.contains(term))
+}
+
+fn boilerplate_heavy(content: &str) -> bool {
+    let lines = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return true;
+    }
+    let boilerplate = lines
+        .iter()
+        .filter(|line| {
+            let lower = line.to_lowercase();
+            lower.contains("agents.md instructions")
+                || lower.contains("<instructions>")
+                || lower.contains("<environment_context>")
+                || lower.contains("<filesystem>")
+                || lower.contains("initial_instructions")
+                || lower.contains("workspace_roots")
+        })
+        .count();
+    boilerplate * 10 >= lines.len() * 6
+}
+
+fn progress_only(content: &str) -> bool {
+    let blocks = content
+        .split("\n\n")
+        .map(|block| block.split_whitespace().collect::<Vec<_>>().join(" "))
+        .map(|block| block.trim().to_string())
+        .filter(|block| !block.is_empty())
+        .collect::<Vec<_>>();
+    if blocks.is_empty() {
+        return true;
+    }
+    blocks.iter().all(|block| {
+        let normalized = block.strip_prefix("ASSISTANT: ").unwrap_or(block).trim();
+        matches!(
+            normalized,
+            "確認します。"
+                | "確認します"
+                | "調べます。"
+                | "調べます"
+                | "読みます。"
+                | "読みます"
+                | "実行します。"
+                | "実行します"
+                | "進めます。"
+                | "進めます"
+                | "次に"
+                | "最後に"
+                | "了解しました。"
+                | "了解しました"
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_log_sync_rejects_progress_only_finding_eligibility() {
+        let content = "ASSISTANT: 確認します。\n\nASSISTANT: 進めます。";
+        let metadata = json!({"roles":["assistant"]});
+
+        assert!(evaluate_finding_eligibility(content, &metadata).is_none());
+    }
+
+    #[test]
+    fn agent_log_sync_rejects_boilerplate_heavy_finding_eligibility() {
+        let content = [
+            "USER: # AGENTS.md instructions for /repo",
+            "<INSTRUCTIONS>",
+            "このプロジェクトでの作業を開始する際、initial_instructions を確認してください。",
+            "</INSTRUCTIONS>",
+            "<environment_context><cwd>/repo</cwd></environment_context>",
+            "<filesystem><workspace_roots><root>/repo</root></workspace_roots></filesystem>",
+        ]
+        .join("\n");
+        let metadata = json!({"roles":["user"]});
+
+        assert!(evaluate_finding_eligibility(&content, &metadata).is_none());
+    }
+}
+
 fn group_messages(
     source_id: &str,
     messages: Vec<ChatMessage>,
@@ -288,11 +600,19 @@ fn build_memory_metadata(
     let project_name = messages
         .iter()
         .find_map(|message| metadata_string(&message.metadata, "projectName"));
+    let project_root = messages
+        .iter()
+        .find_map(|message| metadata_string(&message.metadata, "projectRoot"));
+    let cwd = messages
+        .iter()
+        .find_map(|message| metadata_string(&message.metadata, "cwd"));
     json!({
         "source": source.id.label(),
         "sourceId": source.id.id(),
         "sources": [source.id.label()],
         "projectName": project_name,
+        "projectRoot": project_root,
+        "cwd": cwd,
         "chunkIndex": chunk_index,
         "dedupeKey": dedupe_key,
         "messageCount": messages.len(),

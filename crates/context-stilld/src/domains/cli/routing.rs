@@ -21,7 +21,15 @@ pub enum QueueAction {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum AgentLogSyncAction {
-    Run { wait: bool, timeout_ms: u64 },
+    Run {
+        wait: bool,
+        timeout_ms: u64,
+    },
+    BackfillCodex {
+        dry_run: bool,
+        limit: usize,
+        max_bytes: u64,
+    },
     Stop,
     Status,
 }
@@ -184,7 +192,11 @@ where
             })
         }
         "agent-log-sync" => {
-            let action_str = required_action(&mut args, "agent-log-sync", "run, stop, or status")?;
+            let action_str = required_action(
+                &mut args,
+                "agent-log-sync",
+                "run, backfill-codex, stop, or status",
+            )?;
             let action = match action_str.as_str() {
                 "run" => {
                     let options = parse_wait_options(args)?;
@@ -192,6 +204,17 @@ where
                         action: AgentLogSyncAction::Run {
                             wait: options.wait,
                             timeout_ms: options.timeout_ms,
+                        },
+                        json: options.json,
+                    });
+                }
+                "backfill-codex" => {
+                    let options = parse_codex_backfill_options(args)?;
+                    return Ok(CliCommand::AgentLogSync {
+                        action: AgentLogSyncAction::BackfillCodex {
+                            dry_run: options.dry_run,
+                            limit: options.limit,
+                            max_bytes: options.max_bytes,
                         },
                         json: options.json,
                     });
@@ -428,6 +451,79 @@ where
 }
 
 #[derive(Debug, Eq, PartialEq)]
+struct CodexBackfillOptions {
+    json: bool,
+    dry_run: bool,
+    limit: usize,
+    max_bytes: u64,
+}
+
+fn parse_codex_backfill_options<I>(args: I) -> Result<CodexBackfillOptions, CliError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut options = CodexBackfillOptions {
+        json: false,
+        dry_run: true,
+        limit: 10,
+        max_bytes: 128 * 1024 * 1024,
+    };
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => options.json = true,
+            "--dry-run" => options.dry_run = true,
+            "--write" => options.dry_run = false,
+            "--limit" => {
+                let value = args.next().ok_or_else(|| {
+                    CliError::invalid_arguments("--limit requires a numeric value")
+                })?;
+                options.limit = parse_positive_usize("--limit", &value)?;
+            }
+            "--max-bytes" => {
+                let value = args.next().ok_or_else(|| {
+                    CliError::invalid_arguments("--max-bytes requires a numeric value")
+                })?;
+                options.max_bytes = parse_positive_u64("--max-bytes", &value)?;
+            }
+            _ if arg.starts_with("--limit=") => {
+                options.limit = parse_positive_usize("--limit", arg.trim_start_matches("--limit="))?
+            }
+            _ if arg.starts_with("--max-bytes=") => {
+                options.max_bytes =
+                    parse_positive_u64("--max-bytes", arg.trim_start_matches("--max-bytes="))?
+            }
+            _ => {
+                return Err(CliError::invalid_arguments(format!(
+                    "unknown argument: {arg}"
+                )))
+            }
+        }
+    }
+    Ok(options)
+}
+
+fn parse_positive_usize(name: &str, value: &str) -> Result<usize, CliError> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|error| CliError::invalid_arguments(format!("invalid {name} value: {error}")))?;
+    if parsed == 0 {
+        return Err(CliError::invalid_arguments(format!("{name} must be >= 1")));
+    }
+    Ok(parsed)
+}
+
+fn parse_positive_u64(name: &str, value: &str) -> Result<u64, CliError> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|error| CliError::invalid_arguments(format!("invalid {name} value: {error}")))?;
+    if parsed == 0 {
+        return Err(CliError::invalid_arguments(format!("{name} must be >= 1")));
+    }
+    Ok(parsed)
+}
+
+#[derive(Debug, Eq, PartialEq)]
 struct BackupOptions {
     json: bool,
     require_idle: bool,
@@ -501,6 +597,31 @@ mod tests {
             parse_args(["queue", "inspect", "--json"]).expect("parsed"),
             CliCommand::Queue {
                 action: QueueAction::Inspect,
+                json: true,
+            },
+        );
+    }
+
+    #[test]
+    fn parses_agent_log_sync_backfill_codex_options() {
+        use super::AgentLogSyncAction;
+        assert_eq!(
+            parse_args([
+                "agent-log-sync",
+                "backfill-codex",
+                "--write",
+                "--limit=7",
+                "--max-bytes",
+                "4096",
+                "--json"
+            ])
+            .expect("parsed"),
+            CliCommand::AgentLogSync {
+                action: AgentLogSyncAction::BackfillCodex {
+                    dry_run: false,
+                    limit: 7,
+                    max_bytes: 4096,
+                },
                 json: true,
             },
         );
