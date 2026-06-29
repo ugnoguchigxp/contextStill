@@ -457,8 +457,13 @@ describe("SettingsPage", () => {
       "/setting/llmpool",
     );
 
-    const primaryEndpointSelects = screen.getAllByLabelText("Primary Endpoint");
+    const primaryEndpointSelects = screen.getAllByLabelText("Routing Target");
     const firstPrimaryEndpointSelect = primaryEndpointSelects[0];
+    expect(
+      within(firstPrimaryEndpointSelect).getByRole("option", {
+        name: "Pool / Local LLM pool",
+      }),
+    ).toBeInTheDocument();
     expect(
       within(firstPrimaryEndpointSelect).getByRole("option", {
         name: /OpenAI \/ gpt-5-4-mini/,
@@ -475,9 +480,6 @@ describe("SettingsPage", () => {
     expect(
       within(firstPrimaryEndpointSelect).getByRole("option", { name: /Qwen \/ qwen-3\.6-14b-it/ }),
     ).toBeInTheDocument();
-    expect(
-      within(firstPrimaryEndpointSelect).queryByRole("option", { name: /Local LLM/ }),
-    ).not.toBeInTheDocument();
     expect(
       within(firstPrimaryEndpointSelect).queryByRole("option", { name: /AWS Bedrock/ }),
     ).not.toBeInTheDocument();
@@ -522,8 +524,8 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("findCandidate.vibe")).not.toBeInTheDocument();
     const rowScope = within(getRouteRow("findCandidate"));
 
-    fireEvent.change(rowScope.getByLabelText("Primary Endpoint"), {
-      target: { value: "azure-openai:1" },
+    fireEvent.change(rowScope.getByLabelText("Routing Target"), {
+      target: { value: "endpoint:azure-openai:1" },
     });
     fireEvent.change(rowScope.getByLabelText("Fallback 1 Endpoint"), {
       target: { value: "local-llm:qwen-3.6-14b-it" },
@@ -594,19 +596,19 @@ describe("SettingsPage", () => {
     expect(payload.settings.advanced.coveringQueueTaskIntervalSeconds).toBe(10);
   });
 
-  it("saves route LLM Pool selection from Task Routing", async () => {
+  it("saves route LLM Pool target selection from Task Routing", async () => {
     routerState.pathname = "/setting/taskrouting";
     renderPage();
     expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
 
     const rowScope = within(getRouteRow("findCandidate"));
     expect(
-      within(rowScope.getByLabelText("LLM Pool")).getByRole("option", {
-        name: "Local LLM pool",
+      within(rowScope.getByLabelText("Routing Target")).getByRole("option", {
+        name: "Pool / Local LLM pool",
       }),
     ).toBeInTheDocument();
-    fireEvent.change(rowScope.getByLabelText("LLM Pool"), {
-      target: { value: "local-llm-default" },
+    fireEvent.change(rowScope.getByLabelText("Routing Target"), {
+      target: { value: "pool:local-llm-default" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
 
@@ -631,8 +633,8 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("coverEvidence.mcpEvidence")).not.toBeInTheDocument();
 
     const rowScope = within(getRouteRow("coverEvidence"));
-    fireEvent.change(rowScope.getByLabelText("Primary Endpoint"), {
-      target: { value: "azure-openai:1" },
+    fireEvent.change(rowScope.getByLabelText("Routing Target"), {
+      target: { value: "endpoint:azure-openai:1" },
     });
     fireEvent.change(rowScope.getByLabelText("Fallback 1 Endpoint"), {
       target: { value: "local-llm:qwen-3.6-14b-it" },
@@ -979,8 +981,8 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument();
 
     const agenticRow = getRouteRow("agenticCompile");
-    fireEvent.change(within(agenticRow).getByLabelText("Primary Endpoint"), {
-      target: { value: "local-llm:qwen-3.6-14b-it" },
+    fireEvent.change(within(agenticRow).getByLabelText("Routing Target"), {
+      target: { value: "endpoint:local-llm:qwen-3.6-14b-it" },
     });
 
     expect(
@@ -1057,6 +1059,25 @@ describe("SettingsPage", () => {
     expect(
       payload.settings.providers["local-llm"].models.map((model: { id?: string }) => model.id),
     ).toEqual(["local-primary", "local-qwen", "local-reasoner"]);
+  });
+
+  it("shows an empty state on LLM Pool when no complete Local LLM endpoint exists", async () => {
+    const settings = buildSettingsView();
+    settings.providerPools = [];
+    settings.providers["local-llm"].models = [];
+    settings.providers["local-llm"].apiBaseUrl = "";
+    settings.providers["local-llm"].model = "";
+    repositoryMocks.fetchRuntimeSettings.mockResolvedValue({
+      ...buildSnapshot(),
+      settings,
+      effective: settings,
+    });
+    routerState.pathname = "/setting/llmpool";
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "LLM Pool" })).toBeInTheDocument();
+    expect(screen.getByText("No Local LLM endpoints")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Pool" })).toBeDisabled();
   });
 
   it("preserves Provider Pool targets when Local LLM models initially have no ids", async () => {

@@ -194,6 +194,20 @@ type RouteEndpointOption = {
   azureDeploymentSlots?: number[];
 };
 
+type RouteTargetOption =
+  | {
+      kind: "pool";
+      value: string;
+      label: string;
+      pool: RuntimeProviderPool;
+    }
+  | {
+      kind: "endpoint";
+      value: string;
+      label: string;
+      endpoint: RouteEndpointOption;
+    };
+
 function azureRouteOptionLabel(
   deployment: RuntimeSettingsEditable["providers"]["azure-openai"]["deployments"][number],
   index: number,
@@ -484,6 +498,47 @@ function routeWithPrimaryEndpoint(
             azureDeploymentSlotsFromValue(normalizeSelectedAzureRouteValue(settings, undefined)))
           : undefined,
   };
+}
+
+function routeTargetOptions(settings: RuntimeSettingsEditable): RouteTargetOption[] {
+  const pools = settings.providerPools
+    .filter((pool) => pool.targets.length > 0)
+    .map((pool) => ({
+      kind: "pool" as const,
+      value: `pool:${pool.id}`,
+      label: `Pool / ${pool.label || pool.id}`,
+      pool,
+    }));
+  const endpoints = routeEndpointOptions(settings).map((endpoint) => ({
+    kind: "endpoint" as const,
+    value: `endpoint:${endpoint.value}`,
+    label: endpoint.label,
+    endpoint,
+  }));
+  return [...pools, ...endpoints];
+}
+
+function primaryRouteTargetValue(
+  settings: RuntimeSettingsEditable,
+  route: RuntimeSettingsRoute,
+): string {
+  if (route.providerPoolId) return `pool:${route.providerPoolId}`;
+  const endpointValue = primaryRouteEndpointValue(settings, route);
+  return endpointValue ? `endpoint:${endpointValue}` : "";
+}
+
+function routeWithPrimaryTarget(
+  settings: RuntimeSettingsEditable,
+  route: RuntimeSettingsRoute,
+  option: RouteTargetOption,
+): RuntimeSettingsRoute {
+  if (option.kind === "pool") {
+    return routeWithProviderPool(route, option.pool.id);
+  }
+  return routeWithProviderPool(
+    routeWithPrimaryEndpoint(settings, route, option.endpoint),
+    undefined,
+  );
 }
 
 function routeWithFallbackEndpoint(
@@ -1032,7 +1087,9 @@ function RouteEditor({
 }) {
   const endpointOptions = routeEndpointOptions(settings);
   const endpointOptionByValue = new Map(endpointOptions.map((option) => [option.value, option]));
-  const primaryValue = primaryRouteEndpointValue(settings, route);
+  const targetOptions = routeTargetOptions(settings);
+  const targetOptionByValue = new Map(targetOptions.map((option) => [option.value, option]));
+  const primaryTargetValue = primaryRouteTargetValue(settings, route);
   const selectedFallbackValues = [
     fallbackRouteEndpointValue(settings, route, 0),
     fallbackRouteEndpointValue(settings, route, 1),
@@ -1041,7 +1098,7 @@ function RouteEditor({
   const selectedPool = route.providerPoolId
     ? poolOptions.find((pool) => pool.id === route.providerPoolId)
     : undefined;
-  const selectedPrimaryOption = endpointOptionByValue.get(primaryValue);
+  const selectedTargetOption = targetOptionByValue.get(primaryTargetValue);
   const fallbackOptionsFor = (index: 0 | 1): RouteEndpointOption[] => {
     const currentValue = selectedFallbackValues[index];
     const blockedProviders = new Set<RuntimeProviderName>([
@@ -1056,19 +1113,11 @@ function RouteEditor({
     );
   };
   const routeChain = [
-    ...(selectedPool
+    ...(selectedTargetOption || !selectedPool
       ? [
           {
-            label: "Pool",
-            value: selectedPool.label || selectedPool.id,
-          },
-        ]
-      : []),
-    ...(selectedPrimaryOption || !selectedPool
-      ? [
-          {
-            label: "Primary",
-            value: selectedPrimaryOption?.label ?? "not configured",
+            label: "Target",
+            value: selectedTargetOption?.label ?? "not configured",
           },
         ]
       : []),
@@ -1086,41 +1135,25 @@ function RouteEditor({
       </div>
       <div className="settings-route-fields settings-route-fields-routing">
         <label className="settings-field">
-          <span>LLM Pool</span>
+          <span>Routing Target</span>
           <Select
-            value={route.providerPoolId ?? ""}
+            value={primaryTargetValue}
             onChange={(event) => {
-              onChange(routeWithProviderPool(route, event.target.value || undefined));
+              const option = targetOptionByValue.get(event.target.value);
+              if (option) onChange(routeWithPrimaryTarget(settings, route, option));
             }}
+            disabled={targetOptions.length === 0}
           >
-            <option value="">direct endpoint</option>
-            {poolOptions.map((pool) => (
-              <option key={pool.id} value={pool.id}>
-                {pool.label || pool.id}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label className="settings-field">
-          <span>Primary Endpoint</span>
-          <Select
-            value={primaryValue}
-            onChange={(event) => {
-              const option = endpointOptionByValue.get(event.target.value);
-              if (option) onChange(routeWithPrimaryEndpoint(settings, route, option));
-            }}
-            disabled={endpointOptions.length === 0}
-          >
-            {endpointOptions.length === 0 ? (
-              <option value="">No configured direct endpoints</option>
+            {targetOptions.length === 0 ? (
+              <option value="">No configured targets</option>
             ) : (
               <>
-                {primaryValue ? null : (
+                {primaryTargetValue ? null : (
                   <option value="" disabled>
                     not configured
                   </option>
                 )}
-                {endpointOptions.map((option) => (
+                {targetOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -1457,6 +1490,7 @@ export function SettingsPage() {
     const poolList = draft.providerPools.length
       ? draft.providerPools
       : [localLlmProviderPool(draft)];
+    const canAddPool = localModels.some((model) => Boolean(model.id));
 
     const patchPool = (poolId: string, nextPool: RuntimeProviderPool) =>
       patchDraft((current) => ({
@@ -1605,11 +1639,27 @@ export function SettingsPage() {
         <div className="settings-route-section-header">
           <h3>Local LLM Pools</h3>
           <p>Choose which Local LLM endpoints belong to each named routing pool.</p>
-          <Button type="button" size="sm" variant="outline" onClick={addPool}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={addPool}
+            disabled={!canAddPool}
+          >
             <Plus size={14} />
             Add Pool
           </Button>
         </div>
+        {localModels.length === 0 ? (
+          <div className="settings-route-row">
+            <div className="settings-route-header">
+              <div className="settings-route-label">No Local LLM endpoints</div>
+              <p className="settings-route-description">
+                Add a Local LLM endpoint with an endpoint URL and model before creating a pool.
+              </p>
+            </div>
+          </div>
+        ) : null}
         {poolList.map((pool) => {
           const selectedTargetIds = new Set(
             pool.targets.filter(isLocalLlmPoolTarget).map((target) => target.localLlmModelId),
