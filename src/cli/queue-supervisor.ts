@@ -142,7 +142,7 @@ async function runOnce(options: CliOptions) {
   const runTasks: Array<ReturnType<typeof runQueueWorkerOnce>> = [];
   for (const pool of enabledProviderPoolsForQueues(options.queueNames)) {
     const freeSlots = await countAvailableProviderPoolSlots(pool);
-    for (let index = 0; index < freeSlots; index += 1) {
+    for (let index = 0; index < Math.min(options.limit, freeSlots); index += 1) {
       const assignment = await claimNextJobWithProviderLease({
         pool,
         priorityQueues: priorityQueuesForProviderPool({
@@ -207,6 +207,7 @@ async function schedulerSleep(ms: number): Promise<void> {
 async function runContinuous(options: CliOptions): Promise<void> {
   await refreshRuntimeSettings(true);
   const activeTasks = new Set<Promise<void>>();
+  const activeProviderTasksByPool = new Map<string, number>();
   const runLoop = async (): Promise<void> => {
     const lastIdleByQueue = new Map<DistillationQueueName, boolean>();
     while (!stopping) {
@@ -218,7 +219,11 @@ async function runContinuous(options: CliOptions): Promise<void> {
             poolId: pool.id,
             allowedQueues: options.queueNames,
           });
-          let freeSlots = await countAvailableProviderPoolSlots(pool);
+          const activeProviderTasks = activeProviderTasksByPool.get(pool.id) ?? 0;
+          let freeSlots = Math.min(
+            Math.max(0, options.limit - activeProviderTasks),
+            await countAvailableProviderPoolSlots(pool),
+          );
           while (freeSlots > 0 && !stopping) {
             const assignment = await claimNextJobWithProviderLease({
               pool,
@@ -228,6 +233,10 @@ async function runContinuous(options: CliOptions): Promise<void> {
             if (!assignment) break;
             assigned += 1;
             freeSlots -= 1;
+            activeProviderTasksByPool.set(
+              pool.id,
+              (activeProviderTasksByPool.get(pool.id) ?? 0) + 1,
+            );
             const task = runQueueWorkerOnce({
               queueName: assignment.queueName,
               workerId: assignment.providerLease.workerId,
@@ -254,6 +263,12 @@ async function runContinuous(options: CliOptions): Promise<void> {
               })
               .finally(() => {
                 activeTasks.delete(task);
+                const activeCount = Math.max(
+                  0,
+                  (activeProviderTasksByPool.get(pool.id) ?? 1) - 1,
+                );
+                if (activeCount === 0) activeProviderTasksByPool.delete(pool.id);
+                else activeProviderTasksByPool.set(pool.id, activeCount);
                 triggerSchedulerWakeup();
               });
             activeTasks.add(task);

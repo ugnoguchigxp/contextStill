@@ -589,9 +589,7 @@ fn route_target_preference(
     route: Option<&Value>,
     pool_id: &str,
 ) -> Option<Vec<String>> {
-    let Some(route) = route else {
-        return None;
-    };
+    let route = route?;
     if route_claim_group_id(route).as_deref() != Some(pool_id) {
         return None;
     }
