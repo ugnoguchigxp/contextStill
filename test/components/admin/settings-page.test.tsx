@@ -622,6 +622,28 @@ describe("SettingsPage", () => {
     );
   });
 
+  it("clears the route pool when saving episodeDistiller as a direct endpoint", async () => {
+    routerState.pathname = "/setting/taskrouting";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+
+    const rowScope = within(getRouteRow("episodeDistiller"));
+    fireEvent.change(rowScope.getByLabelText("Routing Target"), {
+      target: { value: "endpoint:local-llm:qwen-3.6-14b-it" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.taskRouting.episodeDistiller).toMatchObject({
+      provider: "local-llm",
+      model: "qwen-3.6-14b-it",
+      localLlmModel: "qwen-3.6-14b-it",
+      fallback: ["azure-openai"],
+    });
+    expect(payload.settings.taskRouting.episodeDistiller.providerPoolId).toBeUndefined();
+  });
+
   it("edits Cover Evidence as one queue processing route", async () => {
     routerState.pathname = "/setting/taskrouting";
     renderPage();

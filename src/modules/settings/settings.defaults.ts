@@ -829,15 +829,10 @@ function sanitizeRoute(
     typeof route.providerPoolId === "string" && route.providerPoolId.trim()
       ? route.providerPoolId.trim()
       : undefined;
-  const defaultLocalPool = settings.providerPools.find((pool) => pool.id === "local-llm-default");
   return {
     provider: route.provider,
     model,
-    providerPoolId:
-      requestedProviderPoolId ??
-      (route.provider === "local-llm" && defaultLocalPool?.enabled
-        ? defaultLocalPool.id
-        : undefined),
+    providerPoolId: requestedProviderPoolId,
     localLlmModel:
       route.provider === "local-llm" || route.fallback.includes("local-llm")
         ? (configuredLocalLlmTarget?.routeValue ??

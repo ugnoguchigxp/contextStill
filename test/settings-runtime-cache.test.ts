@@ -548,17 +548,68 @@ describe("settings runtime cache", () => {
         { provider: "local-llm", localLlmModelId: parsed.providers["local-llm"].models[1].id },
       ],
     });
-    expect(parsed.taskRouting.coverEvidence.externalEvidence.providerPoolId).toBe(
-      "local-llm-default",
-    );
+    expect(parsed.taskRouting.coverEvidence.externalEvidence.providerPoolId).toBeUndefined();
     expect(parsed.taskRouting.episodeDistiller.model).toBe(
       parsed.taskRouting.webSourceResearch.model,
     );
     expect(parsed.taskRouting.episodeDistiller.localLlmModel).toBe(
       parsed.taskRouting.webSourceResearch.localLlmModel,
     );
-    expect(parsed.taskRouting.episodeDistiller.providerPoolId).toBe("local-llm-default");
-    expect(parsed.taskRouting.finalizeDistille.providerPoolId).toBe("local-llm-default");
+    expect(parsed.taskRouting.episodeDistiller.providerPoolId).toBeUndefined();
+    expect(parsed.taskRouting.finalizeDistille.providerPoolId).toBeUndefined();
+  });
+
+  test("keeps direct Local LLM routes unpooled when a default pool exists", () => {
+    const input = cloneDefaultSettings();
+    input.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: "http://127.0.0.1:44448",
+      apiPath: "/v1/chat/completions",
+      model: "ornith-1.0-9b-4bit",
+      models: [
+        {
+          id: "ornith",
+          name: "Ornith",
+          apiBaseUrl: "http://127.0.0.1:44448",
+          apiPath: "/v1/chat/completions",
+          model: "ornith-1.0-9b-4bit",
+        },
+        {
+          id: "qwen",
+          name: "Qwen",
+          apiBaseUrl: "http://192.168.0.61:50043/v1",
+          apiPath: "/v1/chat/completions",
+          model: "Qwen 3.6 27B",
+        },
+      ],
+    };
+    input.providerPools = [
+      {
+        id: "local-llm-default",
+        label: "Qwen Pool",
+        targets: [{ provider: "local-llm", localLlmModelId: "qwen" }],
+        maxConcurrent: 1,
+        staleLeaseSeconds: 660,
+        enabled: true,
+        lowPriorityAgingSeconds: 1800,
+      },
+    ];
+    input.taskRouting.episodeDistiller = {
+      provider: "local-llm",
+      model: "ornith-1.0-9b-4bit",
+      localLlmModel: "ornith-1.0-9b-4bit",
+      fallback: [],
+    };
+
+    const normalized = normalizeRuntimeSettingsEditable(input);
+
+    expect(normalized.taskRouting.episodeDistiller).toMatchObject({
+      provider: "local-llm",
+      model: "ornith-1.0-9b-4bit",
+      localLlmModel: "ornith-1.0-9b-4bit",
+      fallback: [],
+    });
+    expect(normalized.taskRouting.episodeDistiller.providerPoolId).toBeUndefined();
   });
 
   test("normalizes provider pool settings into a read-after-write stable document", () => {

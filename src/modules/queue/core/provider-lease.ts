@@ -143,6 +143,7 @@ function preferredTargetIdsForQueue(params: {
       })
     : queueRoutes(params.settings, params.queueName)) {
     if (routeClaimGroupId(route) !== params.poolId) continue;
+    if (route.providerPoolId?.trim()) continue;
     if (route.provider === "local-llm") {
       const routeTarget = parseLocalLlmRouteTarget(route.localLlmModel ?? route.model);
       const matched = routeTarget

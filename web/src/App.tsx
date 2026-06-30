@@ -130,9 +130,10 @@ const auditRoute = createRoute({
   ),
 });
 
-const settingsSections = new Set([
+export const settingsSections = new Set([
   "general",
   "llmprovider",
+  "llmpool",
   "taskrouting",
   "search",
   "embedding",

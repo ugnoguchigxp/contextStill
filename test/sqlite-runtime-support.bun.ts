@@ -62,6 +62,10 @@ import {
   claimNextJobWithProviderLease,
   releaseProviderLease,
 } from "../src/modules/queue/core/provider-lease.js";
+import {
+  enabledProviderPoolsForQueues,
+  priorityQueuesForProviderPool,
+} from "../src/modules/queue/core/scheduler.js";
 import { retryQueueJob } from "../src/modules/queue/core/state.js";
 import {
   enqueueFindingJob,
@@ -2037,33 +2041,33 @@ describe("sqlite runtime support repositories", () => {
     expect(leaseCounts).toEqual([{ status: "active", count: 1 }]);
   });
 
-  test("prefers the route local LLM target when claiming provider-pool jobs", async () => {
+  test("uses provider-pool targets instead of stale route local LLM targets", async () => {
     const settings = structuredClone(getRuntimeSettingsSnapshot());
-    const badTarget = {
-      id: "local-bad",
-      name: "Bad local model",
+    const poolTarget = {
+      id: "local-pool-target",
+      name: "Pool local model",
       apiBaseUrl: "http://127.0.0.1:44448",
       apiPath: "/v1/chat/completions",
-      model: "bad-model",
+      model: "pool-model",
     };
-    const goodTarget = {
-      id: "local-good",
-      name: "Good local model",
+    const staleRouteTarget = {
+      id: "local-stale-route-target",
+      name: "Stale route local model",
       apiBaseUrl: "http://127.0.0.1:44449",
       apiPath: "/v1/chat/completions",
-      model: "good-model",
+      model: "stale-route-model",
     };
-    const goodRouteTarget = JSON.stringify({
-      apiBaseUrl: goodTarget.apiBaseUrl,
-      apiPath: goodTarget.apiPath,
-      model: goodTarget.model,
+    const staleRouteTargetValue = JSON.stringify({
+      apiBaseUrl: staleRouteTarget.apiBaseUrl,
+      apiPath: staleRouteTarget.apiPath,
+      model: staleRouteTarget.model,
     });
     settings.providers["local-llm"] = {
       enabled: true,
-      apiBaseUrl: badTarget.apiBaseUrl,
-      apiPath: badTarget.apiPath,
-      model: badTarget.model,
-      models: [badTarget, goodTarget],
+      apiBaseUrl: poolTarget.apiBaseUrl,
+      apiPath: poolTarget.apiPath,
+      model: poolTarget.model,
+      models: [poolTarget, staleRouteTarget],
     };
     settings.providerPools = [
       {
@@ -2073,16 +2077,13 @@ describe("sqlite runtime support repositories", () => {
         maxConcurrent: 1,
         staleLeaseSeconds: 120,
         lowPriorityAgingSeconds: 1800,
-        targets: [
-          { provider: "local-llm", localLlmModelId: badTarget.id },
-          { provider: "local-llm", localLlmModelId: goodTarget.id },
-        ],
+        targets: [{ provider: "local-llm", localLlmModelId: poolTarget.id }],
       },
     ];
     settings.taskRouting.episodeDistiller = {
       provider: "local-llm",
-      model: goodRouteTarget,
-      localLlmModel: goodRouteTarget,
+      model: staleRouteTargetValue,
+      localLlmModel: staleRouteTargetValue,
       providerPoolId: "local-llm-default",
       fallback: [],
     };
@@ -2109,7 +2110,7 @@ describe("sqlite runtime support repositories", () => {
       workerId: "sqlite-provider-target-worker",
     });
 
-    expect(claimed?.providerLease.targetId).toBe(goodTarget.id);
+    expect(claimed?.providerLease.targetId).toBe(poolTarget.id);
   });
 
   test("keeps provider-pool queue order ahead of older higher-priority episode jobs", async () => {
@@ -2200,7 +2201,147 @@ describe("sqlite runtime support repositories", () => {
     expect(claimed?.id).toBe("finding-queue-order");
   });
 
-  test("waits for the route local LLM target instead of claiming another pool target", async () => {
+  test("prioritizes finding and covering in a two-target pool before lower queues", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const settings = structuredClone(getRuntimeSettingsSnapshot());
+    const qwenA = {
+      id: "local-qwen-a",
+      name: "Qwen A",
+      apiBaseUrl: "http://127.0.0.1:50041/v1",
+      apiPath: "/v1/chat/completions",
+      model: "qwen-test",
+    };
+    const qwenB = {
+      id: "local-qwen-b",
+      name: "Qwen B",
+      apiBaseUrl: "http://127.0.0.1:50042/v1",
+      apiPath: "/v1/chat/completions",
+      model: "qwen-test",
+    };
+    const staleOrnith = {
+      id: "local-stale-ornith",
+      name: "Stale Ornith",
+      apiBaseUrl: "http://127.0.0.1:44448",
+      apiPath: "/v1/chat/completions",
+      model: "ornith-1.0-9b-4bit",
+    };
+    const staleRouteTarget = JSON.stringify({
+      apiBaseUrl: staleOrnith.apiBaseUrl,
+      apiPath: staleOrnith.apiPath,
+      model: staleOrnith.model,
+    });
+    const pooledRoute = () => ({
+      provider: "local-llm" as const,
+      model: staleRouteTarget,
+      localLlmModel: staleRouteTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    });
+    settings.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: qwenA.apiBaseUrl,
+      apiPath: qwenA.apiPath,
+      model: qwenA.model,
+      models: [staleOrnith, qwenA, qwenB],
+    };
+    settings.providerPools = [
+      {
+        id: "local-llm-default",
+        label: "Qwen x2",
+        enabled: true,
+        maxConcurrent: 2,
+        staleLeaseSeconds: 120,
+        lowPriorityAgingSeconds: 1800,
+        targets: [
+          { provider: "local-llm", localLlmModelId: qwenA.id },
+          { provider: "local-llm", localLlmModelId: qwenB.id },
+        ],
+      },
+    ];
+    settings.taskRouting.findCandidate.source = pooledRoute();
+    settings.taskRouting.findCandidate.vibe = pooledRoute();
+    settings.taskRouting.coverEvidence.sourceSupport = pooledRoute();
+    settings.taskRouting.coverEvidence.externalEvidence = pooledRoute();
+    settings.taskRouting.coverEvidence.mcpEvidence = pooledRoute();
+    settings.taskRouting.deadZoneMergeReview = pooledRoute();
+    await saveRuntimeSettings({ settings, updatedBy: "sqlite-runtime-test" });
+    sqlite.db
+      .query(
+        `
+        insert into finding_candidate_queue (
+          id, input_kind, source_kind, source_key, source_uri, distillation_version,
+          status, priority, payload, metadata, created_at, updated_at
+        ) values (
+          'finding-pool-priority', 'source_target', 'wiki_file', 'finding-pool-priority',
+          'file://finding-pool-priority', 'v-test', 'pending', 10, '{}', '{}',
+          '2026-06-22 01:00:00', '2026-06-22 01:00:00'
+        )
+      `,
+      )
+      .run();
+    sqlite.db
+      .query(
+        `
+        insert into covering_evidence_queue (
+          id, found_candidate_id, status, priority, payload, metadata, next_run_at, created_at, updated_at
+        ) values (
+          'covering-pool-priority', 'candidate-pool-priority', 'pending', 10, '{}', '{}',
+          '2026-06-22 01:00:00', '2026-06-22 01:00:00', '2026-06-22 01:00:00'
+        )
+      `,
+      )
+      .run();
+    sqlite.db
+      .query(
+        `
+        insert into dead_zone_merge_review_queue (
+          id, status, priority, payload, metadata, created_at, updated_at
+        ) values (
+          'deadzone-pool-priority', 'pending', 99, '{}', '{}',
+          '2026-06-22 01:00:00', '2026-06-22 01:00:00'
+        )
+      `,
+      )
+      .run();
+
+    const priorityQueues = ["findingCandidate", "coveringEvidence", "deadZoneMergeReview"] as const;
+    const firstClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: [...priorityQueues],
+      workerId: "sqlite-provider-pool-priority-worker-1",
+    });
+    const secondClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: [...priorityQueues],
+      workerId: "sqlite-provider-pool-priority-worker-2",
+    });
+    const blockedClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: [...priorityQueues],
+      workerId: "sqlite-provider-pool-priority-worker-3",
+    });
+
+    expect(firstClaim?.queueName).toBe("findingCandidate");
+    expect(secondClaim?.queueName).toBe("coveringEvidence");
+    expect(blockedClaim).toBeNull();
+
+    if (!firstClaim) throw new Error("Expected finding claim to be available");
+    await releaseProviderLease(firstClaim.providerLease.id, "test_finished");
+    sqlite.db
+      .query("update finding_candidate_queue set status = 'completed' where id = ?")
+      .run(firstClaim.id);
+
+    const thirdClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: [...priorityQueues],
+      workerId: "sqlite-provider-pool-priority-worker-4",
+    });
+
+    expect(thirdClaim?.queueName).toBe("deadZoneMergeReview");
+    expect(thirdClaim?.id).toBe("deadzone-pool-priority");
+  });
+
+  test("keeps direct endpoint jobs on their selected local LLM target", async () => {
     const sqlite = await getRuntimeSqliteCoreDatabase();
     const settings = structuredClone(getRuntimeSettingsSnapshot());
     const fallbackTarget = {
@@ -2229,28 +2370,25 @@ describe("sqlite runtime support repositories", () => {
       model: fallbackTarget.model,
       models: [fallbackTarget, preferredTarget],
     };
-    settings.providerPools = [
-      {
-        id: "local-llm-default",
-        label: "Local LLM",
-        enabled: true,
-        maxConcurrent: 2,
-        staleLeaseSeconds: 120,
-        lowPriorityAgingSeconds: 1800,
-        targets: [
-          { provider: "local-llm", localLlmModelId: fallbackTarget.id },
-          { provider: "local-llm", localLlmModelId: preferredTarget.id },
-        ],
-      },
-    ];
+    settings.providerPools = [];
     settings.taskRouting.episodeDistiller = {
       provider: "local-llm",
       model: preferredRouteTarget,
       localLlmModel: preferredRouteTarget,
-      providerPoolId: "local-llm-default",
       fallback: [],
     };
     await saveRuntimeSettings({ settings, updatedBy: "sqlite-runtime-test" });
+    const directPools = enabledProviderPoolsForQueues(["episodeDistiller"]);
+    expect(directPools).toHaveLength(1);
+    expect(directPools[0]).toMatchObject({
+      id: "task-routing:local-llm",
+      targets: [{ provider: "local-llm", localLlmModelId: preferredTarget.id }],
+      maxConcurrent: 1,
+    });
+    const priorityQueues = priorityQueuesForProviderPool({
+      poolId: directPools[0].id,
+      allowedQueues: ["episodeDistiller"],
+    });
 
     const firstMemory = await recordVibeMemoryWithDiffEntries({
       sessionId: "episode-distiller-wait-preferred-session-1",
@@ -2284,13 +2422,13 @@ describe("sqlite runtime support repositories", () => {
     await enqueueEpisodeDistillerJob({ sourceKey: secondMemory.memory.id });
 
     const firstClaim = await claimNextJobWithProviderLease({
-      pool: settings.providerPools[0],
-      priorityQueues: ["episodeDistiller"],
+      pool: directPools[0],
+      priorityQueues,
       workerId: "sqlite-provider-preferred-worker-1",
     });
     const blockedClaim = await claimNextJobWithProviderLease({
-      pool: settings.providerPools[0],
-      priorityQueues: ["episodeDistiller"],
+      pool: directPools[0],
+      priorityQueues,
       workerId: "sqlite-provider-preferred-worker-2",
     });
 
@@ -2323,8 +2461,8 @@ describe("sqlite runtime support repositories", () => {
       .run(firstClaim.id);
 
     const secondClaim = await claimNextJobWithProviderLease({
-      pool: settings.providerPools[0],
-      priorityQueues: ["episodeDistiller"],
+      pool: directPools[0],
+      priorityQueues,
       workerId: "sqlite-provider-preferred-worker-3",
     });
 
@@ -2427,7 +2565,7 @@ describe("sqlite runtime support repositories", () => {
     expect(secondClaim?.providerLease.targetId).toBe(vibeTarget.id);
   });
 
-  test("claims different queues concurrently when task routes use different provider targets", async () => {
+  test("claims different queues concurrently from a shared provider pool", async () => {
     const sqlite = await getRuntimeSqliteCoreDatabase();
     const settings = structuredClone(getRuntimeSettingsSnapshot());
     const episodeTarget = {
@@ -2545,9 +2683,9 @@ describe("sqlite runtime support repositories", () => {
     });
 
     expect(firstClaim?.id).toBe("covering-different-provider");
-    expect(firstClaim?.providerLease.targetId).toBe(coveringTarget.id);
+    expect(firstClaim?.providerLease.targetId).toBe(episodeTarget.id);
     expect(secondClaim?.id).toBe("episode-different-provider");
-    expect(secondClaim?.providerLease.targetId).toBe(episodeTarget.id);
+    expect(secondClaim?.providerLease.targetId).toBe(coveringTarget.id);
     const activeLeases = sqlite.db
       .query<{ target_id: string }, []>(
         "select target_id from llm_provider_leases where status = 'active' order by target_id",
@@ -2672,7 +2810,7 @@ describe("sqlite runtime support repositories", () => {
     ).toBe(1);
   });
 
-  test("keeps same-route findingCandidate work waiting even when another pool target is free", async () => {
+  test("uses another pool target for same-route findingCandidate work when one target is busy", async () => {
     const settings = structuredClone(getRuntimeSettingsSnapshot());
     const preferredTarget = {
       id: "local-preferred-route",
@@ -2772,7 +2910,7 @@ describe("sqlite runtime support repositories", () => {
     expect(firstJob).not.toBeNull();
     expect(firstClaim?.id).toBeTruthy();
     expect(firstClaim?.providerLease.targetId).toBe(preferredTarget.id);
-    expect(blockedClaim).toBeNull();
+    expect(blockedClaim?.providerLease.targetId).toBe(standbyTarget.id);
   });
 
   test("persists covering retry options in sqlite", async () => {
