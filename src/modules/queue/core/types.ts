@@ -42,6 +42,8 @@ export type QueueListItem = {
   subjectDetail: string;
   provider: string | null;
   model: string | null;
+  activeProviderPoolId?: string | null;
+  activeProviderTargetId?: string | null;
   lastError: string | null;
   lastOutcomeKind: string | null;
   lockedBy: string | null;

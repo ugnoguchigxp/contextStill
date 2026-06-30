@@ -574,9 +574,21 @@ export function QueuePage() {
           const model = item.model?.trim();
           const providerLabel = provider ? formatProviderLabel(provider) : null;
           const modelLabel = resolveModelLabel(item);
+          const activeLeaseLabel =
+            item.activeProviderPoolId && item.activeProviderTargetId
+              ? `${item.activeProviderPoolId} / ${item.activeProviderTargetId}`
+              : (item.activeProviderTargetId ?? null);
           return (
             <div className="text-xs">
               <div className="truncate text-slate-700">{item.lockedBy ?? "-"}</div>
+              {activeLeaseLabel ? (
+                <div
+                  className="truncate font-mono text-[10px] text-slate-500"
+                  title={activeLeaseLabel}
+                >
+                  {activeLeaseLabel}
+                </div>
+              ) : null}
               {providerLabel && model ? (
                 <div className="min-w-0 text-muted-foreground" title={modelLabel}>
                   <div className="truncate">{providerLabel} /</div>

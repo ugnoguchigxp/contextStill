@@ -263,10 +263,7 @@ async function runContinuous(options: CliOptions): Promise<void> {
               })
               .finally(() => {
                 activeTasks.delete(task);
-                const activeCount = Math.max(
-                  0,
-                  (activeProviderTasksByPool.get(pool.id) ?? 1) - 1,
-                );
+                const activeCount = Math.max(0, (activeProviderTasksByPool.get(pool.id) ?? 1) - 1);
                 if (activeCount === 0) activeProviderTasksByPool.delete(pool.id);
                 else activeProviderTasksByPool.set(pool.id, activeCount);
                 triggerSchedulerWakeup();

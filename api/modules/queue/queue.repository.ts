@@ -37,6 +37,7 @@ import {
   resolveEpisodeDistillerRoute,
   resolveFindCandidateRoute,
 } from "../../../src/modules/settings/settings.service.js";
+import type { RuntimeSettingsRoute } from "../../../src/modules/settings/settings.types.js";
 
 export type QueueListQuery = {
   page: number;
@@ -99,6 +100,22 @@ type QueueListRow = {
   metadata_summary: string | null;
   source_kind: string | null;
   provider_policy: string | null;
+  active_lease_pool_id?: string | null;
+  active_lease_target_id?: string | null;
+  active_lease_worker_id?: string | null;
+};
+
+type QueueRowWithSource = {
+  queueName: DistillationQueueName;
+  row: QueueListRow;
+};
+
+type ActiveProviderLeaseRow = {
+  pool_id: string;
+  target_id: string;
+  queue_name: string;
+  queue_job_id: string;
+  worker_id: string;
 };
 
 async function getSqliteCoreDatabase(): Promise<SqliteCoreDatabase> {
@@ -217,9 +234,11 @@ function normalizeRow(queueName: DistillationQueueName, row: QueueListRow): Queu
     subjectDetail: row.subject_detail ?? "-",
     provider: resolved.provider,
     model: resolved.model,
+    activeProviderPoolId: row.active_lease_pool_id ?? null,
+    activeProviderTargetId: row.active_lease_target_id ?? null,
     lastError: normalizeQueueLastError(backendQueueName, row.last_error ?? null),
     lastOutcomeKind: row.last_outcome_kind ?? null,
-    lockedBy: row.locked_by ?? null,
+    lockedBy: row.active_lease_worker_id ?? row.locked_by ?? null,
     lockedAt: toIsoTimestamp(row.locked_at),
     heartbeatAt: toIsoTimestamp(row.heartbeat_at),
     createdAt,
@@ -251,25 +270,70 @@ function resolveRouteModel(
   }
 }
 
+function summarizeProviderPoolRoute(route: RuntimeSettingsRoute): string | null {
+  const poolId = route.providerPoolId?.trim();
+  if (!poolId) return null;
+
+  const settings = getRuntimeSettingsSnapshot();
+  const pool = settings.providerPools.find((item) => item.id === poolId);
+  if (!pool) return `pool:${poolId}`;
+
+  const targetModels = pool.targets
+    .map((target) => {
+      if (target.provider === "local-llm") {
+        const model = settings.providers["local-llm"].models.find(
+          (item) => item.id === target.localLlmModelId,
+        );
+        return model?.model || model?.name || target.localLlmModelId;
+      }
+      if (target.provider === "azure-openai") {
+        return (
+          settings.providers["azure-openai"].deployments[target.deploymentSlot]?.model ??
+          `deployment:${target.deploymentSlot}`
+        );
+      }
+      return target.targetId;
+    })
+    .filter((value): value is string => Boolean(value?.trim()));
+  const uniqueTargets = [...new Set(targetModels)];
+  const poolLabel = pool.label.trim() || pool.id;
+
+  if (uniqueTargets.length === 0) return poolLabel;
+  return `${poolLabel}: ${uniqueTargets.join(" / ")}`;
+}
+
+function resolveRouteRuntimeModel(route: RuntimeSettingsRoute): {
+  provider: string | null;
+  model: string | null;
+} {
+  const provider = route.provider;
+  const poolSummary = summarizeProviderPoolRoute(route);
+  return {
+    provider,
+    model: poolSummary ?? resolveRouteModel(provider, route.model, route.localLlmModel),
+  };
+}
+
 function resolveQueueRuntimeModel(
   queueName: DistillationQueueName,
   row: QueueListRow,
 ): { provider: string | null; model: string | null } {
+  const activeLeaseModel = resolveActiveLeaseRuntimeModel(row);
+  if (activeLeaseModel) return activeLeaseModel;
+
   if (row.model?.trim()) {
     return { provider: row.provider ?? null, model: row.model.trim() };
   }
 
   if (queueName === "episodeDistiller") {
     const route = resolveEpisodeDistillerRoute();
-    const provider = route.provider;
-    return { provider, model: resolveRouteModel(provider, route.model, route.localLlmModel) };
+    return resolveRouteRuntimeModel(route);
   }
 
   if (queueName === "findingCandidate") {
     const sourceKind = row.source_kind === "vibe_memory" ? "vibe_memory" : "wiki_file";
     const route = resolveFindCandidateRoute(sourceKind);
-    const provider = route.provider;
-    return { provider, model: resolveRouteModel(provider, route.model, route.localLlmModel) };
+    return resolveRouteRuntimeModel(route);
   }
 
   if (queueName === "coveringEvidence") {
@@ -281,8 +345,7 @@ function resolveQueueRuntimeModel(
         policy,
         routeName: "externalEvidence",
       });
-      const provider = route.provider;
-      return { provider, model: resolveRouteModel(provider, route.model, route.localLlmModel) };
+      return resolveRouteRuntimeModel(route);
     } catch {
       const provider = row.provider ?? null;
       return { provider, model: provider ? resolveRouteModel(provider, undefined) : null };
@@ -294,7 +357,10 @@ function resolveQueueRuntimeModel(
     const provider = row.provider?.trim() || route.provider;
     return {
       provider,
-      model: row.model?.trim() || resolveRouteModel(provider, route.model, route.localLlmModel),
+      model:
+        row.model?.trim() ||
+        summarizeProviderPoolRoute(route) ||
+        resolveRouteModel(provider, route.model, route.localLlmModel),
     };
   }
 
@@ -303,8 +369,99 @@ function resolveQueueRuntimeModel(
   const provider = finalizeRoute.provider;
   return {
     provider,
-    model: resolveRouteModel(provider, finalizeRoute.model, finalizeRoute.localLlmModel),
+    model:
+      summarizeProviderPoolRoute(finalizeRoute) ||
+      resolveRouteModel(provider, finalizeRoute.model, finalizeRoute.localLlmModel),
   };
+}
+
+function resolveActiveLeaseRuntimeModel(
+  row: QueueListRow,
+): { provider: string | null; model: string | null } | null {
+  const targetId = row.active_lease_target_id?.trim();
+  if (!targetId) return null;
+
+  const settings = getRuntimeSettingsSnapshot();
+  const localModel = settings.providers["local-llm"].models.find((model) => model.id === targetId);
+  if (localModel) {
+    return { provider: "local-llm", model: localModel.model };
+  }
+
+  if (/^\d+$/.test(targetId)) {
+    const deployment = settings.providers["azure-openai"].deployments[Number(targetId)];
+    return {
+      provider: "azure-openai",
+      model: deployment?.model ?? settings.providers["azure-openai"].model,
+    };
+  }
+
+  if (targetId === "openai") {
+    return { provider: "openai", model: settings.providers.openai.model };
+  }
+  if (targetId === "bedrock") {
+    return { provider: "bedrock", model: settings.providers.bedrock.model };
+  }
+  if (targetId === "codex") {
+    return { provider: "codex", model: settings.providers.codex.model };
+  }
+
+  return { provider: null, model: targetId };
+}
+
+function queueRowSourceKey(source: QueueRowWithSource): string {
+  const queueName = distillationQueueNames.includes(source.row.queue_name as DistillationQueueName)
+    ? (source.row.queue_name as DistillationQueueName)
+    : source.queueName;
+  return `${queueName}:${source.row.id}`;
+}
+
+function activeLeaseKey(lease: ActiveProviderLeaseRow): string {
+  return `${lease.queue_name}:${lease.queue_job_id}`;
+}
+
+async function loadActiveProviderLeases(): Promise<ActiveProviderLeaseRow[]> {
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    return sqlite.db
+      .query<ActiveProviderLeaseRow, []>(
+        `
+        select pool_id, target_id, queue_name, queue_job_id, worker_id
+        from llm_provider_leases
+        where status = 'active'
+      `,
+      )
+      .all();
+  }
+
+  const result = await db.execute(sql`
+    select pool_id, target_id, queue_name, queue_job_id, worker_id
+    from llm_provider_leases
+    where status = 'active'
+  `);
+  return result.rows as unknown as ActiveProviderLeaseRow[];
+}
+
+async function attachActiveProviderLeases(sources: QueueRowWithSource[]): Promise<QueueListRow[]> {
+  if (sources.length === 0) return [];
+
+  const sourceKeys = new Set(sources.map(queueRowSourceKey));
+  const leases = await loadActiveProviderLeases();
+  const leaseByKey = new Map(
+    leases
+      .filter((lease) => sourceKeys.has(activeLeaseKey(lease)))
+      .map((lease) => [activeLeaseKey(lease), lease]),
+  );
+
+  return sources.map((source) => {
+    const lease = leaseByKey.get(queueRowSourceKey(source));
+    if (!lease) return source.row;
+    return {
+      ...source.row,
+      active_lease_pool_id: lease.pool_id,
+      active_lease_target_id: lease.target_id,
+      active_lease_worker_id: lease.worker_id,
+    };
+  });
 }
 
 function buildDynamicOrderBy(
@@ -1503,9 +1660,11 @@ export async function listQueueItems(params: QueueListQuery) {
     }),
   ]);
 
+  const enrichedRows = await attachActiveProviderLeases(rows.map((row) => ({ queueName, row })));
+
   return {
     queue: queueName,
-    items: rows.map((row) => normalizeRow(queueName, row)),
+    items: enrichedRows.map((row) => normalizeRow(queueName, row)),
     total,
     page,
     limit,
@@ -1520,8 +1679,13 @@ export async function fetchActiveTasks(): Promise<QueueListItem[]> {
     ),
   );
 
-  return responses
-    .flatMap((rows, index) => rows.map((row) => normalizeRow(distillationQueueNames[index], row)))
+  const sources = responses.flatMap((rows, index) =>
+    rows.map((row) => ({ queueName: distillationQueueNames[index], row })),
+  );
+  const enrichedRows = await attachActiveProviderLeases(sources);
+
+  return enrichedRows
+    .map((row, index) => normalizeRow(sources[index].queueName, row))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 

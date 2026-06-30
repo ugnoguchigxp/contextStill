@@ -3543,6 +3543,61 @@ describe("sqlite runtime support repositories", () => {
   test("serves queue dashboard reads from sqlite without postgres SQL", async () => {
     const sqlite = await getRuntimeSqliteCoreDatabase();
     const now = new Date("2026-06-20T00:00:00.000Z").toISOString();
+    const settings = structuredClone(getRuntimeSettingsSnapshot());
+    const ornith = {
+      id: "local-ornith",
+      name: "Ornith",
+      apiBaseUrl: "http://127.0.0.1:44448",
+      apiPath: "/v1/chat/completions",
+      model: "ornith-1.0-9b-4bit",
+    };
+    const qwopus = {
+      id: "local-qwopus",
+      name: "Qwopus",
+      apiBaseUrl: "http://127.0.0.1:50041/v1",
+      apiPath: "/v1/chat/completions",
+      model: "qwopus-test",
+    };
+    settings.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: ornith.apiBaseUrl,
+      apiPath: ornith.apiPath,
+      model: ornith.model,
+      models: [ornith, qwopus],
+    };
+    settings.providerPools = [
+      {
+        id: "local-llm-default",
+        label: "Qwopus Pool",
+        enabled: true,
+        maxConcurrent: 1,
+        staleLeaseSeconds: 120,
+        lowPriorityAgingSeconds: 1800,
+        targets: [{ provider: "local-llm", localLlmModelId: qwopus.id }],
+      },
+    ];
+    settings.taskRouting.findCandidate.source = {
+      provider: "local-llm",
+      model: ornith.model,
+      localLlmModel: ornith.model,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    settings.taskRouting.coverEvidence.externalEvidence = {
+      provider: "local-llm",
+      model: ornith.model,
+      localLlmModel: ornith.model,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    settings.taskRouting.coverEvidence.sourceSupport = {
+      ...settings.taskRouting.coverEvidence.externalEvidence,
+    };
+    settings.taskRouting.coverEvidence.mcpEvidence = {
+      ...settings.taskRouting.coverEvidence.externalEvidence,
+    };
+    await saveRuntimeSettings({ settings, updatedBy: "sqlite-runtime-test" });
+
     sqlite.db
       .query(
         `
@@ -3570,6 +3625,78 @@ describe("sqlite runtime support repositories", () => {
     sqlite.db
       .query(
         `
+        insert into llm_provider_leases (
+          id, pool_id, target_id, queue_name, queue_job_id, worker_id, status,
+          locked_at, heartbeat_at, expires_at, metadata, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "lease-qwopus",
+        "local-llm-default",
+        qwopus.id,
+        "findingCandidate",
+        "finding-running",
+        "lease-worker-qwopus",
+        "active",
+        now,
+        now,
+        now,
+        "{}",
+        now,
+        now,
+      );
+    sqlite.db
+      .query(
+        `
+        insert into finding_candidate_queue (
+          id, input_kind, source_kind, source_key, source_uri, status, priority,
+          attempt_count, created_at, updated_at, locked_by, locked_at, heartbeat_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "finding-missing-target",
+        "source_target",
+        "wiki_file",
+        "Missing Target Source",
+        "file:///missing-target.md",
+        "running",
+        80,
+        1,
+        now,
+        now,
+        "worker-stale",
+        now,
+        now,
+      );
+    sqlite.db
+      .query(
+        `
+        insert into llm_provider_leases (
+          id, pool_id, target_id, queue_name, queue_job_id, worker_id, status,
+          locked_at, heartbeat_at, expires_at, metadata, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "lease-missing-target",
+        "local-llm-default",
+        "local-missing-target",
+        "findingCandidate",
+        "finding-missing-target",
+        "lease-worker-missing-target",
+        "active",
+        now,
+        now,
+        now,
+        "{}",
+        now,
+        now,
+      );
+    sqlite.db
+      .query(
+        `
         insert into found_candidates (
           id, finding_job_id, candidate_index, title, content, created_at, updated_at
         ) values (?, ?, ?, ?, ?, ?, ?)
@@ -3589,9 +3716,17 @@ describe("sqlite runtime support repositories", () => {
 
     const activeTasks = await fetchActiveTasks();
     expect(activeTasks.map((task) => task.id)).toContain("finding-running");
-    expect(activeTasks.find((task) => task.id === "finding-running")?.subjectTitle).toBe(
-      "SQLite Queue Source",
-    );
+    const activeFindingTask = activeTasks.find((task) => task.id === "finding-running");
+    expect(activeFindingTask?.subjectTitle).toBe("SQLite Queue Source");
+    expect(activeFindingTask?.lockedBy).toBe("lease-worker-qwopus");
+    expect(activeFindingTask?.provider).toBe("local-llm");
+    expect(activeFindingTask?.model).toBe("qwopus-test");
+    expect(activeFindingTask?.activeProviderPoolId).toBe("local-llm-default");
+    expect(activeFindingTask?.activeProviderTargetId).toBe(qwopus.id);
+    const missingTargetTask = activeTasks.find((task) => task.id === "finding-missing-target");
+    expect(missingTargetTask?.lockedBy).toBe("lease-worker-missing-target");
+    expect(missingTargetTask?.model).toBe("local-missing-target");
+    expect(missingTargetTask?.model).not.toContain("ornith");
 
     const listed = await listQueueItems({
       queue: "findingCandidate",
@@ -3602,9 +3737,23 @@ describe("sqlite runtime support repositories", () => {
     });
     expect(listed.total).toBe(1);
     expect(listed.items[0]?.id).toBe("finding-running");
+    expect(listed.items[0]?.model).toBe("qwopus-test");
+    expect(listed.items[0]?.activeProviderTargetId).toBe(qwopus.id);
+
+    const coveringListed = await listQueueItems({
+      queue: "coveringEvidence",
+      status: "pending",
+      query: "sqlite candidate",
+      page: 1,
+      limit: 20,
+    });
+    expect(coveringListed.items[0]?.id).toBe("covering-pending");
+    expect(coveringListed.items[0]?.provider).toBe("local-llm");
+    expect(coveringListed.items[0]?.model).toContain("qwopus-test");
+    expect(coveringListed.items[0]?.model).not.toContain("ornith");
 
     const stats = await fetchQueueDashboardStats();
-    expect(stats.queues.findingCandidate.counters.running).toBe(1);
+    expect(stats.queues.findingCandidate.counters.running).toBe(2);
     expect(stats.queues.coveringEvidence.counters.pending).toBe(1);
   });
 
