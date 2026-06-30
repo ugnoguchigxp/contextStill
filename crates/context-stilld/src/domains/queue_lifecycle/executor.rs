@@ -477,19 +477,21 @@ fn queue_spec_for_pool(
 ) -> Option<ProviderQueueClaimSpec> {
     match queue_name {
         "findingCandidate" => {
-            let source_targets = route_preferred_targets(
+            let source_targets = route_target_preference(
                 settings,
                 settings.pointer("/taskRouting/findCandidate/source"),
                 pool_id,
             );
-            let vibe_targets = route_preferred_targets(
+            let vibe_targets = route_target_preference(
                 settings,
                 settings.pointer("/taskRouting/findCandidate/vibe"),
                 pool_id,
             );
-            if source_targets.is_empty() && vibe_targets.is_empty() {
+            if source_targets.is_none() && vibe_targets.is_none() {
                 return None;
             }
+            let source_targets = source_targets.unwrap_or_default();
+            let vibe_targets = vibe_targets.unwrap_or_default();
             let mut preferences = Vec::new();
             if !vibe_targets.is_empty() {
                 preferences.push(RowTargetPreference {
@@ -519,18 +521,23 @@ fn queue_spec_for_pool(
             pool_id,
         ),
         "coveringEvidence" => {
+            let mut matched_route = false;
             let mut targets = BTreeSet::new();
             for pointer in [
                 "/taskRouting/coverEvidence/sourceSupport",
                 "/taskRouting/coverEvidence/externalEvidence",
                 "/taskRouting/coverEvidence/mcpEvidence",
             ] {
-                for target in route_preferred_targets(settings, settings.pointer(pointer), pool_id)
+                if let Some(route_targets) =
+                    route_target_preference(settings, settings.pointer(pointer), pool_id)
                 {
-                    targets.insert(target);
+                    matched_route = true;
+                    for target in route_targets {
+                        targets.insert(target);
+                    }
                 }
             }
-            if targets.is_empty() {
+            if !matched_route {
                 return None;
             }
             Some(ProviderQueueClaimSpec {
@@ -568,10 +575,7 @@ fn simple_route_spec(
     route: Option<&Value>,
     pool_id: &str,
 ) -> Option<ProviderQueueClaimSpec> {
-    let targets = route_preferred_targets(settings, route, pool_id);
-    if targets.is_empty() {
-        return None;
-    }
+    let targets = route_target_preference(settings, route, pool_id)?;
     Some(ProviderQueueClaimSpec {
         queue_name: queue_name.to_string(),
         preferred_target_ids: targets,
@@ -580,14 +584,26 @@ fn simple_route_spec(
     })
 }
 
-fn route_preferred_targets(settings: &Value, route: Option<&Value>, pool_id: &str) -> Vec<String> {
+fn route_target_preference(
+    settings: &Value,
+    route: Option<&Value>,
+    pool_id: &str,
+) -> Option<Vec<String>> {
     let Some(route) = route else {
-        return Vec::new();
+        return None;
     };
     if route_claim_group_id(route).as_deref() != Some(pool_id) {
-        return Vec::new();
+        return None;
     }
-    local_llm_route_target_ids(settings, route)
+    if route_provider_pool_id(route).is_some() {
+        return Some(Vec::new());
+    }
+    let targets = local_llm_route_target_ids(settings, route);
+    if targets.is_empty() {
+        None
+    } else {
+        Some(targets)
+    }
 }
 
 fn route_claim_group_id(route: &Value) -> Option<String> {
@@ -1008,7 +1024,7 @@ mod tests {
             executor_priority_queues_for_pool(&settings, "local-llm-default", &HashSet::new());
         assert_eq!(queues.len(), 1);
         assert_eq!(queues[0].queue_name, "episodeDistiller");
-        assert_eq!(queues[0].preferred_target_ids, vec![target_id.clone()]);
+        assert_eq!(queues[0].preferred_target_ids, Vec::<String>::new());
         let target = local_llm_target_config(&settings, &target_id).unwrap();
         assert_eq!(target.model, "Qwen 3.6 27B");
     }
@@ -1050,6 +1066,55 @@ mod tests {
             executor_priority_queues_for_pool(&settings, "local-llm-default", &HashSet::new());
         assert_eq!(queues.len(), 1);
         assert_eq!(queues[0].queue_name, "episodeDistiller");
-        assert_eq!(queues[0].preferred_target_ids, vec!["local-b".to_string()]);
+        assert_eq!(queues[0].preferred_target_ids, Vec::<String>::new());
+    }
+
+    #[test]
+    fn rust_executor_treats_provider_pool_routes_as_pool_wide_selection() {
+        let settings = json!({
+            "providerPools": [{
+                "id": "local-llm-default",
+                "enabled": true,
+                "targets": [
+                    {"provider": "local-llm", "localLlmModelId": "local-a"},
+                    {"provider": "local-llm", "localLlmModelId": "local-b"}
+                ],
+                "maxConcurrent": 2,
+                "staleLeaseSeconds": 120,
+                "lowPriorityAgingSeconds": 1800
+            }],
+            "providers": {
+                "local-llm": {
+                    "models": [
+                        {"id": "local-a", "apiBaseUrl": "http://localhost:1", "apiPath": "/v1/chat/completions", "model": "qwen"},
+                        {"id": "local-b", "apiBaseUrl": "http://localhost:2", "apiPath": "/v1/chat/completions", "model": "qwen"}
+                    ]
+                }
+            },
+            "taskRouting": {
+                "findCandidate": {
+                    "source": {"provider": "local-llm", "providerPoolId": "local-llm-default", "model": "qwen"},
+                    "vibe": {"provider": "local-llm", "providerPoolId": "local-llm-default", "model": "qwen"}
+                },
+                "coverEvidence": {
+                    "sourceSupport": {"provider": "local-llm", "providerPoolId": "local-llm-default", "model": "qwen"},
+                    "externalEvidence": {"provider": "local-llm", "providerPoolId": "local-llm-default", "model": "qwen"},
+                    "mcpEvidence": {"provider": "local-llm", "providerPoolId": "local-llm-default", "model": "qwen"}
+                }
+            }
+        });
+
+        let finding = priority_queues_for_pool(&settings, "local-llm-default", &HashSet::new())
+            .into_iter()
+            .find(|queue| queue.queue_name == "findingCandidate")
+            .unwrap();
+        assert_eq!(finding.preferred_target_ids, Vec::<String>::new());
+        assert!(finding.route_target_preferences.is_empty());
+
+        let covering = priority_queues_for_pool(&settings, "local-llm-default", &HashSet::new())
+            .into_iter()
+            .find(|queue| queue.queue_name == "coveringEvidence")
+            .unwrap();
+        assert_eq!(covering.preferred_target_ids, Vec::<String>::new());
     }
 }

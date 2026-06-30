@@ -3,7 +3,7 @@ set -euo pipefail
 
 # context-still Database Backup Script
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BACKUP_DIR="${BACKUP_DIR:-${ROOT_DIR}/backup}"
+BACKUP_DIR="${BACKUP_DIR:-${ROOT_DIR}/data/backups}"
 TIMESTAMP="$(date +"%Y%m%d_%H%M%S")"
 DEFAULT_CONTAINER_NAME="context-still-db"
 LEGACY_CONTAINER_NAME="memory-router-db"

@@ -112,7 +112,7 @@ function defaultBackupPath(sourcePath: string): string {
   const parsed = path.parse(sourcePath);
   return path.join(
     parsed.dir,
-    "backup",
+    "backups",
     `${parsed.name}.before-episode-reset-${timestamp()}${parsed.ext || ".sqlite"}`,
   );
 }

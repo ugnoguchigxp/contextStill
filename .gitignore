@@ -13,7 +13,6 @@ coverage.json
 playwright-report/
 test-results/
 /wiki/
-backup/
 scratch/
 logs/
 data/

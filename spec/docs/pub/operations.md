@@ -51,12 +51,12 @@ It writes a consistent `VACUUM INTO` snapshot after `PRAGMA integrity_check`.
 Inputs:
 
 - source: `CONTEXT_STILL_SQLITE_CORE_PATH`, `SQLITE_CORE_PATH`, `DB_SQLITE_PATH`, or the default `data/context-still-core.sqlite`
-- output: `backup/<sqlite-name>-<timestamp>.sqlite` by default
+- output: `data/backups/<sqlite-name>-<timestamp>.sqlite` by default
 
 Override output:
 
 ```bash
-CONTEXT_STILL_DB_BACKEND=sqlite bun run sqlite:backup -- --output backup/context-still.sqlite
+CONTEXT_STILL_DB_BACKEND=sqlite bun run sqlite:backup -- --output data/backups/context-still.sqlite
 ```
 
 Restore SQLite backups by stopping writers, replacing the configured SQLite DB file with the backup file, and restarting the app. If copying over a live WAL-mode database manually, remove stale sidecar files (`.sqlite-wal` / `.sqlite-shm`) with the old database after writers are stopped.
@@ -158,7 +158,7 @@ PostgreSQL backup defaults for `./scripts/backup-db.sh`:
 - container: `context-still-db`
 - legacy fallback container: `memory-router-db`
 - database: `context_still`
-- output: `backup/db_backup_<timestamp>.zip`
+- output: `data/backups/db_backup_<timestamp>.zip`
 
 Override with `BACKUP_DIR`, `CONTAINER_NAME`, `DB_USER`, `DB_NAME`, or `DB_PASSWORD`.
 

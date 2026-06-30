@@ -22,7 +22,7 @@ Future Tauri packaging should resolve these under the app data/log locations sup
 |---|---|---|
 | SQLite DB | `./data/context-still-core.sqlite` | Controlled by `CONTEXT_STILL_SQLITE_CORE_PATH` in development |
 | logs | `./logs/` | App logs and automation logs should not require a terminal |
-| backups | `./backup/` | SQLite backups use `VACUUM INTO` |
+| backups | `./data/backups/` | SQLite backups use `VACUUM INTO` |
 | runtime settings | SQLite `settings` table | `.env` is development/advanced configuration |
 | MCP registration metadata | app data path | Registration is explicit user action |
 | source root | `./wiki` | Desktop can later offer user-selected source roots |

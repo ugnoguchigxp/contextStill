@@ -211,6 +211,56 @@ fn rust_provider_claim_waits_for_route_target_instead_of_using_other_free_target
 }
 
 #[test]
+fn rust_provider_claim_uses_pool_fallback_target_when_route_has_no_preference() {
+    let app_dir = temp_app_dir("provider_claim_pool_fallback");
+    let sqlite_path = app_dir.join("queue.sqlite");
+    let mut connection = Connection::open(&sqlite_path).unwrap();
+    create_provider_claim_queue_table(&connection, "finding_candidate_queue");
+    create_provider_lease_table(&connection);
+    connection
+        .execute_batch(
+            r#"
+            insert into finding_candidate_queue (
+              id, status, priority, created_at, updated_at, next_run_at, source_kind
+            ) values
+              ('job-running', 'running', 10, '2026-06-22 01:00:00', CURRENT_TIMESTAMP, null, 'vibe_memory'),
+              ('job-waiting', 'pending', 9, '2026-06-22 02:00:00', '2026-06-22 02:00:00', null, 'vibe_memory');
+            insert into llm_provider_leases (
+              id, pool_id, target_id, queue_name, queue_job_id, worker_id, status,
+              locked_at, heartbeat_at, expires_at, metadata, created_at, updated_at
+            ) values (
+              'lease-active', 'local-llm-default', 'local-a', 'findingCandidate', 'job-running',
+              'worker-old', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+              datetime(CURRENT_TIMESTAMP, '+120 seconds'), '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            );
+            "#,
+        )
+        .unwrap();
+    let pool_wide_spec = super::types::ProviderQueueClaimSpec {
+        queue_name: "findingCandidate".to_string(),
+        preferred_target_ids: Vec::new(),
+        route_target_column: Some("source_kind"),
+        route_target_preferences: Vec::new(),
+    };
+
+    let claimed = claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &provider_pool(),
+        &[pool_wide_spec],
+        "worker-1",
+        "lease-1",
+        90,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(claimed.id, "job-waiting");
+    assert_eq!(claimed.provider_lease.target_id, "local-b");
+
+    std::fs::remove_dir_all(&app_dir).unwrap();
+}
+
+#[test]
 fn rust_provider_claim_allows_same_queue_different_route_on_free_target() {
     let app_dir = temp_app_dir("provider_claim_different_route");
     let sqlite_path = app_dir.join("queue.sqlite");

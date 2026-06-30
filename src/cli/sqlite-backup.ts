@@ -45,7 +45,11 @@ function parseArgs(args: string[]): Options {
 
 function defaultOutputPath(sourcePath: string): string {
   const parsed = path.parse(sourcePath);
-  return path.join(parsed.dir, "backup", `${parsed.name}-${timestamp()}${parsed.ext || ".sqlite"}`);
+  return path.join(
+    parsed.dir,
+    "backups",
+    `${parsed.name}-${timestamp()}${parsed.ext || ".sqlite"}`,
+  );
 }
 
 function sqliteStringLiteral(value: string): string {
