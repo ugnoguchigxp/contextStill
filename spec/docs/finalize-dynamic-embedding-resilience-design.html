@@ -1,0 +1,400 @@
+<article lang="ja">
+  <h1>finalizeDistille 動的Embedding耐障害化設計</h1>
+
+  <p>
+    <code>finalizeDistille</code
+    >がEmbeddingサービス停止を候補内容の恒久失敗として扱い、
+    ナレッジ登録可能な19件を終端<code>worker_failed</code>にした問題を解消する。
+    Embeddingを保存前の必須品質ゲートとして維持しつつ、利用可能なホストをLARMから動的に取得し、
+    一時的な基盤停止ではjobを失わない構成へ変更する。
+  </p>
+
+  <dl>
+    <dt>状態</dt>
+    <dd>ContextStill側のretry／既存job回復を実装済み。LARM動的host対応は未実装</dd>
+    <dt>対象</dt>
+    <dd><code>finalizeDistille</code>、共通Embedding取得境界、ナレッジ保存経路</dd>
+    <dt>作成日</dt>
+    <dd><time>2026-09-09</time></dd>
+    <dt>LARM側依頼</dt>
+    <dd>
+      <a href="larm-dynamic-embedding-host-change-request.html"
+        >LARM動的Embeddingホスト対応依頼書</a
+      >
+    </dd>
+  </dl>
+
+  <section id="conclusion">
+    <h2>1. 結論</h2>
+    <ol>
+      <li>
+        直接原因は、設定されたEmbedding daemon
+        <code>http://127.0.0.1:44512/embed</code>が停止している状態で
+        <code>finalizeDistille</code>が実行されたことである。
+      </li>
+      <li>
+        現行の保存前Embedding必須化と、ナレッジ・FTS・vector・queue完了を同一transactionで保存する設計は維持する。
+        Embeddingなしのナレッジを成功扱いにはしない。
+      </li>
+      <li>
+        一時的なEmbedding利用不能はjob内容の失敗から分離し、利用可能になるまで
+        <code>waiting_for_embedding_provider</code>としてfail closedで待機させる。
+      </li>
+      <li>
+        Embedding取得を共通の<code>EmbeddingProviderLease</code>境界へ集約し、static
+        daemon、OpenAI、 LARM動的ホストを同じ検証規則で扱う。
+      </li>
+      <li>
+        LARMが動的に選択してよいのはホストであり、既存indexと同じEmbedding空間は固定する。
+        少なくとも384次元、モデルrevision、正規化、<code>query</code>／<code
+          >passage</code
+        >
+        prefix規則が一致しないclaimは拒否する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="implemented">
+    <h2>2. 2026-09-09実装結果</h2>
+    <ul>
+      <li>
+        retry可能なEmbedding通信障害は<code>max_attempts</code>到達後も
+        <code>pending</code
+        >と<code>embedding_unavailable_retry</code>を維持する。
+      </li>
+      <li>
+        maintenanceは、過去に同じ一時障害で<code>worker_failed</code>になったfinalize
+        jobだけを 再キューする。設定不良などの非retryable errorは対象外とする。
+      </li>
+      <li>
+        <code>core_vector_metadata</code>が未作成でも、runtimeの
+        <code>CONTEXT_STILL_EMBEDDING_DIMENSION</code>、既定384を応答検証へ必ず使用する。
+      </li>
+      <li>停止、復旧、既存failed jobの選別回復をRust unit testで確認した。</li>
+      <li>LARM動的Embedding leaseとquery／passage contractは後続実装とする。</li>
+    </ul>
+  </section>
+
+  <section id="evidence">
+    <h2>3. 診断根拠</h2>
+    <table>
+      <caption>
+        2026-09-09 12:24 JST前後のread-only確認
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">確認項目</th>
+          <th scope="col">結果</th>
+          <th scope="col">判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">対象job</th>
+          <td>19件</td>
+          <td>全件がcoveringの<code>knowledge_ready</code>後にfinalizeで失敗</td>
+        </tr>
+        <tr>
+          <th scope="row">最終error</th>
+          <td><code>embedding daemon request failed: error sending request for url (http://127.0.0.1:44512/embed)</code></td>
+          <td>19件すべて同一原因</td>
+        </tr>
+        <tr>
+          <th scope="row">試行</th>
+          <td>95回claim、76回retry、19回terminal failed</td>
+          <td>各jobが5回目で終端失敗</td>
+        </tr>
+        <tr>
+          <th scope="row">発生期間</th>
+          <td>2026-09-06 22:35頃〜2026-09-09 06:10頃 JST</td>
+          <td>単発のcandidate不良ではなく継続的な基盤停止</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /health</code></th>
+          <td><code>127.0.0.1:44512</code>へ接続不可、HTTP 000</td>
+          <td>daemon非稼働</td>
+        </tr>
+        <tr>
+          <th scope="row">LaunchAgent</th>
+          <td>
+            <code>com.gnosis.embedding-daemon</code
+            >と<code>com.localLlm.embedding</code>がdisabled
+          </td>
+          <td>自動復旧を期待できない状態</td>
+        </tr>
+        <tr>
+          <th scope="row">既存vector</th>
+          <td><code>knowledge_items_vec_fallback</code>に384次元が8,006件</td>
+          <td>新規vectorも同じ意味空間との互換性が必須</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      現行実装は通信失敗をretry可能と認識しているが、30秒を基準とした指数backoff後も
+      <code>max_attempts=5</code
+      >で<code>worker_failed</code>へ遷移する。
+      provider停止が長時間続く場合、内容に問題のないjobまで恒久失敗になることが設計上の欠陥である。
+    </p>
+  </section>
+
+  <section id="invariants">
+    <h2>4. 維持する不変条件</h2>
+    <ul>
+      <li>ナレッジ保存成功には有効なEmbeddingを必須とする。</li>
+      <li>空vector、NaN、非有限値、次元不一致、model identity不一致を保存しない。</li>
+      <li>ナレッジ本体、FTS、vector、source link、queue完了は同一transactionで確定する。</li>
+      <li>
+        同じ<code>sourceUri</code>の再実行は同じknowledgeへ収束し、重複登録しない。
+      </li>
+      <li>短期credential、claim URL、tokenをSQLite、settings、logへ永続化しない。</li>
+      <li>Embeddingが利用不能でも、静的Providerや異なるモデルへ暗黙fallbackしない。</li>
+    </ul>
+  </section>
+
+  <section id="architecture">
+    <h2>5. 修正後の実行フロー</h2>
+    <pre><code>finalize due jobを検出
+  |
+  +-- Embedding route readiness / LARM activityを確認
+        |
+        +-- 一時利用不能
+        |     +-- jobをclaimしない、またはclaimを解放
+        |     +-- waiting_for_embedding_providerとして次回確認
+        |     +-- 内容のattempt_countを消費しない
+        |
+        +-- lease取得成功
+              +-- endpoint、model identity、dimension、prefix、normalization、期限を検証
+              +-- finalize jobをfenced claim
+              +-- transaction外でpassage embeddingを生成
+              +-- vector shapeと有限値を再検証
+              +-- SQLite writer transaction
+                    +-- knowledge upsert
+                    +-- FTS refresh
+                    +-- vector upsert
+                    +-- source link / audit
+                    +-- queue completed
+              +-- lease解放</code></pre>
+  </section>
+
+  <section id="provider-boundary">
+    <h2>6. 共通Embedding Provider境界</h2>
+    <p>
+      Rust
+      finalize専用のURL直呼びとTypeScriptの<code>embedOne</code>を、同じroute解決・応答検証規則へ寄せる。
+      実装言語間でHTTP clientを共有する必要はないが、入力と結果のcontractは共有する。
+    </p>
+    <pre><code>EmbeddingRequest {
+  inputType: "query" | "passage",
+  texts: non-empty string[],
+  normalize: true,
+  expectedSpace: {
+    dimension: 384,
+    modelId: stable identifier,
+    modelRevision: stable revision or artifact digest,
+    prefixPolicy: stable identifier
+  }
+}
+
+EmbeddingProviderLease {
+  kind: "static-daemon" | "openai" | "larm-dynamic",
+  protocol: stable embedding protocol identifier,
+  baseUrl: validated URL,
+  modelId: stable identifier,
+  modelRevision: stable revision or artifact digest,
+  dimension: 384,
+  normalization: "l2",
+  prefixPolicy: stable identifier,
+  expiresAt: timestamp or null,
+  credential: memory-only secret or null
+}</code></pre>
+    <p>
+      既存のOpenAI互換<code>/v1/embeddings</code>は現在すべての入力を<code>query</code>として処理する実装があるため、
+      endpoint互換だけでは受入不可とする。保存時の<code>passage</code>と検索時の<code>query</code>を区別できることをcontractで確認する。
+    </p>
+  </section>
+
+  <section id="failure-policy">
+    <h2>7. 失敗分類と遷移</h2>
+    <table>
+      <caption>
+        Embedding失敗の分類とfinalize jobの遷移方針
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">分類</th>
+          <th scope="col">例</th>
+          <th scope="col">遷移</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Provider未提供</th>
+          <td>connection refused、LARM active、ready hostなし、claim期限不足</td>
+          <td>
+            <code>waiting_for_embedding_provider</code>。内容attemptを消費せずbounded backoff
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">一時的Provider障害</th>
+          <td>408、425、429、5xx、timeout</td>
+          <td>leaseを破棄し再取得。availability retryとして扱う</td>
+        </tr>
+        <tr>
+          <th scope="row">Contract不一致</th>
+          <td>次元、model revision、prefix、normalization、response shape不一致</td>
+          <td>claimを拒否しfail closed。operator向けdiagnosticを残す</td>
+        </tr>
+        <tr>
+          <th scope="row">入力不良</th>
+          <td>空文字、過大入力、恒久4xx</td>
+          <td>job固有のterminal failure。内容attemptを消費する</td>
+        </tr>
+        <tr>
+          <th scope="row">永続化不良</th>
+          <td>transaction、FTS、vector index、claim fence失敗</td>
+          <td>transaction rollback後、原因に応じてretryまたはterminal failure</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      schema変更を避ける初期実装では、待機理由を<code>last_outcome_kind</code>、
+      <code>next_run_at</code>、event
+      metadataで表現できる。長期的に可用性試行回数を集計する場合も、
+      内容attemptとは別の観測値とし、停止時間だけでjobを破棄しない。
+    </p>
+  </section>
+
+  <section id="write-paths">
+    <h2>8. 適用する保存・検索経路</h2>
+    <ul>
+      <li>
+        <code>finalizeDistille</code>:
+        <code>passage</code> Embeddingを保存前に取得する。
+      </li>
+      <li>
+        <code>registerKnowledgeFromMarkdown</code>:
+        同じProvider境界で<code>passage</code>を取得する。
+      </li>
+      <li>
+        direct knowledge registration:
+        repositoryへ渡す前に<code>passage</code>を必須化する。
+      </li>
+      <li>
+        preset、migration、repair: 明示したmaintenance mode以外ではEmbedding省略を許可しない。
+      </li>
+      <li>
+        semantic retrieval: 同じ空間の<code>query</code>
+        Embeddingを使用する。
+      </li>
+      <li>
+        source embeddingなど別index: indexごとに期待spaceを宣言し、knowledge indexと混同しない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="implementation-plan">
+    <h2>9. ContextStill実装順序</h2>
+    <ol>
+      <li>現行19件、daemon疎通、384次元8,006件をbaselineとして保存する。</li>
+      <li>Embedding space identityとrequest／lease contractをRust・TypeScript双方に定義する。</li>
+      <li>static daemon adapterを新境界へ移し、挙動を変えずcontract testを通す。</li>
+      <li>LARM動的Embedding adapterを追加し、credentialをmemory内だけで扱う。</li>
+      <li>finalize claim前gateとavailability retry分類を実装する。</li>
+      <li>Markdown・direct registration・query retrievalへ同じspace検証を適用する。</li>
+      <li>fake LARMとfake embedding providerでfailure matrixを自動試験する。</li>
+      <li>live canary 1件を登録し、成功後に19件を明示的にretryする。</li>
+      <li>19件すべてについてknowledge ID、vector、FTS、source link、queue完了を照合する。</li>
+    </ol>
+  </section>
+
+  <section id="recovery">
+    <h2>10. LARM対応前の復旧手順案</h2>
+    <ol>
+      <li>既存のEmbedding worker所有者を1つに決め、二重起動を避ける。</li>
+      <li>既存運用コマンドでEmbedding workerを起動する。</li>
+      <li><code>GET http://127.0.0.1:44512/health</code>が200でreadyになることを確認する。</li>
+      <li>
+        <code>/embed</code
+        >へqueryとpassageを各1件送り、384次元・有限値・正規化を確認する。
+      </li>
+      <li>新規canary job 1件を完了させ、knowledge、FTS、vectorを確認する。</li>
+      <li>その後に限り、失敗済み19件をqueueの正規retry操作で戻す。</li>
+    </ol>
+    <p>この復旧はbacklog解消用であり、静的loopback daemonへの依存を恒久解決するものではない。</p>
+  </section>
+
+  <section id="verification">
+    <h2>11. 検証</h2>
+    <table>
+      <caption>
+        耐障害化で確認する主要ケースと期待結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ケース</th>
+          <th scope="col">期待結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Provider停止</th>
+          <td>jobは未登録のまま待機し、5回でterminal failedにならない</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider復旧</th>
+          <td>手動job再作成なしで処理が再開し、1件だけ登録される</td>
+        </tr>
+        <tr>
+          <th scope="row">host切替</th>
+          <td>同じspace identityの別hostへ切り替わり、vector互換性を維持する</td>
+        </tr>
+        <tr>
+          <th scope="row">異なるモデル</th>
+          <td>次元が同じでもmodel revisionまたはprefix policy不一致なら保存しない</td>
+        </tr>
+        <tr>
+          <th scope="row">lease期限切れ</th>
+          <td>request前にrenewまたは再claimし、期限切れcredentialを使わない</td>
+        </tr>
+        <tr>
+          <th scope="row">transaction失敗</th>
+          <td>knowledge、FTS、vector、queue状態が部分保存されない</td>
+        </tr>
+        <tr>
+          <th scope="row">query／passage</th>
+          <td>同じ文章でも要求種別に応じたprefixが適用される</td>
+        </tr>
+      </tbody>
+    </table>
+    <pre><code class="language-bash">bun test test/queue-worker.test.ts test/knowledge.service.test.ts
+cargo test -p context-stilld queue_lifecycle
+bun run spec:check</code></pre>
+    <p>
+      実際のtest
+      target名は実装時に現行suiteへ合わせる。失敗時は原因修正、単体再実行、対象suite再実行、 live
+      canaryの順で確認し、失敗内容と再実行結果を報告する。
+    </p>
+  </section>
+
+  <section id="non-goals">
+    <h2>12. Non-goals</h2>
+    <ul>
+      <li>Embedding失敗時にvectorなしのナレッジを保存すること。</li>
+      <li>既存8,006件を別Embeddingモデルへ暗黙移行すること。</li>
+      <li>DB schema、公開MCP API、認証方式を本修正だけのために変更すること。</li>
+      <li>LARMへContextStill専用endpoint、callback、webhookを追加すること。</li>
+      <li>停止時間だけを理由に登録可能なcandidateを破棄すること。</li>
+    </ul>
+  </section>
+
+  <section id="done">
+    <h2>13. 完了条件</h2>
+    <ul>
+      <li>Embedding停止中のfinalize jobがterminal failedにならず、安全に待機する。</li>
+      <li>LARMから同一Embedding空間の動的hostを取得し、query／passageを実行できる。</li>
+      <li>live canaryと失敗済み19件が、重複なくナレッジ登録される。</li>
+      <li>19件すべてに384次元vector、FTS、source link、completed queue記録が存在する。</li>
+      <li>token、claimed endpoint、credentialが永続化・log出力されていない。</li>
+    </ul>
+  </section>
+</article>

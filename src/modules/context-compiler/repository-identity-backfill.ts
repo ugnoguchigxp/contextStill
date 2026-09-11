@@ -113,7 +113,7 @@ function identityInputFromRecord(value: unknown): CompileProjectIdentityInput | 
   }
   const projectRef = optionalString(source.projectRef);
   const repoKey = optionalString(source.repoKey);
-  const repoPath = optionalString(source.repoPath);
+  const repoPath = optionalString(source.repoPath) ?? optionalString(source.projectRoot);
   if (!projectRef && !repoKey && !repoPath) return null;
   return { projectRef, repoKey, repoPath };
 }
@@ -122,6 +122,15 @@ function metadataEvidence(metadata: Record<string, unknown>): Evidence[] {
   const evidence: Evidence[] = [];
   const direct = identityInputFromRecord(metadata);
   if (direct) evidence.push({ source: "canonical_metadata", input: direct });
+  if (
+    optionalString(metadata.projectRoot) &&
+    (metadata.classificationStatus === undefined || metadata.classificationStatus === "classified")
+  ) {
+    evidence.push({
+      source: "canonical_metadata.project_root",
+      input: { repoPath: optionalString(metadata.projectRoot) },
+    });
+  }
 
   for (const [key, source] of [
     ["projectIdentity", "canonical_metadata.project_identity"],
@@ -325,6 +334,7 @@ function planRow(
   }
 
   const evidence: Evidence[] = [];
+  let incomplete = false;
   if (before.projectRef || before.repoKey || before.repoPath) {
     evidence.push({
       source: "canonical_columns",
@@ -338,6 +348,7 @@ function planRow(
   evidence.push(...metadataEvidence(parsedMetadata.value));
   for (const provenance of row.provenance ?? []) {
     const parsed = parseMetadata(provenance.snapshot);
+    incomplete ||= parsed.value.identityEvidenceIncomplete === true;
     if (parsed.malformed) {
       return decision(
         row,
@@ -384,9 +395,21 @@ function planRow(
     const merged = mergeEvidence(normalized);
     const resolved = resolveCompileProjectIdentity(merged.input, {
       trust: "trusted_adapter",
-      ...(aliases.length > 0 ? { aliases } : {}),
+      ...(aliases.length > 0 || row.entityKind === "knowledge" ? { aliases } : {}),
     });
     if (resolved.matchBasis === "none") throw new Error("identity unexpectedly resolved empty");
+    if (incomplete) {
+      return decision(
+        row,
+        before,
+        { ...before, classificationStatus: "unresolved" },
+        {
+          reasonCode: "incomplete_origin_identity",
+          provenanceSource: merged.source,
+          outcome: "unresolved",
+        },
+      );
+    }
     return decision(
       row,
       before,

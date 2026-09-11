@@ -1,6 +1,8 @@
 use super::curation_repository::{self as repository, QUEUE, VERSION};
 use super::episode_executor::LocalLlmTargetConfig;
-use super::finalize_executor::{embed_one, refresh_fts, upsert_embedding, FinalizeEmbeddingConfig};
+use super::finalize_executor::{
+    embed_one, is_retryable_embedding_error, refresh_fts, upsert_embedding, FinalizeEmbeddingConfig,
+};
 use super::provider_execution::{
     open_query_only_connection, owns_provider_execution, ProviderExecutionHeartbeatGuard,
 };
@@ -249,25 +251,32 @@ fn request_decision(
         } else {
             format!("{base}{path}")
         };
-        let mut request = client.post(url).json(&json!({"model":target.model,"messages":messages,"max_tokens":12000,"temperature":0,"stream":false}));
+        let mut request = client.post(url).json(&json!({"model":target.model,"messages":messages,"max_tokens":12000,"temperature":0,"stream":false,"response_format":super::structured_output::format("curation")}));
         if let Some(key) = api_key.filter(|s| !s.is_empty()) {
             request = request.bearer_auth(key);
         }
         let response = request
             .send()
-            .map_err(|_| "curation provider request failed".to_string())?;
+            .map_err(|error| format!("curation provider request failed: {error}"))?;
         let status = response.status();
         if !status.is_success() {
-            return Err(format!("curation provider HTTP {status}"));
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<i64>().ok());
+            let body = response.text().unwrap_or_default();
+            return Err(format!(
+                "curation provider HTTP {status}: {body}{}",
+                retry_after
+                    .map(|seconds| format!(" retry_after_seconds={seconds}"))
+                    .unwrap_or_default()
+            ));
         }
         let payload: Value = response
             .json()
             .map_err(|_| "invalid curation provider response".to_string())?;
-        payload
-            .pointer("/choices/0/message/content")
-            .and_then(Value::as_str)
-            .ok_or("missing curation response content")?
-            .to_string()
+        super::structured_output::content(&payload)?.to_string()
     };
     parse_decision(&content, snapshot)
 }
@@ -312,27 +321,32 @@ fn request_verification(
         } else {
             format!("{base}{path}")
         };
-        let mut request = client.post(url).json(&json!({"model":target.model,"messages":messages,"max_tokens":12000,"temperature":0,"stream":false}));
+        let mut request = client.post(url).json(&json!({"model":target.model,"messages":messages,"max_tokens":12000,"temperature":0,"stream":false,"response_format":super::structured_output::format("curation_verify")}));
         if let Some(key) = api_key.filter(|s| !s.is_empty()) {
             request = request.bearer_auth(key);
         }
         let response = request
             .send()
-            .map_err(|_| "curation verifier provider request failed".to_string())?;
-        if !response.status().is_success() {
+            .map_err(|error| format!("curation verifier provider request failed: {error}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<i64>().ok());
+            let body = response.text().unwrap_or_default();
             return Err(format!(
-                "curation verifier provider HTTP {}",
-                response.status()
+                "curation verifier provider HTTP {status}: {body}{}",
+                retry_after
+                    .map(|seconds| format!(" retry_after_seconds={seconds}"))
+                    .unwrap_or_default()
             ));
         }
         let payload: Value = response
             .json()
             .map_err(|_| "invalid curation verifier provider response".to_string())?;
-        payload
-            .pointer("/choices/0/message/content")
-            .and_then(Value::as_str)
-            .ok_or("missing curation verifier response content")?
-            .to_string()
+        super::structured_output::content(&payload)?.to_string()
     };
     let cleaned = content
         .lines()
@@ -370,6 +384,25 @@ pub(super) fn run_for_path(
     let _heartbeat = ProviderExecutionHeartbeatGuard::start(path, &job.provider_lease)?;
     let reader = open_query_only_connection(path)?;
     let snapshot = repository::capture(&reader, &job.id).map_err(CliError::io)?;
+    let preflight_reason = if snapshot["subject"]["status"] != "active"
+        || snapshot["subject"]["contentRevision"] != snapshot["queuedContentRevision"]
+    {
+        Some("stale_subject")
+    } else if let Some(reason) = repository::identity_wait_reason(&snapshot["subject"]) {
+        Some(reason)
+    } else if snapshot["candidates"].as_array().is_some_and(Vec::is_empty) {
+        Some("no_candidate")
+    } else {
+        None
+    };
+    if let Some(reason) = preflight_reason {
+        return sqlite_writer::execute_for_path(
+            path,
+            "queue.curation_preflight",
+            move |connection| persist_preflight_skip(connection, &job, &snapshot, reason),
+        )
+        .map_err(CliError::io);
+    }
     let snapshot_copy = snapshot.clone();
     let job_copy = job.clone();
     let model = target.model.clone();
@@ -432,6 +465,76 @@ pub(super) fn run_for_path(
         persist(connection, &job, &snapshot, result)
     })
     .map_err(CliError::io)
+}
+
+fn persist_preflight_skip(
+    connection: &mut Connection,
+    job: &ClaimedProviderLeaseJob,
+    snapshot: &Value,
+    reason: &str,
+) -> Result<bool, String> {
+    let tx = connection.transaction().map_err(|e| e.to_string())?;
+    if !owns_provider_execution(&tx, &job.provider_lease).map_err(|e| e.to_string())? {
+        return Ok(false);
+    }
+    let reason_code = reason.to_ascii_uppercase();
+    let identity_wait = matches!(reason, "identity_unavailable" | "identity_conflict");
+    let now = crate::domains::process_lifecycle::service::now_timestamp();
+    let result = json!({
+        "schemaVersion":2,"action":"observe","survivorKnowledgeId":null,
+        "deprecatedKnowledgeIds":[],"retainedGroupIds":[],"coverage":[],
+        "reasonCodes":[reason_code],"rationale":if reason == "stale_subject" {
+            "Subject is no longer active."
+        } else if identity_wait {
+            "Repository identity needs evidence before comparison."
+        } else {
+            "No safe comparison candidate exists."
+        }
+    });
+    let policy = json!({
+        "schemaVersion":2,"policyVersion":VERSION,"releaseMode":"auto_non_destructive",
+        "requestedDecision":"observe","disposition":"record_only","effectiveAction":"record",
+        "reasonCodes":[reason_code],"evaluatedAt":now,"executor":VERSION
+    });
+    let candidates = snapshot["candidates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value["id"].as_str())
+        .collect::<Vec<_>>();
+    tx.execute(
+        "update landscape_curation_queue set status='skipped',phase='preflight',decision='observe',
+         disposition='record_only',input_snapshot=?2,candidate_knowledge_ids=?3,result=?4,policy_result=?5,
+         next_run_at=null,locked_by=null,locked_at=null,heartbeat_at=null,last_error=null,
+         last_outcome_kind=?6,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+         where id=?1 and status='running' and locked_by=?7",
+        params![job.id,snapshot.to_string(),json!(candidates).to_string(),result.to_string(),policy.to_string(),reason,job.provider_lease.worker_id],
+    ).map_err(|e| e.to_string())?;
+    if let (Some(knowledge_id), Some(revision)) = (
+        snapshot["subject"]["id"].as_str(),
+        snapshot["subject"]["contentRevision"].as_str(),
+    ) {
+        tx.execute(
+            "insert or replace into curation_review_ledger(knowledge_id,content_revision,evidence_revision,policy_version,candidate_index_epoch,outcome,curation_job_id,updated_at)
+             values (?1,?2,?3,?4,'v2',?5,?6,CURRENT_TIMESTAMP)",
+            params![knowledge_id,revision,repository::hash(&repository::canonical_json(snapshot)),VERSION,
+                if identity_wait || reason == "stale_subject" { "needs_evidence" } else { "reviewed" },job.id],
+        ).map_err(|e| e.to_string())?;
+    }
+    super::events::append_queue_event_for_connection(
+        &tx,
+        &format!("curation-preflight:{}:{now}", job.id),
+        QUEUE,
+        &job.id,
+        "skipped",
+        Some(reason),
+        Some(&policy.to_string()),
+    )
+    .map_err(|e| e.to_string())?;
+    release_provider_lease_for_connection(&tx, &job.provider_lease.id, "worker_finished")
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 pub(super) fn fail_for_path(
@@ -583,15 +686,86 @@ pub(super) fn persist(
     let (decision, embedding) = match result {
         Ok(value) => value,
         Err(error) => {
-            tx.execute("update landscape_curation_queue set status=case when attempt_count+1>=max_attempts then 'failed' else 'paused' end, attempt_count=attempt_count+1, next_run_at=case when attempt_count+1>=max_attempts then null else datetime('now','+5 minutes') end, completed_at=case when attempt_count+1>=max_attempts then CURRENT_TIMESTAMP else null end, locked_by=null,locked_at=null,heartbeat_at=null,last_error=?2,last_outcome_kind='curation_failed',updated_at=CURRENT_TIMESTAMP where id=?1",params![job.id,error.chars().take(1000).collect::<String>()]).map_err(|e|e.to_string())?;
-            release_provider_lease_for_connection(&tx, &job.provider_lease.id, "worker_failed")
+            let failure_kind = classify_curation_error(&error);
+            let retryable = failure_kind.is_retryable();
+            let now = crate::domains::process_lifecycle::service::now_timestamp();
+            let truncated = error.chars().take(1000).collect::<String>();
+            if retryable {
+                let prior_retries: i64 = tx.query_row(
+                    "select count(*) from distillation_queue_events where queue_name=?1 and queue_job_id=?2 and event_type='retried'",
+                    params![QUEUE,job.id],
+                    |row| row.get(0),
+                ).map_err(|e|e.to_string())?;
+                let retry_seconds = retry_after_seconds(&error).unwrap_or_else(|| {
+                    [60_i64, 120, 300, 600, 1200, 3600][(prior_retries as usize).min(5)]
+                });
+                tx.execute(
+                    "update landscape_curation_queue set status='pending',next_run_at=datetime('now','+' || ?2 || ' seconds'),
+                     completed_at=null,locked_by=null,locked_at=null,heartbeat_at=null,last_error=?3,
+                     last_outcome_kind='provider_unavailable_retry',updated_at=CURRENT_TIMESTAMP where id=?1",
+                    params![job.id,retry_seconds,truncated],
+                ).map_err(|e|e.to_string())?;
+                let metadata = json!({"error":truncated,"errorCode":failure_kind.code(),"retryAfterSeconds":retry_seconds,"attemptConsumed":false,"targetId":job.provider_lease.target_id});
+                super::events::append_queue_event_for_connection(
+                    &tx,
+                    &format!("curation-retry:{}:{now}", job.id),
+                    QUEUE,
+                    &job.id,
+                    "retried",
+                    Some("provider_unavailable_retry"),
+                    Some(&metadata.to_string()),
+                )
                 .map_err(|e| e.to_string())?;
+                release_provider_lease_for_connection(
+                    &tx,
+                    &job.provider_lease.id,
+                    "provider_unavailable_retry",
+                )
+                .map_err(|e| e.to_string())?;
+            } else {
+                let terminal: bool = tx.query_row(
+                    "select attempt_count+1>=max_attempts from landscape_curation_queue where id=?1",
+                    [&job.id],|row|row.get(0),
+                ).map_err(|e|e.to_string())?;
+                tx.execute("update landscape_curation_queue set status=case when attempt_count+1>=max_attempts then 'failed' else 'paused' end, attempt_count=attempt_count+1, next_run_at=case when attempt_count+1>=max_attempts then null else datetime('now','+5 minutes') end, completed_at=case when attempt_count+1>=max_attempts then CURRENT_TIMESTAMP else null end, locked_by=null,locked_at=null,heartbeat_at=null,last_error=?2,last_outcome_kind='curation_failed',updated_at=CURRENT_TIMESTAMP where id=?1",params![job.id,truncated]).map_err(|e|e.to_string())?;
+                let event_type = if terminal { "failed" } else { "retried" };
+                let metadata = json!({"error":truncated,"errorCode":failure_kind.code(),"attemptConsumed":true,"targetId":job.provider_lease.target_id});
+                super::events::append_queue_event_for_connection(
+                    &tx,
+                    &format!("curation-{event_type}:{}:{now}", job.id),
+                    QUEUE,
+                    &job.id,
+                    event_type,
+                    Some("curation_failed"),
+                    Some(&metadata.to_string()),
+                )
+                .map_err(|e| e.to_string())?;
+                release_provider_lease_for_connection(&tx, &job.provider_lease.id, "worker_failed")
+                    .map_err(|e| e.to_string())?;
+            }
             tx.commit().map_err(|e| e.to_string())?;
             return Ok(false);
         }
     };
+    let mut snapshot_current = true;
+    let mut current_identity_wait = None;
+    for item in std::iter::once(&snapshot["subject"])
+        .chain(snapshot["candidates"].as_array().into_iter().flatten())
+    {
+        let current = repository::load_knowledge(
+            &tx,
+            item["id"].as_str().ok_or("snapshot knowledge id missing")?,
+        )?;
+        if let Some(current) = &current {
+            current_identity_wait =
+                repository::identity_wait_reason(current).or(current_identity_wait);
+        }
+        snapshot_current &= current
+            .as_ref()
+            .is_some_and(|current| repository::unchanged(current, item));
+    }
     let gate = eligible(snapshot, &decision);
-    let mutation = gate.is_ok();
+    let mutation = gate.is_ok() && snapshot_current;
     let mut outcome = decision.action.clone();
     let mut disposition = if mutation {
         "auto_execute"
@@ -605,6 +779,11 @@ pub(super) fn persist(
     let mut reason = gate
         .err()
         .unwrap_or_else(|| "AUTONOMOUS_SAFE_MUTATION".into());
+    if !snapshot_current {
+        outcome = current_identity_wait.unwrap_or("stale_input").into();
+        disposition = "blocked";
+        reason = "STALE_INPUT".into();
+    }
     let mut applied = false;
     if mutation {
         let survivor_id = decision
@@ -724,7 +903,7 @@ pub(super) fn persist(
     let subject_revision = snapshot["subject"]["contentRevision"]
         .as_str()
         .ok_or("subject revision missing")?;
-    let review_outcome = if decision.action == "needs_evidence" {
+    let review_outcome = if decision.action == "needs_evidence" || !snapshot_current {
         "needs_evidence"
     } else {
         "reviewed"
@@ -736,13 +915,18 @@ pub(super) fn persist(
         decision.action.as_str()
     };
     let policy = json!({"schemaVersion":2,"policyVersion":VERSION,"releaseMode":if applied {"auto_bounded"} else {"auto_non_destructive"},"requestedDecision":decision.action,"disposition":disposition,"effectiveAction":if applied {decision.action.as_str()} else {"record"},"reasonCodes":[if reason=="record_only" {"AUTONOMOUS_TERMINAL_DECISION"} else {&reason}],"evaluatedAt":now,"limits":{"dailyRemaining":0,"repoRemaining":0},"executor":VERSION});
-    tx.execute("update landscape_curation_queue set status=?2,phase=?3,decision=?4,disposition=?5,result=?6,policy_result=?7,postcheck_result=?8,attempt_count=attempt_count+1,next_run_at=null,locked_by=null,locked_at=null,heartbeat_at=null,last_error=null,last_outcome_kind=?9,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP where id=?1",params![job.id,if disposition=="blocked" || disposition=="await_evidence" {"skipped"} else {"completed"},if applied {"postcheck"} else {"policy"},queue_decision,disposition,saved.to_string(),policy.to_string(),json!({"applied":applied,"verified":applied,"verification":decision.verification}).to_string(),outcome]).map_err(|e|e.to_string())?;
+    let final_status = if disposition == "blocked" || disposition == "await_evidence" {
+        "skipped"
+    } else {
+        "completed"
+    };
+    tx.execute("update landscape_curation_queue set status=?2,phase=?3,decision=?4,disposition=?5,result=?6,policy_result=?7,postcheck_result=?8,attempt_count=attempt_count+1,next_run_at=null,locked_by=null,locked_at=null,heartbeat_at=null,last_error=null,last_outcome_kind=?9,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP where id=?1",params![job.id,final_status,if applied {"postcheck"} else {"policy"},queue_decision,disposition,saved.to_string(),policy.to_string(),json!({"applied":applied,"verified":applied,"verification":decision.verification}).to_string(),outcome]).map_err(|e|e.to_string())?;
     super::events::append_queue_event_for_connection(
         &tx,
         &format!("curation-result:{}:{}", job.id, now),
         QUEUE,
         &job.id,
-        "completed",
+        final_status,
         Some(&outcome),
         Some(&policy.to_string()),
     )
@@ -751,6 +935,70 @@ pub(super) fn persist(
         .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+fn retry_after_seconds(error: &str) -> Option<i64> {
+    for marker in ["retry_after_seconds=", "retry_after_seconds\":"] {
+        let Some(index) = error.find(marker) else {
+            continue;
+        };
+        let value = error[index + marker.len()..].trim_start();
+        let digits = value
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>();
+        if let Ok(seconds) = digits.parse::<i64>() {
+            return Some(seconds.clamp(1, 3600));
+        }
+    }
+    None
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CurationFailureKind {
+    ProviderUnavailable,
+    EmbeddingUnavailable,
+    ModelContract,
+}
+
+impl CurationFailureKind {
+    fn is_retryable(self) -> bool {
+        matches!(self, Self::ProviderUnavailable | Self::EmbeddingUnavailable)
+    }
+
+    fn code(self) -> &'static str {
+        match self {
+            Self::ProviderUnavailable => "PROVIDER_UNAVAILABLE",
+            Self::EmbeddingUnavailable => "EMBEDDING_UNAVAILABLE",
+            Self::ModelContract => "MODEL_CONTRACT_INVALID",
+        }
+    }
+}
+
+fn classify_curation_error(error: &str) -> CurationFailureKind {
+    if is_retryable_embedding_error(error) {
+        return CurationFailureKind::EmbeddingUnavailable;
+    }
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("request failed")
+        || lower.contains("error sending request")
+        || lower.contains("connection refused")
+        || lower.contains("timed out")
+        || lower.contains("connection reset")
+        || lower.contains("transport closed")
+        || lower.contains("agent_command_conflict")
+        || lower.contains("agent session stopped at turn.failed")
+        || lower.contains("\"retryable\":true")
+        || [
+            "http 408", "http 425", "http 429", "http 500", "http 502", "http 503", "http 504",
+        ]
+        .iter()
+        .any(|status| lower.contains(status))
+    {
+        CurationFailureKind::ProviderUnavailable
+    } else {
+        CurationFailureKind::ModelContract
+    }
 }
 
 fn preserve_lineage(

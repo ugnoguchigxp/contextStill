@@ -306,6 +306,9 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
             api_path: "/v1/chat/completions".to_string(),
             model: claimed_target.model.clone(),
         };
+        if target.model.trim() == "coding-default" {
+            continue;
+        }
         let api_key = Some(Zeroizing::new(
             claimed_target.bearer_token.as_str().to_string(),
         ));

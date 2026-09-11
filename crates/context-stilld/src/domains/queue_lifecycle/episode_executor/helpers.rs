@@ -94,7 +94,11 @@ pub(super) fn is_provider_unavailable(error: &str) -> bool {
 
 pub(super) fn is_provider_terminal_failure(error: &str) -> bool {
     let lower = error.to_lowercase();
-    lower.contains("http 503")
+    lower.contains("http 502")
+        || lower.contains("http 503")
+        || lower.contains("http 504")
+        || lower.contains("http 429")
+        || lower.contains("http 408")
         || lower.contains("loading model")
         || lower.contains("unavailable_error")
 }

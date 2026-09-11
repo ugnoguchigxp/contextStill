@@ -2,6 +2,7 @@ mod claim;
 mod common;
 mod covering_executor;
 mod curation_executor;
+mod curation_identity;
 mod curation_repository;
 mod dynamic_provider;
 mod episode_executor;
@@ -18,6 +19,7 @@ mod provider_lease_tests;
 pub mod routing;
 pub mod service;
 mod state;
+mod structured_output;
 #[cfg(test)]
 mod test_support;
 mod types;

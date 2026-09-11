@@ -5,10 +5,10 @@ fn setup() -> (Connection, ClaimedProviderLeaseJob, Value) {
     crate::domains::vector_index::service::register_sqlite_vec();
     let mut connection = Connection::open_in_memory().unwrap();
     crate::domains::sqlite_writer::schema::migrate(&mut connection, 2).unwrap();
-    connection.execute_batch("insert into knowledge_items(id,type,status,scope,title,body) values
-        ('subject','rule','active','global','Subject','Use a transaction for related writes.'),
-        ('canonical','rule','active','global','Canonical','Commit related updates atomically.'),
-        ('inactive','rule','deprecated','global','Inactive','Old guidance');
+    connection.execute_batch("insert into knowledge_items(id,type,status,scope,classification_status,title,body) values
+        ('subject','rule','active','global','classified','Subject','Use a transaction for related writes.'),
+        ('canonical','rule','active','global','classified','Canonical','Commit related updates atomically.'),
+        ('inactive','rule','deprecated','global','classified','Inactive','Old guidance');
         insert into knowledge_items_vec_fallback(knowledge_id,embedding_json,embedding_dimension,content_hash) values ('subject','[1,0]',2,'a'),('canonical','[0.99,0.01]',2,'b');").unwrap();
     assert_eq!(repository::enqueue_all(&connection).unwrap(), 2);
     let id: String = connection.query_row(
@@ -136,7 +136,7 @@ fn queues_every_active_knowledge_once_including_without_candidates() {
         )
         .unwrap();
     assert_eq!(repository::enqueue_all(&connection).unwrap(), 2);
-    connection.execute("insert into knowledge_items(id,type,status,scope,title,body) values ('new','rule','active','global','New','No embedding')",[]).unwrap();
+    connection.execute("insert into knowledge_items(id,type,status,scope,classification_status,title,body) values ('new','rule','active','global','classified','New','No embedding')",[]).unwrap();
     assert_eq!(repository::enqueue_all(&connection).unwrap(), 1);
     assert_eq!(
         repository::capture(
@@ -357,7 +357,7 @@ fn provider_failure_and_missing_embedding_never_partially_mutate() {
         &mut connection,
         &job,
         &snapshot,
-        Err("embedding unavailable".into())
+        Err("embedding daemon request failed: connection refused".into())
     )
     .unwrap());
     let state: (String, i64) = connection
@@ -367,12 +367,389 @@ fn provider_failure_and_missing_embedding_never_partially_mutate() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!(state, ("paused".into(), 1));
+    assert_eq!(state, ("pending".into(), 0));
+    let retry_event: i64 = connection.query_row(
+        "select count(*) from distillation_queue_events where queue_name='landscapeCuration' and queue_job_id=?1 and event_type='retried'",
+        [&job.id],|row|row.get(0),
+    ).unwrap();
+    assert_eq!(retry_event, 1);
     assert_eq!(
         repository::load_knowledge(&connection, "canonical")
             .unwrap()
             .unwrap()["body"],
         snapshot["candidates"][0]["body"]
+    );
+}
+
+#[test]
+fn identityless_repo_jobs_finish_in_preflight_without_attempt_or_provider() {
+    let (connection, job, _) = setup();
+    connection.execute(
+        "update knowledge_items set scope='repo',repo_key=null,repo_path=null,project_ref=null where id='subject'",
+        [],
+    ).unwrap();
+    connection
+        .execute(
+            "update landscape_curation_queue set status='pending',locked_by=null where id=?1",
+            [&job.id],
+        )
+        .unwrap();
+    connection
+        .execute("delete from llm_provider_leases", [])
+        .unwrap();
+
+    assert_eq!(
+        repository::preflight_identityless_pending(&connection, 10).unwrap(),
+        1
+    );
+    let state: (String,i64,String) = connection.query_row(
+        "select status,attempt_count,last_outcome_kind from landscape_curation_queue where id=?1",
+        [&job.id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+    ).unwrap();
+    assert_eq!(state, ("skipped".into(), 0, "identity_unavailable".into()));
+    let events: i64 = connection.query_row(
+        "select count(*) from distillation_queue_events where queue_job_id=?1 and event_type='skipped'",
+        [&job.id],|row|row.get(0),
+    ).unwrap();
+    assert_eq!(events, 1);
+    let outcome: String = connection
+        .query_row(
+            "select outcome from curation_review_ledger where curation_job_id=?1",
+            [&job.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(outcome, "needs_evidence");
+}
+
+#[test]
+fn curation_classification_only_change_resumes_once_without_changing_revision() {
+    let (connection, _, _) = setup();
+    connection.execute("insert into knowledge_items(id,type,status,scope,title,body,repo_path) values ('waiting','rule','active','repo','Wait','Evidence','/work/a')",[]).unwrap();
+    repository::enqueue_all(&connection).unwrap();
+    let revision = repository::load_knowledge(&connection, "waiting")
+        .unwrap()
+        .unwrap()["contentRevision"]
+        .clone();
+    let state:(String,i64) = connection.query_row("select status,attempt_count from landscape_curation_queue where subject_knowledge_id='waiting'",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    assert_eq!(state, ("skipped".into(), 0));
+    connection
+        .execute(
+            "update knowledge_items set classification_status='classified' where id='waiting'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        repository::load_knowledge(&connection, "waiting")
+            .unwrap()
+            .unwrap()["contentRevision"],
+        revision
+    );
+    assert_eq!(repository::enqueue_all(&connection).unwrap(), 1);
+    assert_eq!(repository::enqueue_all(&connection).unwrap(), 0);
+    let state:(String,i64) = connection.query_row("select status,attempt_count from landscape_curation_queue where subject_knowledge_id='waiting'",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    assert_eq!(state, ("pending".into(), 0));
+    connection
+        .execute(
+            "update knowledge_items set classification_status='unresolved' where id='waiting'",
+            [],
+        )
+        .unwrap();
+    repository::preflight_identityless_pending(&connection, 10).unwrap();
+    connection
+        .execute(
+            "update knowledge_items set classification_status='classified' where id='waiting'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(repository::enqueue_all(&connection).unwrap(), 1);
+    assert_eq!(repository::enqueue_all(&connection).unwrap(), 0);
+}
+
+#[test]
+fn curation_does_not_record_stale_classification_as_reviewed_after_llm_returns() {
+    let (mut connection, job, snapshot) = setup();
+    let result = Decision {
+        schema_version: 2,
+        action: "keep_separate".into(),
+        survivor_knowledge_id: None,
+        deprecated_knowledge_ids: vec![],
+        retained_group_ids: vec![],
+        coverage: vec![],
+        reason_codes: vec!["DISTINCT".into()],
+        rationale: "Keep separate.".into(),
+        verification: None,
+    };
+    connection
+        .execute(
+            "update knowledge_items set classification_status='unresolved' where id='subject'",
+            [],
+        )
+        .unwrap();
+    persist(&mut connection, &job, &snapshot, Ok((result, None))).unwrap();
+    let state:(String,String)=connection.query_row("select q.last_outcome_kind,l.outcome from landscape_curation_queue q join curation_review_ledger l on l.curation_job_id=q.id where q.id=?1",[&job.id],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    assert_eq!(
+        state,
+        ("identity_unavailable".into(), "needs_evidence".into())
+    );
+}
+
+fn identity_source(connection: &Connection, id: &str, knowledge: &str, path: &str) {
+    connection.execute("insert into sources(id,source_kind,uri,body,scope,classification_status,repo_path) values (?1,'file',?1,'Evidence','repo','classified',?2)",params![id,path]).unwrap();
+    connection.execute("insert into source_fragments(id,source_id,locator,content) values (?1,?1,'whole','Evidence')",[id]).unwrap();
+    connection.execute("insert into knowledge_source_links(id,knowledge_id,source_fragment_id) values (?1,?2,?1)",params![id,knowledge]).unwrap();
+}
+
+fn expire_identity_scan(connection: &Connection) {
+    connection.execute("update settings set updated_at='2000-01-01',value='{}' where namespace='curation' and key='identity_reconciliation'",[]).unwrap();
+}
+
+#[test]
+fn curation_recovers_source_and_vibe_origins_then_blocks_conflicting_evidence() {
+    let (connection, _, _) = setup();
+    connection.execute_batch("insert into knowledge_items(id,type,status,scope,title,body) values
+      ('source-owner','rule','active','repo','Source','Source derived'),
+      ('vibe-owner','rule','active','repo','Vibe','Vibe derived');
+      insert into vibe_memories(id,session_id,content,metadata) values ('memory','session','Evidence','{\"projectRoot\":\"/work/a\"}');
+      insert into knowledge_origin_links(id,knowledge_id,origin_kind,origin_uri,origin_key) values ('origin','vibe-owner','vibe_memory','vibe://memory','memory');").unwrap();
+    identity_source(&connection, "source-a", "source-owner", "/work/a");
+    repository::enqueue_all(&connection).unwrap();
+    assert_eq!(
+        super::super::curation_identity::reconcile(&connection, 500).unwrap(),
+        2
+    );
+    for id in ["source-owner", "vibe-owner"] {
+        let item = repository::load_knowledge(&connection, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(item["classificationStatus"], "classified");
+        assert_eq!(item["repoPath"], "/work/a");
+        let pending:i64 = connection.query_row("select count(*) from landscape_curation_queue where subject_knowledge_id=?1 and status='pending'",[id],|r|r.get(0)).unwrap();
+        assert_eq!(pending, 1);
+    }
+    expire_identity_scan(&connection);
+    assert_eq!(
+        super::super::curation_identity::reconcile(&connection, 500).unwrap(),
+        0
+    );
+    identity_source(&connection, "source-b", "source-owner", "/work/b");
+    expire_identity_scan(&connection);
+    assert_eq!(
+        super::super::curation_identity::reconcile(&connection, 500).unwrap(),
+        1
+    );
+    let item = repository::load_knowledge(&connection, "source-owner")
+        .unwrap()
+        .unwrap();
+    assert_eq!(item["classificationStatus"], "conflict");
+    assert_eq!(item["repoPath"], "/work/a");
+    let pending:i64=connection.query_row("select count(*) from landscape_curation_queue where subject_knowledge_id='source-owner' and status='pending'",[],|r|r.get(0)).unwrap();
+    assert_eq!(pending, 0);
+}
+
+#[test]
+fn curation_recovery_rolls_back_identity_and_enqueue_when_audit_fails() {
+    let (connection, _, _) = setup();
+    connection.execute("insert into knowledge_items(id,type,status,scope,title,body) values ('recover','rule','active','repo','Recover','Evidence')",[]).unwrap();
+    identity_source(&connection, "source", "recover", "/work/a");
+    connection.execute_batch("create trigger fail_identity_audit before insert on audit_logs when NEW.event_type='CURATION_IDENTITY_RECOVERY' begin select raise(ABORT,'test audit failure'); end;").unwrap();
+    assert!(super::super::curation_identity::reconcile(&connection, 500).is_err());
+    let item = repository::load_knowledge(&connection, "recover")
+        .unwrap()
+        .unwrap();
+    assert_eq!(item["classificationStatus"], "unresolved");
+    assert!(item["repoPath"].is_null());
+    connection
+        .execute_batch("drop trigger fail_identity_audit;")
+        .unwrap();
+    assert_eq!(
+        super::super::curation_identity::reconcile(&connection, 500).unwrap(),
+        1
+    );
+}
+
+#[test]
+fn curation_recovery_normalizes_verified_aliases_and_never_replaces_conflicting_identity() {
+    let (connection, _, _) = setup();
+    connection.execute_batch("insert into knowledge_items(id,type,status,scope,title,body,repo_key) values
+        ('aliased','rule','active','repo','Alias','Evidence','ORG/A');
+        insert into project_identity_aliases(id,project_ref,alias_kind,normalized_value,source) values
+        ('alias-key','project-a','repo_key','org/a','test'),('alias-path','project-a','repo_path','/work/a','test');").unwrap();
+    identity_source(&connection, "source", "aliased", "/work/a");
+    super::super::curation_identity::reconcile(&connection, 500).unwrap();
+    let item = repository::load_knowledge(&connection, "aliased")
+        .unwrap()
+        .unwrap();
+    assert_eq!(item["classificationStatus"], "classified");
+    assert_eq!(item["repoKey"], "org/a");
+    assert_eq!(item["projectRef"], "project-a");
+    connection
+        .execute(
+            "update project_identity_aliases set project_ref='project-b' where id='alias-path'",
+            [],
+        )
+        .unwrap();
+    expire_identity_scan(&connection);
+    super::super::curation_identity::reconcile(&connection, 500).unwrap();
+    let item = repository::load_knowledge(&connection, "aliased")
+        .unwrap()
+        .unwrap();
+    assert_eq!(item["classificationStatus"], "conflict");
+    assert_eq!(item["projectRef"], "project-a");
+}
+
+#[test]
+fn curation_identity_cursor_does_not_starve_recoverable_rows() {
+    let (connection, _, _) = setup();
+    connection
+        .execute_batch(
+            "insert into knowledge_items(id,type,status,scope,title,body) values
+      ('aaa-unknown','rule','active','repo','Unknown','/work/a in free text'),
+      ('zzz-recover','rule','active','repo','Recover','Evidence');",
+        )
+        .unwrap();
+    identity_source(&connection, "source", "zzz-recover", "/work/a");
+    assert_eq!(
+        super::super::curation_identity::reconcile(&connection, 1).unwrap(),
+        0
+    );
+    connection
+        .execute(
+            "update settings set updated_at='2000-01-01' where namespace='curation'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        super::super::curation_identity::reconcile(&connection, 1).unwrap(),
+        1
+    );
+    let item = repository::load_knowledge(&connection, "aaa-unknown")
+        .unwrap()
+        .unwrap();
+    assert_eq!(item["classificationStatus"], "unresolved");
+}
+
+#[test]
+#[ignore = "explicit recovery evaluation on a temporary SQLite backup; no provider calls"]
+fn curation_identity_evaluate_temporary_snapshot() {
+    let path =
+        std::path::PathBuf::from(std::env::var("CONTEXT_STILL_CURATION_RECOVERY_TEST_DB").unwrap())
+            .canonicalize()
+            .unwrap();
+    let temp = std::env::temp_dir().canonicalize().unwrap();
+    assert!(path.starts_with(temp) && path.file_name().unwrap() == "snapshot.sqlite");
+    crate::domains::vector_index::service::register_sqlite_vec();
+    let connection = Connection::open(&path).unwrap();
+    fn counts(connection: &Connection) -> Value {
+        let mut statement = connection.prepare("select classification_status,count(*) from knowledge_items where status='active' and scope='repo' group by classification_status order by classification_status").unwrap();
+        let rows = statement
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let pending: i64 = connection
+            .query_row(
+                "select count(*) from landscape_curation_queue where status='pending'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let reviewed:i64=connection.query_row("select count(*) from curation_review_ledger where outcome='reviewed' and curation_job_id in (select id from landscape_curation_queue where last_outcome_kind in ('identity_unavailable','identity_conflict'))",[],|r|r.get(0)).unwrap();
+        json!({"classifications":rows,"pending":pending,"identityIncorrectlyReviewed":reviewed})
+    }
+    let before = counts(&connection);
+    expire_identity_scan(&connection);
+    let mut changed = 0;
+    let mut done = false;
+    for _ in 0..100 {
+        changed += super::super::curation_identity::reconcile(&connection, 500).unwrap();
+        let cursor:String=connection.query_row("select json_extract(value,'$.cursor') from settings where namespace='curation' and key='identity_reconciliation'",[],|r|r.get(0)).unwrap();
+        if cursor.is_empty() {
+            done = true;
+            break;
+        }
+        connection.execute("update settings set updated_at='2000-01-01' where namespace='curation' and key='identity_reconciliation'",[]).unwrap();
+    }
+    assert!(done);
+    println!(
+        "{}",
+        json!({"before":before,"after":counts(&connection),"changedKnowledge":changed})
+    );
+}
+
+#[test]
+fn no_candidate_finishes_without_llm_or_semantic_attempt() {
+    let (mut connection, job, _) = setup();
+    connection
+        .execute(
+            "update knowledge_items set status='deprecated' where id='canonical'",
+            [],
+        )
+        .unwrap();
+    let snapshot = repository::capture(&connection, &job.id).unwrap();
+    assert_eq!(snapshot["candidates"], json!([]));
+
+    assert!(persist_preflight_skip(&mut connection, &job, &snapshot, "no_candidate").unwrap());
+    let state: (String,i64,String)=connection.query_row(
+        "select status,attempt_count,last_outcome_kind from landscape_curation_queue where id=?1",
+        [&job.id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+    ).unwrap();
+    assert_eq!(state, ("skipped".into(), 0, "no_candidate".into()));
+    let lease: (String, String) = connection
+        .query_row(
+            "select status,release_reason from llm_provider_leases where id='lease'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(lease, ("released".into(), "worker_finished".into()));
+}
+
+#[test]
+fn stale_revision_finishes_in_preflight_without_semantic_attempt() {
+    let (mut connection, job, _) = setup();
+    connection
+        .execute(
+            "update knowledge_items set body='new revision',updated_at=CURRENT_TIMESTAMP where id='subject'",
+            [],
+        )
+        .unwrap();
+    let snapshot = repository::capture(&connection, &job.id).unwrap();
+    assert_ne!(
+        snapshot["subject"]["contentRevision"],
+        snapshot["queuedContentRevision"]
+    );
+
+    assert!(persist_preflight_skip(&mut connection, &job, &snapshot, "stale_subject").unwrap());
+    let state: (String, i64, String) = connection
+        .query_row(
+            "select status,attempt_count,last_outcome_kind from landscape_curation_queue where id=?1",
+            [&job.id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(state, ("skipped".into(), 0, "stale_subject".into()));
+}
+
+#[test]
+fn curation_retry_classifier_separates_infrastructure_from_model_contracts() {
+    for error in [
+        "curation provider request failed: connection refused",
+        "curation provider HTTP 503",
+        r#"agent session HTTP 409: {"retryable":true,"retry_after_seconds":42}"#,
+        "local-llm agent session stopped at turn.failed",
+        "embedding daemon request failed: timed out",
+    ] {
+        assert!(classify_curation_error(error).is_retryable(), "{error}");
+    }
+    assert!(!classify_curation_error("invalid curation JSON").is_retryable());
+    assert!(
+        !classify_curation_error("curation explanation exceeds result schema bounds")
+            .is_retryable()
+    );
+    assert_eq!(
+        retry_after_seconds(r#"{"retry_after_seconds":42}"#),
+        Some(42)
     );
 }
 
@@ -443,6 +820,15 @@ fn runs_claimed_curation_through_http_provider_and_durable_completion() {
             let mut body = vec![0; length];
             reader.read_exact(&mut body).unwrap();
             let request: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(request["response_format"]["type"], "json_schema");
+            assert_eq!(
+                request["response_format"]["json_schema"]["name"],
+                if request_number == 0 {
+                    "curation"
+                } else {
+                    "curation_verify"
+                }
+            );
             let input: Value =
                 serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
             let content = if request_number == 0 {
@@ -456,7 +842,9 @@ fn runs_claimed_curation_through_http_provider_and_durable_completion() {
                     {"sourceGroupId":"canonical:g0","targetGroupIds":["canonical:g0"],"checks":{"obligations":"preserved","conditions":"preserved","negation":"preserved","exceptions":"preserved","numbersAndUnits":"preserved","identifiers":"preserved","ordering":"preserved","provenance":"preserved"}}
                 ],"noNewMeaning":"preserved","noUnresolvedContradiction":"preserved","rationale":"All constraints are preserved."}).to_string()
             };
-            let response = json!({"choices":[{"message":{"content":content}}]}).to_string();
+            let response =
+                json!({"choices":[{"finish_reason":"stop","message":{"content":content}}]})
+                    .to_string();
             write!(reader.get_mut(),"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).unwrap();
         }
     });

@@ -9,6 +9,7 @@ use crate::shared::{config::EnvProvider, errors::CliError, process};
 
 use super::claim::stale_recovery_sql;
 use super::common::queue_table_name;
+use super::finalize_executor::is_retryable_embedding_error;
 use super::types::{QUEUE_SUPERVISOR, QUEUE_TABLES};
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -52,7 +53,9 @@ pub fn run_maintenance_once_report<E: EnvProvider>(
                 recover_stale_provider_leases(connection, stale_seconds)
                     .map_err(|error| error.to_string())?;
             let recovered_queue_jobs = recover_stale_queue_jobs(connection, stale_seconds)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| error.to_string())?
+                + recover_retryable_finalize_embedding_failures(connection)
+                    .map_err(|error| error.to_string())?;
             Ok((recovered_provider_leases, recovered_queue_jobs))
         },
     )
@@ -162,6 +165,65 @@ fn recover_stale_queue_jobs(connection: &Connection, stale_seconds: u64) -> Resu
             })?;
         recovered += changed as u64;
     }
+    Ok(recovered)
+}
+
+fn recover_retryable_finalize_embedding_failures(connection: &Connection) -> Result<u64, CliError> {
+    if !table_exists(connection, "finalize_distille_queue")? {
+        return Ok(0);
+    }
+    let mut statement = connection
+        .prepare(
+            "select id, last_error from finalize_distille_queue where status = 'failed' and last_outcome_kind = 'worker_failed' and knowledge_id is null and last_error is not null",
+        )
+        .map_err(|error| {
+            CliError::io(format!(
+                "failed to prepare retryable finalize embedding recovery: {error}"
+            ))
+        })?;
+    let candidates = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| {
+            CliError::io(format!(
+                "failed to query retryable finalize embedding failures: {error}"
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            CliError::io(format!(
+                "failed to read retryable finalize embedding failures: {error}"
+            ))
+        })?;
+    drop(statement);
+
+    let transaction = connection.unchecked_transaction().map_err(|error| {
+        CliError::io(format!(
+            "failed to start retryable finalize embedding recovery: {error}"
+        ))
+    })?;
+    let mut recovered = 0_u64;
+    for (job_id, last_error) in candidates {
+        if !is_retryable_embedding_error(&last_error) {
+            continue;
+        }
+        recovered += transaction
+            .execute(
+                "update finalize_distille_queue set status = 'pending', next_run_at = CURRENT_TIMESTAMP, completed_at = null, locked_by = null, locked_at = null, heartbeat_at = null, last_outcome_kind = 'embedding_unavailable_retry', updated_at = CURRENT_TIMESTAMP where id = ?1 and status = 'failed' and last_outcome_kind = 'worker_failed' and knowledge_id is null",
+                [&job_id],
+            )
+            .map_err(|error| {
+                CliError::io(format!(
+                    "failed to recover retryable finalize embedding job {job_id}: {error}"
+                ))
+            })? as u64;
+    }
+    transaction.commit().map_err(|error| {
+        CliError::io(format!(
+            "failed to commit retryable finalize embedding recovery: {error}"
+        ))
+    })?;
     Ok(recovered)
 }
 
@@ -327,5 +389,74 @@ mod tests {
         assert!(!std::path::Path::new(&sqlite_path).exists());
 
         std::fs::remove_dir_all(app_dir).unwrap();
+    }
+
+    #[test]
+    fn rust_queue_maintenance_requeues_only_retryable_finalize_embedding_failures() {
+        let connection = Connection::open_in_memory().unwrap();
+        create_claim_queue_table(&connection, "finalize_distille_queue");
+        connection
+            .execute_batch(
+                r#"
+                alter table finalize_distille_queue add column knowledge_id text;
+                insert into finalize_distille_queue (
+                  id, status, attempt_count, last_error, last_outcome_kind,
+                  created_at, updated_at
+                ) values (
+                  'retryable', 'failed', 5,
+                  'embedding daemon request failed: connection refused', 'worker_failed',
+                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                );
+                insert into finalize_distille_queue (
+                  id, status, attempt_count, last_error, last_outcome_kind,
+                  created_at, updated_at
+                ) values (
+                  'invalid-config', 'failed', 1,
+                  'embedding provider is disabled', 'worker_failed',
+                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                );
+                "#,
+            )
+            .unwrap();
+
+        assert_eq!(
+            recover_retryable_finalize_embedding_failures(&connection).unwrap(),
+            1
+        );
+        assert_eq!(
+            recover_retryable_finalize_embedding_failures(&connection).unwrap(),
+            0
+        );
+        let retryable = connection
+            .query_row(
+                "select status, attempt_count, last_outcome_kind, next_run_at is not null from finalize_distille_queue where id='retryable'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            retryable,
+            (
+                "pending".to_string(),
+                5,
+                "embedding_unavailable_retry".to_string(),
+                1
+            )
+        );
+        let invalid_status: String = connection
+            .query_row(
+                "select status from finalize_distille_queue where id='invalid-config'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(invalid_status, "failed");
     }
 }

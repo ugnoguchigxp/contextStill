@@ -1,0 +1,250 @@
+<article lang="ja">
+  <h1>landscapeCuration Queue 障害調査（2026-09-09）</h1>
+
+  <p>
+    調査時点は2026-09-09 16:26 JST。対象はローカル常駐daemonが使用する
+    <code>data/context-still-core.sqlite</code>と現行Rust executorである。本調査ではQueueの再投入、
+    設定変更、コード変更は行っていない。
+  </p>
+
+  <section id="conclusion">
+    <h2>結論</h2>
+    <p>
+      <code>landscapeCuration</code>はpauseも停止もしていないが、共有LLM provider
+      poolの固定Queue順序により
+      <code>episodeDistiller</code
+      >に飢餓させられている。実行可能なcurationが7,957件あるのにrunningは0件、
+      最後のclaimは2026-09-08 10:05:58 JSTで、以後約30時間claimされていない。
+    </p>
+    <p>
+      さらに7,957件中7,082件は、成立要件を緩和した「repository identityなしのrepo-scope
+      knowledge」である。
+      curationはこのknowledgeを受理してenqueueする一方、同一repository判定では比較候補を必ず0件にする。
+      そのままLLMへ渡すため、Queueの89.0%が比較対象のない高コスト処理になる設計不整合がある。
+    </p>
+    <p>
+      過去のv1処理では7,959件中5,906件（74.2%）が3回の試行を使い切ってfailedになった。
+      主因はprovider transport失敗と、retryableと明記されたagent
+      session競合であるが、curationは全エラーを
+      一律5分間隔・最大3回で扱い、恒久failedにしている。したがって、単純な再配備だけでは同じ失敗を再生産する。
+    </p>
+  </section>
+
+  <section id="current-queue-state">
+    <h2>現在のQueue状態</h2>
+    <table>
+      <caption>
+        調査時点のlandscapeCuration status別件数
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">status</th>
+          <th scope="col">件数</th>
+          <th scope="col">補足</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>pending</td>
+          <td>7,957</td>
+          <td>全件runnable、全件v2、attempt 0/3</td>
+        </tr>
+        <tr>
+          <td>running</td>
+          <td>0</td>
+          <td>active provider leaseも0</td>
+        </tr>
+        <tr>
+          <td>completed</td>
+          <td>828</td>
+          <td>v1。うちauto executeは2件のみ</td>
+        </tr>
+        <tr>
+          <td>skipped</td>
+          <td>1,225</td>
+          <td>v1。主にneeds_evidence</td>
+        </tr>
+        <tr>
+          <td>failed</td>
+          <td>5,906</td>
+          <td>v1。全件attempt 3/3</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      v2の7,957件は2026-09-09 14:30:13〜14:30:20 JSTに、active
+      knowledge全件を対象として一括生成された。 active
+      knowledgeも7,957件であり、各subjectにはv1の終端行とv2のpending行がほぼ1件ずつ存在する。
+      同一revisionの重複enqueueではないが、revision方式変更に伴う全件再評価backlogである。
+    </p>
+  </section>
+
+  <section id="queue-starvation">
+    <h2>主因1: Queue間の固定順序による飢餓</h2>
+    <p>
+      provider claimは<code>findingCandidate → coveringEvidence → episodeDistiller → deadZoneMergeReview →
+      landscapeCuration → mergeActivationFinalize → finalizeDistille</code>の順で候補を並べる。
+      比較関数は最初に<code>queue_order</code>を比較し、その後でのみ待機時間による
+      <code>effective_priority</code
+      >を比較する。このためagingは同一Queue内でしか効かず、古いcurationが
+      episodeDistillerを追い越すことはない。この挙動を正として固定するunit testも存在する。
+    </p>
+    <p>
+      調査時点でepisodeDistillerは1,370件、landscapeCurationは7,957件がrunnableだった。
+      直近3時間のprovider leaseはepisodeDistillerが2,323回、landscapeCurationは0回である。 provider
+      poolは2 targetを持つが<code>maxConcurrent=1</code>で、実効枠は1つだけである。
+      episodeDistillerが継続的に供給される限り、curationの開始時刻には上限がなく、永久にclaimされない可能性がある。
+    </p>
+  </section>
+
+  <section id="identity-contract-mismatch">
+    <h2>主因2: identity任意化と候補選定の不整合</h2>
+    <table>
+      <caption>
+        v2 pendingのscopeおよびrepository identity別内訳
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">v2 pendingの分類</th>
+          <th scope="col">件数</th>
+          <th scope="col">候補選定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>repo scope・identityなし</td>
+          <td>7,082</td>
+          <td>同一repository候補は必ず0件</td>
+        </tr>
+        <tr>
+          <td>repo scope・identityあり</td>
+          <td>846</td>
+          <td>identity一致候補を比較可能</td>
+        </tr>
+        <tr>
+          <td>global scope</td>
+          <td>29</td>
+          <td>global同士を比較可能</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <code>same_repository</code>はrepo
+      scopeの場合、repoKey、repoPath、projectRefの少なくとも1項目が双方で一致することを要求する。
+      3項目が全て空ならfalseになる。これは誤ったmergeを防ぐ安全側の判定として妥当だが、
+      <code>enqueue_all</code>はidentityの有無にかかわらず全active
+      knowledgeをenqueueするため、producerとconsumerの契約が一致していない。
+    </p>
+    <p>
+      v1でもidentityなしrepo knowledgeは7,082件あり、5,200件failed、1,210件needs_evidence、
+      654件keep_separate、18件observeだった。候補0件のsubjectにLLMを使ってもmerge/deprecateには到達できず、
+      provider枠と試行回数を消費するだけである。
+    </p>
+  </section>
+
+  <section id="retryable-failures">
+    <h2>主因3: retryable障害を恒久失敗へ変換</h2>
+    <table>
+      <caption>
+        v1でterminal failedになった理由の内訳
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">v1 failed理由</th>
+          <th scope="col">件数</th>
+          <th scope="col">問題</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>curation provider request failed</code></td>
+          <td>3,276</td>
+          <td>transport詳細とretryabilityを捨てている</td>
+        </tr>
+        <tr>
+          <td>agent session HTTP 409 conflict</td>
+          <td>2,611</td>
+          <td>応答は<code>retryable:true</code>だが通常attemptとして消費</td>
+        </tr>
+        <tr>
+          <td>result schema bounds超過</td>
+          <td>16</td>
+          <td>モデル出力不正。再promptまたは恒久分類が必要</td>
+        </tr>
+        <tr>
+          <td>embedding daemon接続失敗</td>
+          <td>3</td>
+          <td>復旧後もterminal failedのまま</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      現行persistはエラー種別を区別せず、失敗ごとにattemptを1増やし、5分後に再試行し、3回目でfailedにする。
+      provider/session/embeddingの一時障害と、schema validationの恒久障害が同じ状態遷移である。
+      なお現在はactive knowledge
+      7,957件すべてにembeddingが存在するため、現時点の停止原因はembedding欠落ではない。
+    </p>
+  </section>
+
+  <section id="observability-and-load">
+    <h2>観測性と負荷の問題</h2>
+    <ul>
+      <li>
+        失敗時に<code>distillation_queue_events</code>へfailed/retried
+        eventを書かず、行の<code>last_error</code>だけを更新する。
+      </li>
+      <li>
+        skippedであるneeds_evidenceやblockedもevent上は<code>completed</code>として記録される。event集計だけでは成功率を判定できない。
+      </li>
+      <li>
+        executor起動ごとに全active knowledgeを走査してcontent
+        revisionを計算する。backlogが大きくても毎回O(N)のenqueue確認を行う。
+      </li>
+      <li>
+        1
+        jobはplannerに加え、merge/deprecate時はverifierとembeddingも実行するため、単一provider枠で7,957件を消化する設計ではない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="recommended-fix-order">
+    <h2>修正優先順位</h2>
+    <ol>
+      <li>
+        Queue間の公平性を導入する。<code>queue_order</code>より先にagingを効かせる、連続claim上限を設ける、
+        またはcuration専用provider枠を設け、古いrunnable jobに有限のclaim待ち時間を保証する。
+      </li>
+      <li>
+        identityなしrepo
+        knowledgeの契約を明示する。安全性を維持するならenqueue前またはLLM呼び出し前に
+        「比較不能」としてローカル完了し、identityが後から付与されたrevisionでのみ再評価する。
+        identityなし同士を同一repo扱いする変更は誤mergeの危険があるため行わない。
+      </li>
+      <li>
+        provider/session/embedding障害をretryableとしてattempt
+        budget外のbackoffへ分離し、schema違反などの恒久障害だけを bounded
+        attemptにする。HTTP本文・status・retry-afterを構造化して保持する。
+      </li>
+      <li>
+        statusと同じ意味のclaimed/completed/skipped/retried/failed
+        eventを必ず記録し、Queue別の最終claim時刻、
+        runnable最古時刻、starvation時間、provider利用率を監視項目にする。
+      </li>
+      <li>
+        上記修正後、まずv2 pendingを処理する。v1 failed
+        5,906件はv2に同じsubjectがあるため一括再配備せず、
+        v2で未評価となるsubjectだけを差分再投入する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="verification">
+    <h2>検証</h2>
+    <p>
+      現行のcandidate選定test 2件と、固定Queue順序を確認するprovider claim test
+      1件を実行し、全て成功した。 したがって今回の停止はdaemon
+      crashや既存testの偶発的失敗ではなく、現行仕様どおりのscheduler挙動が
+      実データ量で飢餓を起こしているものと判断する。
+    </p>
+  </section>
+</article>

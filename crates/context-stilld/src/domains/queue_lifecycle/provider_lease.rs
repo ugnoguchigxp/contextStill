@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::BTreeSet};
 
-use rusqlite::{Connection, Transaction};
+use rusqlite::{Connection, OptionalExtension, Transaction};
 
 use crate::shared::errors::CliError;
 
@@ -91,6 +91,11 @@ pub fn claim_next_job_with_provider_lease_for_connection(
     let mut candidates = Vec::new();
 
     for (queue_order, queue_spec) in priority_queues.iter().enumerate() {
+        if queue_active_lease_count(&tx, &pool.pool_id, &queue_spec.queue_name)?
+            >= queue_concurrency_limit(&queue_spec.queue_name, capacity)
+        {
+            continue;
+        }
         let table_name = queue_table_name(&queue_spec.queue_name)?;
         let stale_sql = stale_recovery_sql(&queue_spec.queue_name, table_name);
         tx.execute(&stale_sql, [queue_stale_seconds as i64])
@@ -107,6 +112,7 @@ pub fn claim_next_job_with_provider_lease_for_connection(
         )?);
     }
 
+    let candidates = apply_bounded_queue_fairness(&tx, &pool.pool_id, candidates)?;
     let Some((picked, selected_target_id)) = pick_provider_candidate(candidates, &free_targets)
     else {
         tx.commit().map_err(|error| {
@@ -532,6 +538,87 @@ fn pick_provider_candidate(
         }
     }
     None
+}
+
+fn queue_active_lease_count(
+    tx: &Transaction<'_>,
+    pool_id: &str,
+    queue_name: &str,
+) -> Result<u64, CliError> {
+    tx.query_row(
+        "select count(*) from llm_provider_leases where pool_id=?1 and queue_name=?2 and status='active'",
+        (pool_id,queue_name),
+        |row| row.get::<_,i64>(0),
+    ).map(|count| count.max(0) as u64).map_err(|error| CliError::io(format!("failed to count active {queue_name} leases: {error}")))
+}
+
+fn queue_concurrency_limit(queue_name: &str, pool_capacity: u64) -> u64 {
+    if queue_name == "landscapeCuration" {
+        1
+    } else {
+        pool_capacity.max(1)
+    }
+}
+
+fn queue_burst_limit(queue_name: &str) -> usize {
+    match queue_name {
+        "findingCandidate" => 4,
+        "episodeDistiller" => 3,
+        "landscapeCuration" => 1,
+        _ => 1,
+    }
+}
+
+/// Implements persisted burst-limited fairness without a second scheduler ledger. The provider
+/// lease history is already transactional and survives daemon restarts, so the most recently
+/// served queue and its burst length are sufficient to enforce the configured 4:3:1 limits.
+fn apply_bounded_queue_fairness(
+    tx: &Transaction<'_>,
+    pool_id: &str,
+    candidates: Vec<RunnableProviderCandidate>,
+) -> Result<Vec<RunnableProviderCandidate>, CliError> {
+    if candidates.is_empty() {
+        return Ok(candidates);
+    }
+    let last_queue = tx.query_row(
+        "select queue_name from llm_provider_leases where pool_id=?1 order by rowid desc limit 1",
+        [pool_id],
+        |row| row.get::<_,String>(0),
+    ).optional().map_err(|error| CliError::io(format!("failed to read provider fairness history: {error}")))?;
+    let Some(last_queue) = last_queue else {
+        return Ok(candidates);
+    };
+    if !candidates
+        .iter()
+        .any(|candidate| candidate.queue_name != last_queue)
+    {
+        return Ok(candidates);
+    }
+    let mut statement = tx.prepare(
+        "select queue_name from llm_provider_leases where pool_id=?1 order by rowid desc limit 8",
+    ).map_err(|error| CliError::io(format!("failed to prepare provider fairness history: {error}")))?;
+    let history = statement
+        .query_map([pool_id], |row| row.get::<_, String>(0))
+        .map_err(|error| {
+            CliError::io(format!(
+                "failed to query provider fairness history: {error}"
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            CliError::io(format!("failed to read provider fairness history: {error}"))
+        })?;
+    let consecutive = history
+        .iter()
+        .take_while(|queue| **queue == last_queue)
+        .count();
+    if consecutive < queue_burst_limit(&last_queue) {
+        return Ok(candidates);
+    }
+    Ok(candidates
+        .into_iter()
+        .filter(|candidate| candidate.queue_name != last_queue)
+        .collect())
 }
 
 fn compare_provider_candidates(

@@ -70,6 +70,8 @@ struct PreparedFinalize {
     body: String,
     importance: f64,
     confidence: f64,
+    scope: String,
+    scope_decision: String,
     applies_to: Value,
     references: Value,
     duplicate_refs: Value,
@@ -425,9 +427,7 @@ pub(crate) fn run_finalize_distille_job_for_connection(
                     }),
                 );
                 let error = error.to_string();
-                if is_retryable_embedding_error(&error)
-                    && job.attempt_count + 1 < job.max_attempts.max(1)
-                {
+                if is_retryable_embedding_error(&error) {
                     mark_retrying(connection, &job, worker_id, &error)?;
                     append_event_best_effort(
                         connection,
@@ -642,9 +642,12 @@ fn prepare_job(
     let project_ref = resolved_identity.project_ref;
     let repo_key = resolved_identity.repo_key;
     let repo_path = resolved_identity.repo_path;
-    if project_ref.is_none() && repo_path.is_none() && repo_key.is_none() {
-        return Err("worker_failed:PROJECT_IDENTITY_REQUIRED".to_string());
-    }
+    let (scope, scope_decision) =
+        if project_ref.is_some() || repo_path.is_some() || repo_key.is_some() {
+            ("repo", "canonical_project_identity")
+        } else {
+            ("global", "identity_absent_reusable_knowledge")
+        };
 
     let identifiers = project_identifiers(
         repo_path.as_deref(),
@@ -704,6 +707,8 @@ fn prepare_job(
         body: normalize_body(&body),
         importance,
         confidence: job.confidence.unwrap_or(70.0).clamp(0.0, 100.0),
+        scope: scope.to_string(),
+        scope_decision: scope_decision.to_string(),
         applies_to,
         references,
         duplicate_refs,
@@ -763,7 +768,9 @@ fn persist_finalized(
         },
         "finalizedBy":"finalizeDistille",
         "finalizedAt":finalized_at,
-        "identityProducer":"finalize-distille"
+        "identityProducer":"finalize-distille",
+        "storageScope":prepared.scope,
+        "scopeDecision":prepared.scope_decision
     });
 
     transaction
@@ -773,7 +780,7 @@ fn persist_finalized(
                   id, type, status, scope, classification_status, project_ref, repo_key, repo_path,
                   polarity, intent_tags, title, body, applies_to, confidence, importance, metadata,
                   created_at, updated_at
-                ) values (?1, ?2, 'draft', 'repo', 'classified', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ) values (?1, ?2, 'draft', ?3, 'classified', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 on conflict(id) do update set
                   type = excluded.type,
                   status = excluded.status,
@@ -795,6 +802,7 @@ fn persist_finalized(
                 params![
                     knowledge_id,
                     prepared.candidate_type,
+                    prepared.scope,
                     prepared.project_ref,
                     prepared.repo_key,
                     prepared.repo_path,
@@ -870,8 +878,8 @@ fn find_existing_knowledge(
 ) -> Result<Option<String>, CliError> {
     connection
         .query_row(
-            "select id from knowledge_items where json_extract(metadata, '$.sourceUri') = ?1 and coalesce(project_ref, '') = coalesce(?2, '') and coalesce(repo_key, '') = coalesce(?3, '') and coalesce(repo_path, '') = coalesce(?4, '') limit 1",
-            params![source_uri, prepared.project_ref, prepared.repo_key, prepared.repo_path],
+            "select id from knowledge_items where json_extract(metadata, '$.sourceUri') = ?1 and scope = ?2 and coalesce(project_ref, '') = coalesce(?3, '') and coalesce(repo_key, '') = coalesce(?4, '') and coalesce(repo_path, '') = coalesce(?5, '') limit 1",
+            params![source_uri, prepared.scope, prepared.project_ref, prepared.repo_key, prepared.repo_path],
             |row| row.get(0),
         )
         .optional()
@@ -954,7 +962,8 @@ fn mark_retrying(
     error: &str,
 ) -> Result<(), CliError> {
     let next_attempt = job.attempt_count + 1;
-    let retry_seconds = 30_i64.saturating_mul(2_i64.saturating_pow(next_attempt.min(5) as u32));
+    let backoff_attempt = next_attempt.min(job.max_attempts.max(1)).min(5);
+    let retry_seconds = 30_i64.saturating_mul(2_i64.saturating_pow(backoff_attempt as u32));
     let changed = connection
         .execute(
             "update finalize_distille_queue set status = 'pending', attempt_count = ?1, next_run_at = datetime(CURRENT_TIMESTAMP, '+' || ?2 || ' seconds'), completed_at = null, locked_by = null, locked_at = null, heartbeat_at = null, last_error = ?3, last_outcome_kind = 'embedding_unavailable_retry', updated_at = CURRENT_TIMESTAMP where id = ?4 and status = 'running' and locked_by = ?5",
@@ -973,7 +982,7 @@ fn ensure_claim_transition(changed: usize, job_id: &str, action: &str) -> Result
     )))
 }
 
-fn is_retryable_embedding_error(error: &str) -> bool {
+pub(super) fn is_retryable_embedding_error(error: &str) -> bool {
     let error = error.to_ascii_lowercase();
     [
         "embedding daemon request failed",
@@ -981,6 +990,7 @@ fn is_retryable_embedding_error(error: &str) -> bool {
         "embedding daemon http 408",
         "embedding daemon http 425",
         "embedding daemon http 429",
+        "undefined is not an object (evaluating 'text.replace')",
         "openai embedding request failed",
         "openai embedding http 5",
         "openai embedding http 408",
@@ -1781,6 +1791,63 @@ mod tests {
     }
 
     #[test]
+    fn rust_finalize_persists_identity_free_knowledge_as_global() {
+        let connection = setup();
+        connection
+            .execute(
+                "update evidence_coverage_results set applies_to = '{\"technologies\":[\"Rust\"],\"changeTypes\":[\"bugfix\"],\"domains\":[\"queue\"]}' where id = 'evidence-1'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "update vibe_memories set metadata = '{}' where id = 'memory-1'",
+                [],
+            )
+            .unwrap();
+        let (url, server) = serve_embedding();
+
+        let status = run_finalize_distille_job_for_connection(
+            &connection,
+            "finalize-1",
+            "rust-worker",
+            &embedding_config(url),
+            20.0,
+        )
+        .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(status, FinalizeExecutionStatus::Completed);
+        let knowledge = connection
+            .query_row(
+                "select scope, classification_status, project_ref is null, repo_key is null, repo_path is null, json_extract(metadata, '$.scopeDecision') from knowledge_items",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            knowledge,
+            (
+                "global".to_string(),
+                "classified".to_string(),
+                1,
+                1,
+                1,
+                "identity_absent_reusable_knowledge".to_string(),
+            )
+        );
+    }
+
+    #[test]
     fn finalize_identity_backfill_recovers_trusted_legacy_project_root_idempotently() {
         let connection = setup();
         connection
@@ -1846,7 +1913,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_finalize_marks_embedding_failure_without_partial_knowledge() {
+    fn rust_finalize_keeps_embedding_outage_resumable_after_configured_max_attempts() {
         let connection = setup();
         connection
             .execute(
@@ -1862,16 +1929,45 @@ mod tests {
             20.0,
         )
         .unwrap();
-        assert_eq!(status, FinalizeExecutionStatus::Failed);
-        let queue = connection.query_row("select status, attempt_count, last_outcome_kind from finalize_distille_queue where id = 'finalize-1'", [], |row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?,row.get::<_,String>(2)?))).unwrap();
+        assert_eq!(status, FinalizeExecutionStatus::Retrying);
+        let queue = connection.query_row("select status, attempt_count, last_outcome_kind, next_run_at is not null from finalize_distille_queue where id = 'finalize-1'", [], |row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?,row.get::<_,String>(2)?,row.get::<_,i64>(3)?))).unwrap();
         let knowledge: i64 = connection
             .query_row("select count(*) from knowledge_items", [], |row| row.get(0))
             .unwrap();
         assert_eq!(
             queue,
-            ("failed".to_string(), 1, "worker_failed".to_string())
+            (
+                "pending".to_string(),
+                1,
+                "embedding_unavailable_retry".to_string(),
+                1
+            )
         );
         assert_eq!(knowledge, 0);
+
+        connection
+            .execute(
+                "update finalize_distille_queue set status='running', locked_by='rust-worker', next_run_at=null where id='finalize-1'",
+                [],
+            )
+            .unwrap();
+        let (url, server) = serve_embedding();
+        let recovered = run_finalize_distille_job_for_connection(
+            &connection,
+            "finalize-1",
+            "rust-worker",
+            &embedding_config(url),
+            20.0,
+        )
+        .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(recovered, FinalizeExecutionStatus::Completed);
+        let recovered_queue = connection.query_row("select status, attempt_count, last_outcome_kind, knowledge_id is not null from finalize_distille_queue where id = 'finalize-1'", [], |row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?,row.get::<_,String>(2)?,row.get::<_,i64>(3)?))).unwrap();
+        assert_eq!(
+            recovered_queue,
+            ("completed".to_string(), 2, "stored".to_string(), 1)
+        );
     }
 
     #[test]
@@ -2046,6 +2142,7 @@ mod tests {
     fn finalize_retries_transient_daemon_and_openai_failures() {
         for error in [
             "embedding daemon HTTP 429 Too Many Requests",
+            "undefined is not an object (evaluating 'text.replace')",
             "OpenAI embedding request failed: connection reset",
             "OpenAI embedding HTTP 503 Service Unavailable",
             "failed to parse OpenAI embedding response: unexpected EOF",

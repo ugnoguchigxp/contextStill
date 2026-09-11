@@ -205,6 +205,12 @@ pub fn run_executor_tick_report<E: EnvProvider>(
         queue_stale_seconds: env_u64_default(env, "CONTEXT_STILL_QUEUE_STALE_SECONDS", 120)
             .clamp(30, 120),
         llm_timeout_seconds: env_u64_default(env, "CONTEXT_STILL_RUST_LLM_TIMEOUT_SECONDS", 600),
+        episode_timeout_seconds: env_u64_default(
+            env,
+            "CONTEXT_STILL_RUST_EPISODE_TIMEOUT_SECONDS",
+            1200,
+        )
+        .clamp(30, 3600),
         covering_min_interval_seconds: env_u64_default(
             env,
             "CONTEXT_STILL_RUST_COVERING_MIN_INTERVAL_SECONDS",
@@ -216,6 +222,8 @@ pub fn run_executor_tick_report<E: EnvProvider>(
         embedding_access_token: env
             .var("EMBEDDING_ACCESS_TOKEN")
             .or_else(|| env.var("LOCAL_LLM_ACCESS_TOKEN")),
+        embedding_dimension: env_u64_default(env, "CONTEXT_STILL_EMBEDDING_DIMENSION", 384)
+            .min(65_536) as usize,
         azure_openai_api_key: env.var("AZURE_OPENAI_API_KEY"),
         finding_execution_mode,
         episode_execution_mode,
@@ -223,6 +231,8 @@ pub fn run_executor_tick_report<E: EnvProvider>(
         covering_canary_job_ids,
     };
     let curation_pending = sqlite_writer::execute_for_path(&paths.sqlite_core_path, "queue.curation_enqueue", |connection| {
+        super::curation_identity::reconcile(connection, 500)?;
+        super::curation_repository::preflight_identityless_pending(connection, 500)?;
         super::curation_repository::enqueue_all(connection)?;
         if !table_exists(connection,"landscape_curation_queue").map_err(|e|e.to_string())? { return Ok(false); }
         connection.query_row("select exists(select 1 from landscape_curation_queue where status='pending' or (status='paused' and next_run_at is not null and datetime(next_run_at)<=CURRENT_TIMESTAMP))",[],|r|r.get::<_,bool>(0)).map_err(|e|e.to_string())
@@ -787,11 +797,16 @@ fn claim_provider_execution_for_connection(
                 }
             })
             .map(Zeroizing::new);
+        let request_timeout_seconds = if job.queue_name == "episodeDistiller" {
+            config.episode_timeout_seconds
+        } else {
+            config.llm_timeout_seconds
+        };
         return Ok(Some(PreparedProviderClaim {
             job,
             target,
             api_key,
-            request_timeout_seconds: config.llm_timeout_seconds,
+            request_timeout_seconds,
         }));
     }
     Ok(None)
@@ -965,10 +980,12 @@ struct ExecutorTickConfig {
     local_finalize_max_claims: u64,
     queue_stale_seconds: u64,
     llm_timeout_seconds: u64,
+    episode_timeout_seconds: u64,
     covering_min_interval_seconds: u64,
     local_llm_api_key: Option<String>,
     source_read_root: std::path::PathBuf,
     embedding_access_token: Option<String>,
+    embedding_dimension: usize,
     azure_openai_api_key: Option<String>,
     finding_execution_mode: ProviderExecutionMode,
     episode_execution_mode: ProviderExecutionMode,
@@ -1507,7 +1524,7 @@ fn run_executor_tick_with_connection(
                     &job.provider_lease.worker_id,
                     &target,
                     api_key.as_deref(),
-                    config.llm_timeout_seconds,
+                    config.episode_timeout_seconds,
                 )? {
                     EpisodeExecutionStatus::Completed | EpisodeExecutionStatus::Skipped => {
                         LocalExecutionOutcome::Completed
@@ -1702,15 +1719,10 @@ fn finalize_embedding_config(
         .pointer("/embedding/timeoutMs")
         .and_then(Value::as_u64)
         .unwrap_or(30_000);
-    let expected_dimension = connection
-        .query_row(
-            "select dimension from core_vector_metadata where name = 'knowledge_items' limit 1",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .ok()
-        .and_then(|value| usize::try_from(value).ok())
-        .filter(|value| *value > 0);
+    let expected_dimension = Some(finalize_embedding_dimension(
+        connection,
+        config.embedding_dimension,
+    ));
     FinalizeEmbeddingConfig {
         provider: settings
             .pointer("/embedding/provider")
@@ -1741,6 +1753,19 @@ fn finalize_embedding_config(
         openai_api_key: load_secret_value(connection, "azureOpenAiApiKey")
             .or_else(|| config.azure_openai_api_key.clone()),
     }
+}
+
+fn finalize_embedding_dimension(connection: &Connection, fallback: usize) -> usize {
+    connection
+        .query_row(
+            "select dimension from core_vector_metadata where name = 'knowledge_items' limit 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .ok()
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(fallback)
 }
 
 fn load_paused_queues(connection: &Connection) -> Result<HashSet<String>, CliError> {
@@ -1789,7 +1814,7 @@ pub(super) fn provider_pools(settings: &Value) -> Vec<ProviderPoolClaimConfig> {
         let Some(group_id) = route_claim_group_id(route) else {
             continue;
         };
-        let targets = if route_provider_pool_id(route).is_some() {
+        let mut targets = if route_provider_pool_id(route).is_some() {
             legacy_pools
                 .get(&group_id)
                 .map(|pool| pool.targets.clone())
@@ -1797,6 +1822,11 @@ pub(super) fn provider_pools(settings: &Value) -> Vec<ProviderPoolClaimConfig> {
         } else {
             local_llm_route_target_ids(settings, route)
         };
+        targets.retain(|target| {
+            local_llm_target_config(settings, target)
+                .map(|config| config.model.trim() != "coding-default")
+                .unwrap_or(true)
+        });
         if targets.is_empty() {
             continue;
         }

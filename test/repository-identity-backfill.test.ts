@@ -19,6 +19,40 @@ function row(overrides: Partial<RepositoryIdentityBackfillRow>): RepositoryIdent
 }
 
 describe("repository identity deterministic backfill", () => {
+  test("recovers structured Vibe roots but rejects contradictory roots and unbound identifiers", () => {
+    const plan = planRepositoryIdentityBackfill({
+      rows: [
+        row({
+          id: "root",
+          provenance: [{ source: "knowledge_origin_vibe:1", snapshot: { projectRoot: "/work/a" } }],
+        }),
+        row({ id: "conflict", metadata: { repoPath: "/work/a", projectRoot: "/work/b" } }),
+        row({
+          id: "unbound",
+          provenance: [
+            { source: "knowledge_source:1", snapshot: { projectRef: "a", repoPath: "/work/a" } },
+          ],
+        }),
+        row({
+          id: "incomplete",
+          metadata: { repoPath: "/work/a" },
+          provenance: [
+            { source: "knowledge_source:2", snapshot: { identityEvidenceIncomplete: true } },
+          ],
+        }),
+      ],
+    });
+    const outcomes = Object.fromEntries(
+      plan.decisions.map((item) => [item.entityId, item.after.classificationStatus]),
+    );
+    expect(outcomes).toEqual({
+      root: "classified",
+      conflict: "conflict",
+      unbound: "conflict",
+      incomplete: "unresolved",
+    });
+  });
+
   test("classifies exact canonical metadata and is deterministic", () => {
     const input = {
       rows: [

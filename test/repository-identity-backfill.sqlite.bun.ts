@@ -83,6 +83,39 @@ describe("repository identity SQLite migration", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
+  test("collects Source ownership and Vibe origins and invalidates a changed dry-run", async () => {
+    const sqlite = await openSqliteCoreDatabase({ path: sqlitePath, loadVectorExtension: false });
+    sqlite.db.exec(`insert into sources(id,source_kind,uri,body,scope,classification_status,repo_path)
+      values ('linked-source','file','file:///evidence','Evidence','repo','classified','/work/a');
+      insert into source_fragments(id,source_id,locator,content) values ('fragment','linked-source','whole','Evidence');
+      insert into knowledge_source_links(id,knowledge_id,source_fragment_id) values ('source-link','knowledge-unknown','fragment');
+      insert into vibe_memories(id,session_id,content,metadata) values ('memory','session','Evidence','{"projectRoot":"/work/a"}');
+      insert into knowledge_origin_links(id,knowledge_id,origin_kind,origin_uri,origin_key)
+      values ('origin','knowledge-unknown','vibe_memory','vibe://memory','memory');`);
+    sqlite.db.close();
+    const plan = await runRepositoryIdentityBackfill({ mode: "dry-run", sqlitePath });
+    expect(
+      plan.decisions.find((item) => item.entityId === "knowledge-unknown")?.after,
+    ).toMatchObject({ classificationStatus: "classified", repoPath: "/work/a" });
+    const changed = await openSqliteCoreDatabase({ path: sqlitePath, loadVectorExtension: false });
+    changed.db.exec(
+      `update vibe_memories set metadata='{"projectRoot":"/work/b"}' where id='memory'`,
+    );
+    changed.db.close();
+    await expect(
+      runRepositoryIdentityBackfill({
+        mode: "write",
+        sqlitePath,
+        expectedChecksum: plan.checksum,
+        backupReference: "test-snapshot",
+      }),
+    ).rejects.toThrow("checksum changed");
+    const conflict = await runRepositoryIdentityBackfill({ mode: "dry-run", sqlitePath });
+    expect(conflict.decisions.find((item) => item.entityId === "knowledge-unknown")?.outcome).toBe(
+      "conflict",
+    );
+  });
+
   test("dry-run is deterministic, write is guarded and idempotent, and backup restores", async () => {
     const first = await runRepositoryIdentityBackfill({
       mode: "dry-run",
@@ -142,9 +175,11 @@ describe("repository identity SQLite migration", () => {
     });
     sqlite.db.close();
 
-    await copyFile(backupPath, sqlitePath);
+    // Restore into a fresh database path; an old WAL must not replay over the backup.
+    const restoredPath = path.join(directory, "restored.sqlite");
+    await copyFile(backupPath, restoredPath);
     const restored = await openSqliteCoreDatabase({
-      path: sqlitePath,
+      path: restoredPath,
       loadVectorExtension: false,
     });
     expect(

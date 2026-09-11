@@ -1,0 +1,75 @@
+<article lang="ja">
+  <h1>LARM consumer Canary実行記録</h1>
+  <p>
+    2026-09-11。ContextStill新版の反映と実Queue
+    1件の完了・永続化を確認した。ContextStill側のconsumer_verified確認条件は成功。LARM側registryへの正式登録とは区別する。
+  </p>
+  <h2>対象と稼働確認</h2>
+  <ul>
+    <li>
+      LARM
+      release：82c6150a3437e5b3d7498e0931d61a5fd55eb179。LAN経由の/healthでreleaseCommit一致を確認。
+    </li>
+    <li>
+      ContextStill：commit
+      457fff4af38c88e2d2aab29ceb0c3f5f41ba7cf1に未コミットの改善差分を含む作業ツリーからcargo
+      buildを実行。commit単体のビルドではない。
+    </li>
+    <li>実行バイナリSHA-256：c85bdf54f9568ea221baa2204be0a1e7e9599d38399f80d4785f04ca5981066f。</li>
+    <li>Queue：episodeDistiller。Job ID：03963bfa-a145-40be-b069-4413b9158b1d。</li>
+    <li>
+      出典Vibe ID：2295c446-bec1-4264-a3fa-24dab5638aba。本文に加え9件・29,723文字の差分がある。
+    </li>
+    <li>
+      Target：local-llm-larm-qwen-agent-worker。通常OpenAI互換HTTP、model=qwen-agent-worker、Base
+      URL=http://192.168.0.130:9810/v1。
+    </li>
+    <li>Mac送信元IPv4：192.168.0.180。LARMの9810/tcpへのESTABLISHED接続を確認。</li>
+  </ul>
+  <h2>隔離と復旧準備</h2>
+  <p>
+    旧Rust
+    daemonをbootoutし、旧バイナリ・LaunchAgent設定・SQLiteの整合バックアップを/private/tmp/contextstill-consumer-canary.ilzbDNへ退避した。バックアップには実データが含まれるため、共有用証跡ではない。
+  </p>
+  <p>
+    別LaunchAgentのFindingがQwenの枠を保持していたため、最初のtickはclaimed=0で終了した。Finding、Covering、Queue
+    supervisor、Agent log
+    syncの旧LaunchAgentもbootoutしてから再試行した。新版daemon起動後、重複workerがログイン時に再起動しないよう、この4つの旧LaunchAgentをlaunchctl
+    disableした。plistは削除していない。必要時は各labelへのlaunchctl enableで復旧可能。
+  </p>
+  <p>
+    停止時の旧EpisodeとFindingジョブはcheckpointを残してpausedとし、停止済みworkerの2リースを解放した。Canaryジョブのみ一時的にpriorityを上げ、新版の単発executor
+    tickをmaxClaims=1で実行した。終了時にpriorityを50へ戻し、全Queue laneをpausedにした。
+  </p>
+  <h2>検証結果</h2>
+  <p>
+    Rust単体・回帰テストは468件成功、3件除外。実executor結果はclaimed=1、completed=1、failed=0、retried=0、unsupported=0、終了コード0。
+  </p>
+  <p>
+    Job完了時刻：2026-09-11 05:19:42 UTC（14:19:42
+    JST）。status=completed、last_outcome_kind=episodes_distilled、attempt_count=0、last_errorなし。5segmentのうち4つがsaved、最後の1つはlow_value_skipped。失敗segment数0。
+  </p>
+  <p>
+    保存されたEpisode IDは次の4件。開始前の整合バックアップでは対象Vibe由来のEpisodeは0件だった。
+  </p>
+  <ul>
+    <li>00000000-0000-0000-18d4-2bf30b1173f1</li>
+    <li>00000000-0000-0000-18d4-2c0ad2b394ac</li>
+    <li>00000000-0000-0000-18d4-2c287e7db0d7</li>
+    <li>00000000-0000-0000-18d4-2c8977500882</li>
+  </ul>
+  <p>
+    全4件についてstatus=active、classification_status=classified、title/action/outcome/lessonが非空、episode_refsが各1件、episode_cards_ftsが各1件であることを確認した。
+  </p>
+  <p>
+    単発実行後に新版daemonをLaunchAgentで起動した。PID=99728、state=running、MCP=127.0.0.1:39172で待受。起動後にもJob完了とEpisode本体・出典リンク・全文検索行を再照合し、永続化を確認した。全7Queue
+    laneはpaused、有効provider leaseは0。全体再開は未実施。
+  </p>
+  <p>
+    LARMの/healthは実行前後とも指定releaseCommitと同じbootEpochを返した。復旧用SQLiteバックアップと新版起動後の実DBのquick_checkはいずれもok。
+  </p>
+  <p>
+    本書はContextStill側の証跡である。LARM側の正式なconvergence
+    registryへのconsumer_verified登録は別操作であり、自動登録済みとは扱わない。
+  </p>
+</article>

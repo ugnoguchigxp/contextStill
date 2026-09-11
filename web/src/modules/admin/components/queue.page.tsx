@@ -472,7 +472,10 @@ export function QueuePage() {
               </div>
               <div className="flex items-center gap-1">
                 <Badge variant="outline" className={statusTone(item.status)}>
-                  {item.status}
+                  {item.lastOutcomeKind === "identity_unavailable" ||
+                  item.lastOutcomeKind === "identity_conflict"
+                    ? "needs_evidence"
+                    : item.status}
                 </Badge>
                 <Badge variant="outline" className="text-[10px]">
                   {queueLabel[item.visibleQueueName ?? item.queueName]}
@@ -523,7 +526,10 @@ export function QueuePage() {
         header: "Status",
         cell: ({ row }) => (
           <Badge variant="outline" className={statusTone(row.original.status)}>
-            {row.original.status}
+            {row.original.lastOutcomeKind === "identity_unavailable" ||
+            row.original.lastOutcomeKind === "identity_conflict"
+              ? "needs_evidence"
+              : row.original.status}
           </Badge>
         ),
       },

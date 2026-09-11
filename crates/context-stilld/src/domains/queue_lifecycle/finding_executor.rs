@@ -758,7 +758,9 @@ fn request_candidates(
         "model": target.model,
         "messages": messages,
         "max_tokens": 4000,
-        "temperature": 0
+        "temperature": 0,
+        "stream":false,
+        "response_format":super::structured_output::format("finding")
     });
     if target.target_id.starts_with("larm-agent-connection:") {
         request_body["stream"] = Value::Bool(false);
@@ -789,10 +791,7 @@ fn request_candidates(
     let payload: Value = serde_json::from_str(&body).map_err(|error| {
         CliError::io(format!("failed to parse local-llm response JSON: {error}"))
     })?;
-    let content = payload
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .ok_or_else(|| CliError::io("local-llm response did not include message content"))?;
+    let content = super::structured_output::content(&payload).map_err(CliError::io)?;
     parse_candidates(content)
 }
 
@@ -1480,7 +1479,7 @@ mod tests {
             let _ = stream.read(&mut buffer).unwrap();
             accepted_tx.send(()).unwrap();
             release_rx.recv().unwrap();
-            let body = r#"{"choices":[{"message":{"content":"[]"}}]}"#;
+            let body = r#"{"choices":[{"finish_reason":"stop","message":{"content":"[]"}}]}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

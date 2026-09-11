@@ -256,7 +256,7 @@ pub(super) fn review_near_duplicate_episode(
 ) -> Result<NearDuplicateReview, CliError> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(timeout_seconds.max(30)))
+        .timeout(Duration::from_secs(timeout_seconds.clamp(30, 300)))
         .build()
         .map_err(|error| CliError::io(format!("failed to build local-llm client: {error}")))?;
     let messages = near_duplicate_review_messages(item, candidates);
@@ -269,7 +269,7 @@ pub(super) fn review_near_duplicate_episode(
                 api_key,
                 model: &target.model,
                 messages: &messages,
-                max_tokens: 800,
+                max_tokens: 1536,
                 json_response: true,
             },
         )
@@ -280,8 +280,10 @@ pub(super) fn review_near_duplicate_episode(
     let mut request = client.post(url).json(&json!({
         "model": target.model,
         "messages": messages,
-        "max_tokens": 800,
-        "temperature": 0
+        "max_tokens": 1536,
+        "temperature": 0,
+        "stream":false,
+        "response_format":super::super::structured_output::format("episode_duplicate")
     }));
     if let Some(api_key) = api_key.map(str::trim).filter(|value| !value.is_empty()) {
         request = request.bearer_auth(api_key);
@@ -316,12 +318,7 @@ pub(super) fn review_near_duplicate_episode(
             "failed to parse near duplicate review response JSON: {error}"
         ))
     })?;
-    let content = parsed
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            CliError::io("near duplicate review response did not include message content")
-        })?;
+    let content = super::super::structured_output::content(&parsed).map_err(CliError::io)?;
     parse_near_duplicate_review(content)
 }
 

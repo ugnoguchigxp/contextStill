@@ -1,0 +1,285 @@
+<article lang="ja">
+  <h1>LARM 動的Embeddingホスト対応依頼書</h1>
+
+  <p>
+    LARMが管理する動的ホストの対象へEmbedding workloadを追加し、ContextStillが 固定loopback
+    daemonに依存せず、利用可能なホストから互換性のあるEmbedding Providerを
+    lease／claimできるよう対応をお願いします。
+  </p>
+
+  <dl>
+    <dt>依頼先</dt>
+    <dd>LARM設計・実装・運用担当者</dd>
+    <dt>依頼種別</dt>
+    <dd>動的ホスト能力の拡張、公開contract追加、live配備、相互canary</dd>
+    <dt>優先度</dt>
+    <dd>高。ContextStillのナレッジ登録が19件停止中</dd>
+    <dt>作成日</dt>
+    <dd><time>2026-09-09</time></dd>
+    <dt>ContextStill側設計</dt>
+    <dd>
+      <a href="finalize-dynamic-embedding-resilience-design.html"
+        >finalizeDistille 動的Embedding耐障害化設計</a
+      >
+    </dd>
+  </dl>
+
+  <section id="request-summary">
+    <h2>1. 依頼内容</h2>
+    <ol>
+      <li>Embedding workerをLARMの動的host inventoryとadmission対象へ追加する。</li>
+      <li>Embedding用途だけで取得・更新・解放できる短期lease／claim contractを提供する。</li>
+      <li>
+        claim結果からendpoint、短期credential、model
+        identity、revision、dimension、正規化、prefix規則を検証できるようにする。
+      </li>
+      <li>
+        <code>query</code
+        >と<code>passage</code>を区別できる汎用Embedding
+        protocolを提供する。
+      </li>
+      <li>
+        既存のService Activity、他service優先、fail closed、credential非永続化の方針を維持する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="background">
+    <h2>2. 背景と影響</h2>
+    <p>
+      ContextStillの<code>finalizeDistille</code>は、ナレッジ本体を保存する前にEmbeddingを必須生成する。
+      現在の設定は<code>http://127.0.0.1:44512/embed</code>へ固定されているが、daemonが停止し、
+      2026-09-06から2026-09-09にかけて登録可能な19件が各5回失敗した。
+    </p>
+    <ul>
+      <li>共通error: <code>embedding daemon request failed</code></li>
+      <li>95回claim、76回retry、19回terminal failed</li>
+      <li>coveringまでは全件<code>knowledge_ready</code></li>
+      <li>既存knowledge vectorは384次元が8,006件</li>
+    </ul>
+    <p>
+      ContextStill側でも停止時にjobを失わない修正を行うが、固定host停止という単一障害点を解消するには、
+      LARMの動的host選択をEmbeddingへ拡張する必要がある。
+    </p>
+  </section>
+
+  <section id="required-contract">
+    <h2>3. 必須contract</h2>
+    <p>
+      endpoint名や既存Agent Connection contractの拡張方法はLARM側の設計判断に委ねる。
+      ただし、ContextStillがclaim前後に次の情報を機械検証できることを必須とする。
+    </p>
+    <table>
+      <caption>
+        LARMの動的Embedding claimで公開・保証する情報
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">field／能力</th>
+          <th scope="col">要件</th>
+          <th scope="col">理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">workload kind</th>
+          <td>EmbeddingであることをLLM generationと区別できる</td>
+          <td>必要resourceとprotocolが異なる</td>
+        </tr>
+        <tr>
+          <th scope="row">protocol version</th>
+          <td>未知versionをfail closedで拒否できる安定識別子</td>
+          <td>暗黙互換を避ける</td>
+        </tr>
+        <tr>
+          <th scope="row">base URL／endpoint</th>
+          <td>claimされたorigin内のHTTPSまたは許可済みprivate HTTP</td>
+          <td>claim外hostへの送信を防ぐ</td>
+        </tr>
+        <tr>
+          <th scope="row">credential</th>
+          <td>短期、audience拘束、memory-only、renew可能</td>
+          <td>永続secretを不要にする</td>
+        </tr>
+        <tr>
+          <th scope="row">model ID</th>
+          <td>例: multilingual-e5-small互換空間を示す安定ID</td>
+          <td>別モデルのvector混入を防ぐ</td>
+        </tr>
+        <tr>
+          <th scope="row">model revision</th>
+          <td>artifact digestまたは不変revision</td>
+          <td>同名モデルの差し替えを検出する</td>
+        </tr>
+        <tr>
+          <th scope="row">dimension</th>
+          <td>ContextStill knowledge indexでは384</td>
+          <td>既存8,006件と互換にする</td>
+        </tr>
+        <tr>
+          <th scope="row">input type</th>
+          <td>
+            <code>query</code
+            >と<code>passage</code>を明示指定できる
+          </td>
+          <td>E5系prefixの意味を維持する</td>
+        </tr>
+        <tr>
+          <th scope="row">normalization</th>
+          <td>L2 normalize済みであることを広告・保証する</td>
+          <td>既存cosine検索品質を維持する</td>
+        </tr>
+        <tr>
+          <th scope="row">capacity／readiness</th>
+          <td>ready、queue depth、retry hint、lease期限を判断できる</td>
+          <td>利用不能時にjobをclaimしない</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="semantic-compatibility">
+    <h2>4. Embedding空間の互換性</h2>
+    <p>
+      動的host選択は、任意のEmbeddingモデル選択を意味しない。ContextStillのknowledge indexでは、
+      以下を完全一致させる。1項目でも一致しないhostは候補から除外する。
+    </p>
+    <ul>
+      <li>384次元</li>
+      <li>固定したmodel IDとrevision／artifact digest</li>
+      <li>
+        <code>query: </code
+        >と<code>passage: </code>のprefix policy
+      </li>
+      <li>L2 normalization</li>
+      <li>tokenization、truncation、最大入力長の互換contract</li>
+    </ul>
+    <aside>
+      <p>
+        <strong>受入上の注意:</strong>
+        現行の一部<code>/v1/embeddings</code>実装は入力を常に
+        <code>query</code>として処理するため、OpenAI互換のresponse
+        shapeだけでは不十分です。
+        ナレッジ保存には<code>passage</code>を明示できる必要があります。
+      </p>
+    </aside>
+    <p>
+      将来モデルを変更する場合は、動的host切替ではなく、全vector再構築、dual-read、切替、rollbackを伴う
+      別migrationとして扱う。
+    </p>
+  </section>
+
+  <section id="lifecycle">
+    <h2>5. 希望するlifecycle</h2>
+    <pre><code>ContextStillにEmbedding due workあり
+  |
+  +-- LARM service activity / capacity確認
+        |
+        +-- unavailable / active / draining ---- retry hintを返し、claimしない
+        |
+        +-- compatible host ready
+              +-- Embedding lease作成
+              +-- ready poll
+              +-- provider claim
+              +-- ContextStillがspace identityを再検証
+              +-- /embed相当をqueryまたはpassage指定で実行
+              +-- 次job前にactivityを再確認
+              +-- renewまたはDELETE
+</code></pre>
+    <ul>
+      <li>activity snapshotを予約とみなさず、lease作成時に最終admissionを行う。</li>
+      <li>同じhost上のLLM generation、Embedding、他service workloadをactivityへ反映する。</li>
+      <li>実行中requestはactivity変化だけで中断しない。</li>
+      <li>due workがなければContextStillはactivityをpollせず、leaseを保持しない。</li>
+      <li>release失敗時もcredentialをlocalで破棄し、TTLをremote cleanupの最終防壁にする。</li>
+    </ul>
+  </section>
+
+  <section id="security">
+    <h2>6. Security要件</h2>
+    <ul>
+      <li>credentialは短期かつEmbedding endpointとaudienceへ拘束する。</li>
+      <li>claimされたorigin外へのredirectを許可しない。</li>
+      <li>token、完全なclaim response、入力本文、vectorを通常logへ出さない。</li>
+      <li>response body size、vector要素数、数値有限性を制限する。</li>
+      <li>
+        Connection ID、host identity、model
+        revision、dimension、latency、statusはsecretなしで観測可能にする。
+      </li>
+      <li>既存のLARM API認証方式を利用し、ContextStill専用の長期secretを新設しない。</li>
+    </ul>
+  </section>
+
+  <section id="availability">
+    <h2>7. Availability要件</h2>
+    <ul>
+      <li>compatible hostが0件の場合は明示的なunavailableとretry hintを返す。</li>
+      <li>停止hostをinventoryから除外し、別のcompatible hostへ新規claimできる。</li>
+      <li>同一requestを自動で複数hostへ二重実行しない。</li>
+      <li>429、5xx、timeout時はleaseを破棄・再取得できる。</li>
+      <li>host復帰時、既存のterminal job再作成なしでContextStillが処理を再開できる。</li>
+    </ul>
+  </section>
+
+  <section id="acceptance">
+    <h2>8. 相互受入canary</h2>
+    <ol>
+      <li>
+        LARM inventoryでEmbedding対応hostを2台以上、または1台と明示的なunavailable状態を確認する。
+      </li>
+      <li>ContextStill hostからactivity、lease create、ready、claimを実行する。</li>
+      <li>
+        <code>query</code
+        >と<code>passage</code>を各1件実行し、384次元、有限値、L2
+        normを確認する。
+      </li>
+      <li>model ID、revision、prefix policyがclaim広告と一致することを確認する。</li>
+      <li>1台をunavailableにし、未開始jobが別hostへ切り替わるか安全に待機することを確認する。</li>
+      <li>不一致modelを広告するfake hostが選択されないことを確認する。</li>
+      <li>leaseを解放し、active connectionとcredentialが残らないことを確認する。</li>
+      <li>ContextStillのfinalize canary 1件でknowledge、FTS、vector、queue完了を確認する。</li>
+      <li>既存のLLM Agent Connection、NightWorkers、SAAA workloadに回帰がないことを確認する。</li>
+    </ol>
+  </section>
+
+  <section id="evidence-return">
+    <h2>9. 返却してほしい証跡</h2>
+    <ul>
+      <li>配備した完全なGit commit IDとrelease identity</li>
+      <li>追加・拡張したcontract名とversion</li>
+      <li>Embedding host inventoryのsecretを除いたmodel ID、revision、dimension、prefix policy</li>
+      <li>activity、create、ready、claim、renew、DELETEのHTTP statusと時刻</li>
+      <li>query／passage canaryのdimension、有限値判定、norm、latency</li>
+      <li>host停止・切替canaryの結果</li>
+      <li>claim token、入力本文、vectorをlogへ残していないこと</li>
+      <li>既存LLM workloadへの回帰試験結果</li>
+    </ul>
+  </section>
+
+  <section id="non-goals">
+    <h2>10. Non-goals／禁止事項</h2>
+    <ul>
+      <li>LARMへContextStill専用endpointを追加しない。</li>
+      <li>ContextStillのDB schema、公開MCP API、認証方式を変更しない。</li>
+      <li>同じ384次元という理由だけで異なるEmbeddingモデルを混在させない。</li>
+      <li>query／passageの区別をclientまたはserverの暗黙既定値へ委ねない。</li>
+      <li>利用不能時に別model、cloud API、固定loopbackへ暗黙fallbackしない。</li>
+      <li>claim token、長期Bearer、入力本文、vectorをlogまたは設定へ保存しない。</li>
+      <li>Embedding host停止をSAAAや他serviceへのcallbackで通知する設計にしない。</li>
+    </ul>
+  </section>
+
+  <section id="completion">
+    <h2>11. 完了条件</h2>
+    <ul>
+      <li>
+        EmbeddingがLARMの動的host対象としてinventory、admission、lease、claim、releaseされる。
+      </li>
+      <li>ContextStillが互換spaceを検証してquery／passage Embeddingを実行できる。</li>
+      <li>host停止時に安全に待機または互換hostへ切り替わる。</li>
+      <li>ContextStill finalize canaryがvectorを含めて登録成功する。</li>
+      <li>既存のLLM Agent Connectionと他service優先制御に回帰がない。</li>
+      <li>必要なlive配備手順、rollback手順、secretを除いた証跡が返却される。</li>
+    </ul>
+  </section>
+</article>

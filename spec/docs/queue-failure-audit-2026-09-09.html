@@ -1,0 +1,232 @@
+<article lang="ja">
+  <h1>Queue失敗残件調査（2026-09-09）</h1>
+
+  <p>
+    2026-09-09 14:43:30 JST時点の
+    <code>data/context-still-core.sqlite</code> を読み取り専用で調査し、 Queueごとの未解消の
+    <code>failed</code> 行を、発生時期と最終エラーで分類した。
+    直前に復旧・再配備したEmbedding接続失敗のfinalize 19件は本集計に残っておらず、 すべて
+    <code>completed / stored</code> になっている。
+  </p>
+
+  <h2>結論</h2>
+  <ul>
+    <li>
+      <code>finalizeDistille</code> には、Embedding障害より古い未解消失敗が68件ある。
+    </li>
+    <li>
+      68件はすべて <code>PROJECT_IDENTITY_REQUIRED</code> で、作成期間は2026-08-17
+      02:54:18〜2026-08-19 14:39:41 UTC（JSTでは同日11:54:18〜23:39:41）。
+    </li>
+    <li>
+      68件のうち32件は、上流のmemory metadataに絶対パスの
+      <code>repoPath</code> が残っており、現在のproject identity
+      backfillの入力条件を満たす。
+    </li>
+    <li>
+      残り36件は、finding・candidate・memoryのいずれにも信頼できるproject
+      identityが残っていないため、単純な再キューでは同じ理由で再失敗する。
+    </li>
+    <li>68件と完全一致するtitle/bodyのKnowledgeは0件で、後続処理による自然解消は確認できない。</li>
+  </ul>
+
+  <h2>未解消failed件数</h2>
+  <table>
+    <caption>
+      Queueごとの未解消failed件数と主な原因
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Queue</th>
+        <th scope="col">failed件数</th>
+        <th scope="col">主な内訳</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>finalizeDistille</td>
+        <td>68</td>
+        <td>project identity不足 68</td>
+      </tr>
+      <tr>
+        <td>coveringEvidence</td>
+        <td>412</td>
+        <td>parse 190、provider 111、tool 58、旧local-llm契約 20、その他33</td>
+      </tr>
+      <tr>
+        <td>episodeDistiller</td>
+        <td>3,923</td>
+        <td>agent session競合 3,643、parse 249、provider 5、abort 6、その他20</td>
+      </tr>
+      <tr>
+        <td>findingCandidate</td>
+        <td>4,872</td>
+        <td>旧local-llm runtime契約 4,830、agent session競合 31、その他11</td>
+      </tr>
+      <tr>
+        <td>landscapeCuration</td>
+        <td>5,906</td>
+        <td>provider 3,276、agent session競合 2,611、schema等16、Embedding 3</td>
+      </tr>
+      <tr>
+        <td>deadZoneMergeReview</td>
+        <td>0</td>
+        <td>未解消failedなし</td>
+      </tr>
+      <tr>
+        <td>mergeActivationFinalize</td>
+        <td>0</td>
+        <td>未解消failedなし</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>finalizeDistille 68件の扱い</h2>
+  <table>
+    <caption>
+      古いfinalizeDistille失敗の再実行可否
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">区分</th>
+        <th scope="col">件数</th>
+        <th scope="col">判定</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>identity backfill入力あり</td>
+        <td>32</td>
+        <td>再キュー候補。再キュー後、claim前に現行backfillが適用される見込み。</td>
+      </tr>
+      <tr>
+        <td>identity情報なし</td>
+        <td>36</td>
+        <td>再キュー非推奨。正しいproject identityの復元または明示的なscope判定が必要。</td>
+      </tr>
+      <tr>
+        <td>同一Knowledge登録済み</td>
+        <td>0</td>
+        <td>後続処理による吸収なし。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>68件の再実行結果</h2>
+  <p>
+    ユーザーの指示により、2026-09-09 14:49〜14:55 JSTに対象68件だけを正規retry処理で再投入した。
+    他Queueは再投入対象にしていない。
+  </p>
+  <ul>
+    <li>
+      21件が
+      <code>completed / stored</code> となり、Knowledge、384次元vector、FTSを登録した。
+    </li>
+    <li>3件は <code>rule_body_not_actionable</code> と判定され、正常にskipされた。</li>
+    <li>
+      35件は信頼できるproject identityが無く、<code>PROJECT_IDENTITY_REQUIRED</code>
+      で再失敗した。
+    </li>
+    <li>
+      9件は <code>undefined is not an object (evaluating 'text.replace')</code> で失敗した。このうち8件はidentity
+      backfill適用後、1件は未適用だった。
+    </li>
+    <li>identity backfillは合計30件に適用された。</li>
+  </ul>
+
+  <h2>Project identity必須条件の見直し</h2>
+  <p>
+    Project identityはKnowledge自体の成立要件ではなく、repo-scoped
+    Knowledgeを安全に隔離するための要件である。
+    <code>knowledge_items</code> と検索処理は、<code
+      >scope=global</code
+    >
+    かつidentity列がNULLのKnowledgeを正式に扱う。 調査時点でglobal
+    Knowledgeは29件あり、いずれもidentity列がNULLで、finalize由来だった。
+  </p>
+  <p>
+    現行Rust finalizeは保存時の <code>scope</code> を常に
+    <code>repo</code> に固定しているため、 identityが無い候補を
+    <code>PROJECT_IDENTITY_REQUIRED</code> でfail-closedにしている。
+    この拒否はrepository間の情報混入を防ぐ目的では妥当だが、global Knowledgeまで拒否する必要はない。
+  </p>
+  <p>2026-09-09に採用したcontractは次のとおり。</p>
+  <ul>
+    <li>
+      canonical project identityを持つ候補は、従来どおり
+      <code>scope=repo</code> として保存する。
+    </li>
+    <li>
+      identityを持たない候補でも、Evidenceが <code>knowledge_ready</code>
+      で既存の品質・applicability
+      gateを通過した場合は、<code>scope=global</code>、identity列NULLとして保存する。
+    </li>
+    <li>
+      <code>applies_to.general</code> はfacet上の一般適用性でありrepository
+      scopeとは別概念なので、global保存の必須条件にはしない。
+    </li>
+    <li>
+      保存したscopeと判定根拠をmetadataの <code>storageScope</code> と
+      <code>scopeDecision</code> に保存する。
+    </li>
+  </ul>
+  <p>
+    この変更は既存schemaと検索contractの範囲で実装し、DB migrationは行わない。 global
+    Knowledgeはidentity無しのcompileでも検索可能で、identity付きcompileでもrepo一致Knowledgeとともに検索対象になる。
+  </p>
+
+  <h2>修正版再配備後の最終結果</h2>
+  <p>
+    Rust
+    finalizeを修正・再配備し、元の68件のうち未完了だった44件と、終端で残った2件を対象限定で再実行した。
+    Project identityを持つ候補はrepo、持たない候補はglobalとして保存した。また、Embedding
+    daemonの一時的な
+    <code>undefined is not an object (evaluating 'text.replace')</code>
+    をretryable errorとして扱うようにした。
+  </p>
+  <ul>
+    <li>
+      元の68件は、65件が <code>completed / stored</code>、3件が正常skip、failed
+      0件、未完了0件になった。
+    </li>
+    <li>65件すべてについてKnowledge本体、384次元vector、FTS登録を確認した。</li>
+    <li>保存scopeはglobal 34件、repo 31件だった。</li>
+    <li>skip 3件の理由はすべて <code>rule_body_not_actionable</code> だった。</li>
+    <li>Rust全体テストは454件成功、2件明示ignore、失敗0件だった。</li>
+  </ul>
+
+  <h2>他Queueで優先確認すべき障害群</h2>
+  <ul>
+    <li>
+      <code>landscapeCuration</code>
+      のEmbedding接続失敗3件は、Embedding復旧後の再実行候補。
+    </li>
+    <li>
+      <code>findingCandidate</code> 4,830件と
+      <code>coveringEvidence</code> 20件は、local-llm APIが要求する
+      <code>runtime</code> fieldが無い旧リクエスト契約の失敗。
+    </li>
+    <li>
+      agent session競合は <code>episodeDistiller</code> 3,643件、<code
+        >landscapeCuration</code
+      >
+      2,611件、<code>findingCandidate</code>
+      31件に残っている。大量一括再実行の前に、現在のsession
+      lifecycleで競合が解消したことを少数canaryで確認する必要がある。
+    </li>
+    <li>parse・tool・not reusable系は内容依存を含むため、機械的な全件再キュー対象にはしない。</li>
+  </ul>
+
+  <h2>調査方法</h2>
+  <p>
+    7つのQueue tableの現在状態、<code>distillation_queue_events</code>、
+    <code>evidence_coverage_results</code>、<code>found_candidates</code>、
+    <code>finding_candidate_queue</code>、<code>vibe_memories</code>、
+    <code>knowledge_items</code> を照合した。分類は保存された
+    <code>last_error</code> と
+    <code>last_outcome_kind</code>
+    に基づく。最初の調査は読み取り専用で実施し、その後のユーザー指示でfinalize
+    68件だけを再キューした。 常駐workerが別のpending jobを処理中のため、特に
+    <code>episodeDistiller</code> の件数は調査後も変動し得る。
+  </p>
+</article>

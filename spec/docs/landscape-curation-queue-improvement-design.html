@@ -1,0 +1,387 @@
+<article lang="ja">
+  <h1>landscapeCuration Queue 改善設計</h1>
+
+  <p>
+    本設計は、2026-09-09の<a href="landscape-curation-queue-investigation-2026-09-09.html"
+      >障害調査</a
+    >で確認したQueue飢餓、repository identity任意化との契約不整合、retryable障害の恒久failed化、
+    全件scanと観測性不足を解消するための実装案である。単純な再配備や固定優先順位の入れ替えは採用しない。
+  </p>
+
+  <section id="implementation-status">
+    <h2>実装状況</h2>
+    <p>
+      2026-09-09にRust executorへ実装し、常駐daemonへ配備した。provider公平化、Queue別concurrency、
+      identityなしpreflight、候補なしLLM bypass、typed
+      retry、event整合、差分reconciliationを有効化している。 live v2
+      backlogではidentityなし7,082件をattempt
+      0のままskippedへ移行し、claim前の対象を875件まで縮小した。残りはclaim後のcandidate
+      preflightでさらに絞り込まれる。
+    </p>
+  </section>
+
+  <section id="goals">
+    <h2>目標</h2>
+    <ul>
+      <li>競合Queueにbacklogがあっても、curationが有限時間内にclaimされる。</li>
+      <li>比較不能または候補0件のknowledgeにはLLMを呼ばない。</li>
+      <li>provider、session capacity、Embeddingの一時障害をsemantic attemptとして消費しない。</li>
+      <li>同じsubject revisionを二重処理せず、identity付与や内容変更時だけ再評価できる。</li>
+      <li>status、event、provider leaseの集計が一致し、停止理由を運用画面から判定できる。</li>
+    </ul>
+  </section>
+
+  <section id="non-goals">
+    <h2>非目標</h2>
+    <ul>
+      <li>identityなしknowledge同士を同じrepositoryと推定してmergeすること。</li>
+      <li>過去のv1 failed 5,906件を無条件にpendingへ戻すこと。</li>
+      <li>curationの判断promptやauto-mutation policyを同時に全面改訂すること。</li>
+    </ul>
+  </section>
+
+  <section id="recommended-architecture">
+    <h2>推奨構成</h2>
+    <ol>
+      <li>LLMの前に決定論的なlocal preflightを置き、比較不能・候補なしをterminalにする。</li>
+      <li>
+        provider claimを固定Queue順序からburst制限付きのweighted
+        fairnessへ変更し、Queueごとの同時実行上限を設ける。
+      </li>
+      <li>
+        worker結果を成功、非対象、retryable infrastructure、repairable model output、permanent
+        failureに分類する。
+      </li>
+      <li>
+        knowledge変更時の差分enqueueを正規経路にし、全件scanは低頻度のreconciliationへ降格する。
+      </li>
+      <li>既存v2 pendingをlocal preflightで縮小してから、LLM対象だけをcanary処理する。</li>
+    </ol>
+  </section>
+
+  <section id="local-preflight">
+    <h2>1. LLM前のlocal preflight</h2>
+    <p>
+      pending curationを小さなbatchで検査する。repository identity欠落はclaim前に一括判定し、 stale
+      subjectと候補なしはclaim後のsnapshot段階で判定してprovider leaseを即時解放する。
+      いずれもLLMを使用しない。
+    </p>
+    <table>
+      <caption>
+        local preflightの判定と永続化結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">status</th>
+          <th scope="col">decision / outcome</th>
+          <th scope="col">再評価条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>repo scopeかつidentity 3項目が全て空</td>
+          <td>skipped</td>
+          <td><code>observe / identity_unavailable</code></td>
+          <td>identityまたはscope変更で新revisionをenqueue</td>
+        </tr>
+        <tr>
+          <td>安全な同一repository候補が0件</td>
+          <td>skipped</td>
+          <td><code>observe / no_candidate</code></td>
+          <td>新knowledge側の評価、またはcandidate index epoch更新</td>
+        </tr>
+        <tr>
+          <td>subjectがinactiveまたはrevision不一致</td>
+          <td>skipped</td>
+          <td><code>observe / stale_subject</code></td>
+          <td>最新revisionのjobへ一本化</td>
+        </tr>
+        <tr>
+          <td>候補が1件以上</td>
+          <td>pendingのまま</td>
+          <td><code>llm_required</code></td>
+          <td>provider schedulerへ渡す</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      identityなしをglobal扱いしたり、空identity同士を同一repository扱いしたりしてはならない。
+      identityがないknowledgeも検索用ナレッジとしては成立するが、安全な重複統合の比較domainは確定できないためである。
+      現在のv2 pendingでは、この分岐だけで最低7,082件、全体の89.0%をLLM対象から除外できる。
+    </p>
+    <p>
+      terminal化時は<code>attempt_count</code>を増やさず、review
+      ledgerへoutcomeとsubject revision、candidate index epochを記録し、<code
+        >skipped</code
+      >
+      eventを1件だけ追加する。これにより「処理失敗」と「現時点では比較対象外」を分離する。
+    </p>
+  </section>
+
+  <section id="fair-scheduler">
+    <h2>2. 飢餓しないprovider scheduler</h2>
+    <p>
+      現在の<code>queue_order</code>最優先比較に、pool単位の連続claim上限を加える。
+      初期burst上限は<code>findingCandidate=4</code>、<code>episodeDistiller=3</code>、
+      <code>landscapeCuration=1</code>とする。上限に達したQueue以外にrunnable
+      jobがある場合は別Queueを選び、 他Queueが空なら現在のQueueを継続する。
+      これによりepisodeとcurationだけがrunnableなら、最大3回のepisode
+      claim後にcurationが1回claimされる。
+    </p>
+    <p>
+      fairness stateは専用の二重ledgerを作らず、既存のSQLite provider
+      lease履歴から直近のQueueと連続claim数を読む。provider lease作成と同じclaim
+      transaction内で判定するため、daemon再起動や複数executorでも順序を維持する。既存のjob
+      priorityとagingは、選ばれたQueue内のjob選択にだけ使用する。
+    </p>
+    <table>
+      <caption>
+        provider poolの推奨初期設定
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">設定</th>
+          <th scope="col">推奨値</th>
+          <th scope="col">目的</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>pool maxConcurrent</td>
+          <td>2</td>
+          <td>現在登録済みの2 targetを利用する</td>
+        </tr>
+        <tr>
+          <td>landscapeCuration maxConcurrent</td>
+          <td>1</td>
+          <td>長いplanner/verifier処理がpoolを占有しない</td>
+        </tr>
+        <tr>
+          <td>curation最大連続claim</td>
+          <td>1</td>
+          <td>foreground Queueの遅延を制限する</td>
+        </tr>
+        <tr>
+          <td>starvation alert</td>
+          <td>runnable最古が5分超</td>
+          <td>claim保証違反を検知する</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      targetが1台しか利用できない環境でもburst制限付きfairnessを適用する。target数を増やすだけでは、固定Queue順序のまま
+      全targetがepisodeに割り当てられる可能性があるため、公平性の代替にはならない。
+    </p>
+  </section>
+
+  <section id="failure-contract">
+    <h2>3. failureとretryの契約</h2>
+    <table>
+      <caption>
+        curation worker結果の分類と状態遷移
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">分類</th>
+          <th scope="col">例</th>
+          <th scope="col">遷移</th>
+          <th scope="col">attempt_count</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>NotApplicable</td>
+          <td>identityなし、候補なし、stale subject</td>
+          <td>skipped</td>
+          <td>増やさない</td>
+        </tr>
+        <tr>
+          <td>ProviderUnavailable</td>
+          <td>transport、408、425、429、5xx、retryable 409</td>
+          <td>pending + backoff</td>
+          <td>増やさない</td>
+        </tr>
+        <tr>
+          <td>EmbeddingUnavailable</td>
+          <td>daemon接続失敗、408、429、5xx</td>
+          <td>pending + backoff</td>
+          <td>増やさない</td>
+        </tr>
+        <tr>
+          <td>RepairableModelOutput</td>
+          <td>JSON/schema bounds、verification不完全</td>
+          <td>pending、最大3回</td>
+          <td>増やす</td>
+        </tr>
+        <tr>
+          <td>PermanentFailure</td>
+          <td>DB invariant、必須snapshot破損</td>
+          <td>failed</td>
+          <td>増やす</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      retryable応答では<code>Retry-After</code>またはresponse内の<code>retry_after_seconds</code>を優先し、
+      値がなければ60、120、300、600、1,200、最大3,600秒の指数backoffを使う。jobのsemantic
+      attemptとは別に、<code>retried</code> event件数をinfrastructure
+      retry履歴として保持し、semantic
+      <code>attempt_count</code>は増やさない。provider
+      targetには既存のcooldownを適用するため、 復旧後に手動requeueなしで再開できる。
+    </p>
+    <p>
+      providerから得たHTTP statusとresponse bodyを失わず、worker内部のenumへ一元分類する。
+      永続化時にはerror code、retry-after、target idを構造化event metadataへ残す。
+      Embedding停止は既存の共通retry判定を利用し、curationだけ別契約にならないようにする。
+    </p>
+  </section>
+
+  <section id="enqueue-contract">
+    <h2>4. enqueueとrevisionの改善</h2>
+    <p>
+      executor tickごとのreconciliationは、Queue未登録、またはそのsubjectの最新Queue作成時刻以後に
+      更新されたknowledgeだけを対象にする。同じcontent revisionは既存の一意性判定で二重登録しない。
+      これにより既存のknowledge write pathを壊さず、変更のない全active knowledgeの反復scanを避ける。
+    </p>
+    <p>
+      content revisionにはtitle、body、type、polarity、scope、repository
+      identity、appliesTo、正規化したsourceGroupsだけを含める。
+      metadata全体、usage時刻、Queue実行履歴は含めない。curation自身が書いた運用metadataによる再enqueue
+      loopを防ぎながら、 mergeでbodyやsourceGroupsが変わった場合は再評価できる。
+    </p>
+    <p>
+      uniquenessは<code>(subject_knowledge_id, content_revision, candidate_index_epoch, detector_version)</code>を論理keyとする。 同じrevisionのactive
+      jobは1件だけとし、claim後にrevision不一致が判明したjobは
+      <code>stale_subject</code>としてskippedにする。
+    </p>
+  </section>
+
+  <section id="observability">
+    <h2>5. 観測性</h2>
+    <p>すべての状態遷移で、statusと同じ意味のeventを同じtransactionに書く。</p>
+    <ul>
+      <li><code>claimed</code>: pool、target、Queue、lease時刻</li>
+      <li>
+        <code>skipped</code>:
+        identity_unavailable、no_candidate、stale_subject
+      </li>
+      <li>
+        <code>retried</code>: error code、retry-after、attemptを消費したか
+      </li>
+      <li><code>completed</code>: decision、disposition、mutation有無</li>
+      <li><code>failed</code>: permanent error codeとattempt_count</li>
+    </ul>
+    <p>
+      dashboardではstatus件数に加え、runnable最古時刻、last
+      claim時刻、p50/p95待機時間、Queue別provider占有時間、 preflight skip率、LLM対象件数、retryable
+      error率を表示する。event件数とQueue行の遷移が一致しない場合はhealth warningにする。
+    </p>
+  </section>
+
+  <section id="migration">
+    <h2>6. 既存backlogの移行</h2>
+    <ol>
+      <li>curationだけをpauseし、他Queueとknowledge登録は継続する。</li>
+      <li>schemaと新workerをdeployし、read-only dry-runで分類件数を出す。</li>
+      <li>
+        v2 pendingのうちidentityなし7,082件をlocal preflightでskippedにし、ledgerとeventを記録する。
+      </li>
+      <li>残る最大875件にcandidate preflightを行い、候補0件を追加でskippedにする。</li>
+      <li>
+        LLM対象から50件をrecord-only canaryとして処理し、provider
+        retry、candidate精度、event整合性を確認する。
+      </li>
+      <li>問題がなければauto-mutation policyを現行上限のまま戻し、Queueをresumeする。</li>
+      <li>
+        v1 failed 5,906件は履歴として保持し、対応するv2 jobがないactive
+        subjectだけを差分抽出して再投入する。
+      </li>
+    </ol>
+    <p>
+      rollbackは新規claimをpauseし、schedulerを旧固定順序へfeature flagで戻す。local
+      preflightでskippedにしたjobは削除せず、
+      reasonとrevisionを保持するため、必要なら対象reasonだけをpendingへ戻せる。auto-mutation
+      canary中は既存rollback snapshotを維持する。
+    </p>
+  </section>
+
+  <section id="implementation-slices">
+    <h2>実装単位</h2>
+    <table>
+      <caption>
+        推奨する変更単位と主な対象
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">順序</th>
+          <th scope="col">変更</th>
+          <th scope="col">主な対象</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>typed outcome、retry classifier、正しいevent</td>
+          <td><code>curation_executor.rs</code>、共通provider helper</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>local preflightと既存pending sweep</td>
+          <td>
+            <code>curation_repository.rs</code>、<code>maintenance.rs</code>
+          </td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>burst制限付きfairnessとQueue別concurrency</td>
+          <td><code>provider_lease.rs</code>、既存provider lease履歴</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>差分enqueueとsemantic revision</td>
+          <td>knowledge write path、<code>curation_repository.rs</code></td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td>dashboard指標とalert</td>
+          <td>Queue inspect/API/UI</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="acceptance-criteria">
+    <h2>受け入れ条件</h2>
+    <ul>
+      <li>episode backlog継続中でも、runnable curationの最初のclaimが5分以内に発生する。</li>
+      <li>
+        単一targetでepisodeとcurationが競合するtestにおいて、3回を超えてepisodeだけが連続claimされない。
+      </li>
+      <li>identityなしrepo knowledge 7,082件に対するLLM requestが0件である。</li>
+      <li>
+        候補0件のjobがLLM requestを送らず、短時間でprovider leaseを解放し、skipped
+        eventとledgerを1件ずつ残す。
+      </li>
+      <li>
+        retryable
+        409、429、503、transport、Embedding停止で<code>attempt_count</code>が増えない。
+      </li>
+      <li>schema不正は最大3回で止まり、pausedまたはfailed理由を構造化して残す。</li>
+      <li>同一subject revisionのactive jobが複数存在しない。</li>
+      <li>30分窓のQueue status遷移とevent件数が一致する。</li>
+      <li>50件canaryで意図しないknowledge mutationが0件、rollback不能が0件である。</li>
+    </ul>
+  </section>
+
+  <section id="decision">
+    <h2>採用判断</h2>
+    <p>
+      推奨は「local preflight → typed retry → burst制限付きscheduler →
+      差分enqueue」の順に実装する案である。
+      最初の2項目だけで現在のbacklogと再失敗を大幅に抑えられ、その後schedulerを切り替えて安全にLLM対象を流せる。
+      優先順位配列の並べ替えだけでは別Queueを飢餓させ、provider
+      target追加だけでは全targetを上位Queueが占有できるため、 恒久対策としては不十分である。
+    </p>
+  </section>
+</article>

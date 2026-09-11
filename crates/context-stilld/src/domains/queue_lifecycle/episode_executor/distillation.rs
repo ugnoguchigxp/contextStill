@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reqwest::blocking::Client;
 use reqwest::header::RETRY_AFTER;
@@ -16,6 +16,15 @@ use super::helpers::{
 };
 use super::types::{CanonicalEpisode, LocalLlmTargetConfig, Segment, SourceDocument};
 
+pub(super) fn segment_budget(segment: &Segment, deadline_cap: u64) -> (i64, u64) {
+    let (tokens, seconds) = if segment.text.chars().count() > 8_000 {
+        (8192, 1200)
+    } else {
+        (4096, 600)
+    };
+    (tokens, seconds.min(deadline_cap.max(30)))
+}
+
 pub(super) fn distill_segment_with_retry(
     segment: &Segment,
     document: &SourceDocument,
@@ -24,8 +33,18 @@ pub(super) fn distill_segment_with_retry(
     timeout_seconds: u64,
 ) -> Result<Vec<CanonicalEpisode>, CliError> {
     let mut last_error = String::new();
+    let deadline = Instant::now() + Duration::from_secs(segment_budget(segment, timeout_seconds).1);
     for _ in 0..2 {
-        match distill_segment(segment, document, target, api_key, timeout_seconds) {
+        let remaining = deadline
+            .saturating_duration_since(Instant::now())
+            .as_secs_f64()
+            .ceil() as u64;
+        if remaining < 30 {
+            return Err(CliError::io(
+                "local-llm request failed: episode segment deadline exceeded",
+            ));
+        }
+        match distill_segment(segment, document, target, api_key, remaining) {
             Ok(items) => return Ok(items),
             Err(error)
                 if is_provider_terminal_failure(&error.to_string())
@@ -50,9 +69,10 @@ pub(super) fn distill_segment(
     api_key: Option<&str>,
     timeout_seconds: u64,
 ) -> Result<Vec<CanonicalEpisode>, CliError> {
+    let (max_tokens, deadline_seconds) = segment_budget(segment, timeout_seconds);
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(timeout_seconds.max(30)))
+        .timeout(Duration::from_secs(deadline_seconds))
         .build()
         .map_err(|error| CliError::io(format!("failed to build local-llm client: {error}")))?;
     let messages = build_messages(segment, document);
@@ -65,7 +85,7 @@ pub(super) fn distill_segment(
                 api_key,
                 model: &target.model,
                 messages: &messages,
-                max_tokens: 4_000,
+                max_tokens,
                 json_response: true,
             },
         )
@@ -76,8 +96,10 @@ pub(super) fn distill_segment(
     let mut request_body = json!({
         "model": target.model,
         "messages": messages,
-        "max_tokens": 4000,
-        "temperature": 0
+        "max_tokens": max_tokens,
+        "temperature": 0,
+        "stream":false,
+        "response_format":super::super::structured_output::format("episode")
     });
     if target.target_id.starts_with("larm-agent-connection:") {
         request_body["stream"] = Value::Bool(false);
@@ -112,10 +134,7 @@ pub(super) fn distill_segment(
     let parsed: Value = serde_json::from_str(&body).map_err(|error| {
         CliError::io(format!("failed to parse local-llm response JSON: {error}"))
     })?;
-    let content = parsed
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .ok_or_else(|| CliError::io("local-llm response did not include message content"))?;
+    let content = super::super::structured_output::content(&parsed).map_err(CliError::io)?;
     parse_canonical_array(content)
 }
 
@@ -181,22 +200,21 @@ pub(super) fn parse_canonical_array(content: &str) -> Result<Vec<CanonicalEpisod
     } else {
         trimmed.to_string()
     };
-    let start = candidate
-        .find('[')
-        .ok_or_else(|| CliError::io("episode distiller output did not contain JSON array"))?;
-    let end = candidate
-        .rfind(']')
-        .ok_or_else(|| CliError::io("episode distiller output did not contain JSON array end"))?;
-    let json_text = candidate[start..=end].to_string();
-    let mut items: Vec<CanonicalEpisode> = serde_json::from_str(&json_text)
+    let items: Vec<CanonicalEpisode> = serde_json::from_str(candidate.trim())
         .map_err(|error| CliError::io(format!("episode distiller parse failed: {error}")))?;
-    items.retain(|item| {
-        !item.title.trim().is_empty()
-            && !item.context.trim().is_empty()
-            && !item.action_taken.trim().is_empty()
-            && !item.outcome.trim().is_empty()
-            && !item.reusable_lesson.trim().is_empty()
-    });
+    if items.len() > 2
+        || !items.iter().all(|item| {
+            !item.title.trim().is_empty()
+                && !item.context.trim().is_empty()
+                && !item.action_taken.trim().is_empty()
+                && !item.outcome.trim().is_empty()
+                && !item.reusable_lesson.trim().is_empty()
+        })
+    {
+        return Err(CliError::io(
+            "episode distiller incomplete or oversized episode output",
+        ));
+    }
     Ok(items)
 }
 

@@ -6,14 +6,55 @@ use std::collections::HashSet;
 pub(super) const QUEUE: &str = "landscapeCuration";
 pub(super) const VERSION: &str = "landscape-curation-rust-v2";
 
+pub(super) fn identity_wait_reason(item: &Value) -> Option<&'static str> {
+    let has_identity = ["repoKey", "repoPath", "projectRef"].iter().any(|key| {
+        item[key]
+            .as_str()
+            .is_some_and(|value| !value.trim().is_empty())
+    });
+    if item["classificationStatus"] == "conflict" || (item["scope"] == "global" && has_identity) {
+        Some("identity_conflict")
+    } else if item["classificationStatus"] != "classified"
+        || (item["scope"] == "repo" && !has_identity)
+        || !matches!(item["scope"].as_str(), Some("repo" | "global"))
+    {
+        Some("identity_unavailable")
+    } else {
+        None
+    }
+}
+
 pub(super) fn hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
+fn identity_event_id(connection: &Connection, job_id: &str) -> Result<String, String> {
+    let sequence: i64 = connection.query_row(
+        "select count(*) from distillation_queue_events where queue_name=?1 and queue_job_id=?2",
+        params![QUEUE,job_id], |r|r.get(0)).map_err(|e|e.to_string())?;
+    Ok(format!("curation-identity:{job_id}:{sequence}"))
 }
 
 // A review is bound to the semantic content revision. Usage timestamps do not enter the
 // revision, while body, applicability, identity, metadata, and provenance-affecting fields do.
 // This lets new or changed Landscape knowledge re-enter Curation without looping on queue state.
 pub(super) fn enqueue_all(connection: &Connection) -> Result<usize, String> {
+    connection
+        .execute_batch("SAVEPOINT curation_enqueue")
+        .map_err(|e| e.to_string())?;
+    let result = enqueue_all_inner(connection);
+    if result.is_err() {
+        connection
+            .execute_batch("ROLLBACK TO curation_enqueue")
+            .map_err(|e| e.to_string())?;
+    }
+    connection
+        .execute_batch("RELEASE curation_enqueue")
+        .map_err(|e| e.to_string())?;
+    result
+}
+
+fn enqueue_all_inner(connection: &Connection) -> Result<usize, String> {
     let exists: bool = connection
         .query_row(
             "select exists(select 1 from sqlite_master where name = 'landscape_curation_queue')",
@@ -25,7 +66,16 @@ pub(super) fn enqueue_all(connection: &Connection) -> Result<usize, String> {
         return Ok(0);
     }
     let mut statement = connection
-        .prepare("select id from knowledge_items where status='active' order by id")
+        .prepare(
+            "select k.id from knowledge_items k
+             where k.status='active' and (
+               not exists(select 1 from landscape_curation_queue q where q.subject_knowledge_id=k.id)
+               or k.updated_at >= coalesce((select max(q.created_at) from landscape_curation_queue q where q.subject_knowledge_id=k.id),'1970-01-01')
+               or exists(select 1 from landscape_curation_queue q where q.subject_knowledge_id=k.id
+                 and q.status='skipped' and q.last_outcome_kind in ('identity_unavailable','identity_conflict')
+                 and k.classification_status='classified')
+             ) order by k.id",
+        )
         .map_err(|e| e.to_string())?;
     let ids = statement
         .query_map([], |row| row.get::<_, String>(0))
@@ -38,14 +88,37 @@ pub(super) fn enqueue_all(connection: &Connection) -> Result<usize, String> {
             load_knowledge(connection, &knowledge_id)?.ok_or("active knowledge disappeared")?;
         let revision = content_revision(&knowledge);
         let key = format!("landscape-v2:{knowledge_id}:{revision}");
-        let already_reviewed: bool = connection
+        let existing_job: Option<String> = connection
             .query_row(
-                "select exists(select 1 from landscape_curation_queue where subject_knowledge_id=?1 and evidence_hash=?2)",
+                "select id from landscape_curation_queue where subject_knowledge_id=?1 and evidence_hash=?2 order by created_at desc,id limit 1",
                 params![knowledge_id, revision],
                 |row| row.get(0),
             )
+            .optional()
             .map_err(|e| e.to_string())?;
-        if already_reviewed {
+        if let Some(existing_job) = existing_job {
+            if identity_wait_reason(&knowledge).is_none() {
+                let changed = connection.execute(
+                    "update landscape_curation_queue set status='pending',phase='evaluate',decision=null,
+                     disposition=null,result='{}',policy_result='{}',input_snapshot='{}',
+                     next_run_at=null,completed_at=null,last_outcome_kind=null,last_error=null,updated_at=CURRENT_TIMESTAMP
+                     where id=?1 and status='skipped' and last_outcome_kind in ('identity_unavailable','identity_conflict')",
+                    [&existing_job],
+                ).map_err(|e| e.to_string())?;
+                if changed > 0 {
+                    super::events::append_queue_event_for_connection(
+                        connection,
+                        &identity_event_id(connection, &existing_job)?,
+                        QUEUE,
+                        &existing_job,
+                        "retried",
+                        Some("identity_resolved"),
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    inserted += changed;
+                }
+            }
             continue;
         }
         inserted += connection.execute(
@@ -63,7 +136,118 @@ pub(super) fn enqueue_all(connection: &Connection) -> Result<usize, String> {
             ],
         ).map_err(|e| format!("failed to enqueue Landscape knowledge: {e}"))?;
     }
+    preflight_identityless_pending(connection, usize::MAX)?;
     Ok(inserted)
+}
+
+/// Records ineligible jobs as needs_evidence without spending a provider attempt.
+/// Canonical identity/scope changes create a new revision; classification-only changes can
+/// resume the same job. This operation may run inside the enqueue/recovery transaction.
+pub(super) fn preflight_identityless_pending(
+    connection: &Connection,
+    limit: usize,
+) -> Result<usize, String> {
+    let exists: bool = connection
+        .query_row(
+            "select exists(select 1 from sqlite_master where name='landscape_curation_queue')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !exists {
+        return Ok(0);
+    }
+    let mut statement = connection
+        .prepare(
+            "select q.id,q.subject_knowledge_id
+             from landscape_curation_queue q join knowledge_items k on k.id=q.subject_knowledge_id
+             where q.status in ('pending','paused') and k.status='active' and (
+               k.classification_status <> 'classified' or
+               (k.scope='repo' and nullif(trim(coalesce(k.repo_key,'')),'') is null
+               and nullif(trim(coalesce(k.repo_path,'')),'') is null
+               and nullif(trim(coalesce(k.project_ref,'')),'') is null) or
+               (k.scope='global' and (nullif(trim(coalesce(k.repo_key,'')),'') is not null
+                 or nullif(trim(coalesce(k.repo_path,'')),'') is not null
+                 or nullif(trim(coalesce(k.project_ref,'')),'') is not null)))
+             order by q.created_at,q.id limit ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = statement
+        .query_map([limit.clamp(1, i64::MAX as usize) as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(statement);
+    connection
+        .execute_batch("SAVEPOINT curation_identity_preflight")
+        .map_err(|e| e.to_string())?;
+    let result = (|| {
+        let tx = connection;
+        let now = crate::domains::process_lifecycle::service::now_timestamp();
+        let mut completed = 0;
+        for (job_id, knowledge_id) in rows {
+            let Some(subject) = load_knowledge(tx, &knowledge_id)? else {
+                continue;
+            };
+            let revision = subject["contentRevision"].as_str().unwrap_or_default();
+            let Some(reason) = identity_wait_reason(&subject) else {
+                continue;
+            };
+            let result = json!({
+                "schemaVersion":2,"action":"observe","survivorKnowledgeId":null,
+                "deprecatedKnowledgeIds":[],"retainedGroupIds":[],"coverage":[],
+                "reasonCodes":[reason.to_ascii_uppercase()],
+                "rationale":"Repository-scoped knowledge has no repository identity; autonomous comparison is not applicable."
+            });
+            let policy = json!({
+                "schemaVersion":2,"policyVersion":VERSION,"releaseMode":"auto_non_destructive",
+                "requestedDecision":"observe","disposition":"record_only","effectiveAction":"record",
+                "reasonCodes":[reason.to_ascii_uppercase()],"evaluatedAt":now,"executor":VERSION
+            });
+            let changed = tx.execute(
+            "update landscape_curation_queue set status='skipped',phase='preflight',decision='observe',
+             disposition='record_only',input_snapshot=?2,result=?3,policy_result=?4,
+             next_run_at=null,locked_by=null,locked_at=null,heartbeat_at=null,last_error=null,
+             last_outcome_kind=?5,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+             where id=?1 and status in ('pending','paused')",
+            params![job_id, json!({"schemaVersion":1,"subject":subject,"candidates":[]}).to_string(), result.to_string(), policy.to_string(),reason],
+        ).map_err(|e| e.to_string())?;
+            if changed == 0 {
+                continue;
+            }
+            tx.execute(
+            "insert or replace into curation_review_ledger(knowledge_id,content_revision,evidence_revision,policy_version,candidate_index_epoch,outcome,curation_job_id,updated_at)
+             values (?1,?2,?2,?3,'v2','needs_evidence',?4,CURRENT_TIMESTAMP)
+             on conflict(knowledge_id,content_revision,evidence_revision,policy_version,candidate_index_epoch)
+             do update set outcome='needs_evidence',curation_job_id=excluded.curation_job_id,updated_at=CURRENT_TIMESTAMP
+             where curation_review_ledger.outcome='needs_evidence' or curation_review_ledger.curation_job_id=excluded.curation_job_id",
+            params![knowledge_id, revision, VERSION, job_id],
+        ).map_err(|e| e.to_string())?;
+            super::events::append_queue_event_for_connection(
+                tx,
+                &identity_event_id(tx, &job_id)?,
+                QUEUE,
+                &job_id,
+                "skipped",
+                Some(reason),
+                Some(&policy.to_string()),
+            )
+            .map_err(|e| e.to_string())?;
+            completed += 1;
+        }
+        Ok(completed)
+    })();
+    if result.is_err() {
+        connection
+            .execute_batch("ROLLBACK TO curation_identity_preflight")
+            .map_err(|e| e.to_string())?;
+    }
+    connection
+        .execute_batch("RELEASE curation_identity_preflight")
+        .map_err(|e| e.to_string())?;
+    result
 }
 
 pub(super) fn load_knowledge(connection: &Connection, id: &str) -> Result<Option<Value>, String> {
@@ -191,7 +375,11 @@ pub(super) fn same_repository(a: &Value, b: &Value) -> bool {
         return false;
     }
     if a["scope"] == "global" {
-        return true;
+        return [a, b].iter().all(|item| {
+            ["repoKey", "repoPath", "projectRef"]
+                .iter()
+                .all(|key| item[key].as_str().is_none_or(|s| s.trim().is_empty()))
+        });
     }
     let mut shared = false;
     for key in ["repoKey", "repoPath", "projectRef"] {
@@ -208,6 +396,9 @@ pub(super) fn same_repository(a: &Value, b: &Value) -> bool {
 }
 
 pub(super) fn unchanged(a: &Value, b: &Value) -> bool {
+    if identity_wait_reason(a).is_some() || identity_wait_reason(b).is_some() {
+        return false;
+    }
     [
         "id",
         "title",
@@ -216,6 +407,8 @@ pub(super) fn unchanged(a: &Value, b: &Value) -> bool {
         "polarity",
         "scope",
         "status",
+        "classificationStatus",
+        "contentRevision",
         "repoKey",
         "repoPath",
         "projectRef",
@@ -263,11 +456,11 @@ fn lexical_similarity(left: &str, right: &str) -> f64 {
 }
 
 pub(super) fn capture(connection: &Connection, job_id: &str) -> Result<Value, String> {
-    let subject_id: String = connection
+    let (subject_id, queued_revision): (String, String) = connection
         .query_row(
-            "select subject_knowledge_id from landscape_curation_queue where id = ?1",
+            "select subject_knowledge_id,evidence_hash from landscape_curation_queue where id = ?1",
             [job_id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(|e| e.to_string())?;
     let subject = load_knowledge(connection, &subject_id)?.ok_or("subject knowledge missing")?;
@@ -283,7 +476,8 @@ pub(super) fn capture(connection: &Connection, job_id: &str) -> Result<Value, St
     let mut statement = connection.prepare(
         "select k.id, k.body, k.applies_to, k.repo_key, k.repo_path, k.project_ref, v.embedding_json
          from knowledge_items k left join knowledge_items_vec_fallback v on v.knowledge_id = k.id
-         where k.id <> ?1 and k.status = 'active' and k.scope = ?2 and k.type = ?3 and k.polarity = ?4",
+         where k.id <> ?1 and k.status = 'active' and k.classification_status='classified'
+           and k.scope = ?2 and k.type = ?3 and k.polarity = ?4",
     ).map_err(|e|e.to_string())?;
     let rows = statement
         .query_map(
@@ -356,7 +550,7 @@ pub(super) fn capture(connection: &Connection, job_id: &str) -> Result<Value, St
         "observedAt":now,"source":"knowledge_items"
     })).collect::<Vec<_>>();
     Ok(
-        json!({"schemaVersion":1,"capturedAt":now,"subject":subject,"candidates":candidates,
+        json!({"schemaVersion":1,"capturedAt":now,"queuedContentRevision":queued_revision,"subject":subject,"candidates":candidates,
         "evidence":evidence,"usage":{},"lineage":{},"reviewItem":null,
         "finding":{"type":"duplicate_candidate","reviewItemId":null,"evidenceHash":hash(&json!(evidence).to_string())},
         "capabilities":{"directDeprecation":true,"mode":"autonomous_policy"},

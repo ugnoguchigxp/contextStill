@@ -1,0 +1,64 @@
+<article lang="ja">
+  <h1>LARM Queue構造化出力のContextStill側実装</h1>
+  <p>
+    2026-09-11。ContextStillのソースとローカル回帰テストの変更記録。初回実装時は稼働反映をしていなかったが、後続の承認により新版daemonと実Queue
+    1件を検証した。全Queueの再開は未実施。
+  </p>
+  <p>
+    <a href="larm-consumer-canary-2026-09-11.html">新版反映・実Queue完了・永続化のCanary証跡</a>
+  </p>
+  <h2>実装範囲</h2>
+  <ul>
+    <li>
+      Episode生成・重複判定、Finding、Curation計画・検証の通常OpenAI互換HTTPリクエストへ、各出力契約に対応したresponse_format/json_schemaとstrict=trueを送信する。
+    </li>
+    <li>
+      上記HTTP境界でfinish_reason=stop、拒否なし、contentが完全なJSONであることを必須化する。length、content_filter、tool_calls、終了理由欠落、途中JSON、正常JSONに続く余分な文章は不採用。意味的検証は各executorの既存検証も継続する。
+    </li>
+    <li>
+      Episode生成は入力8,000文字以下で4,096 tokens・600秒、それを超える場合8,192
+      tokens・1,200秒。意味的再試行2回は同一segmentの総deadlineを共有する。静的実行の上限はCONTEXT_STILL_RUST_EPISODE_TIMEOUT_SECONDS（既定1,200秒、30〜3,600秒）。動的実行では接続設定のrequestTimeoutMs上限を尊重する。重複判定は1,536
+      tokens・最大300秒。
+    </li>
+    <li>
+      Episodeの502/504をprovider障害に分類し、同一呼出し内で即時再送せずQueueへ戻す。既存の待機列60、120、300、600、1,200、3,600秒とRetry-Afterを利用する。最大試行数到達時の停止も維持する。FindingとCurationには既存の5xxバックオフ経路がある。
+    </li>
+    <li>
+      実モデル名がcoding-defaultのtargetを静的Queue候補および動的解決後・claim前で除外する。設定自体は削除しない。agent
+      profile名がcoding-defaultでも実モデルがqwen-agent-workerなら除外しない。
+    </li>
+    <li>
+      identity_unavailableは決定的な出典根拠でのみ回復し、矛盾や根拠不足をLLMで推測しない。詳細は別文書を参照。
+    </li>
+  </ul>
+  <p>
+    <a href="curation-identity-recovery-proposal-2026-09-11.html"
+      >Curation identity回復の実装とコピーDB検証</a
+    >
+  </p>
+  <h2>検証と残る反映条件</h2>
+  <p>
+    localhostのHTTPモックで実リクエストのSchemaを検査する。Episodeのtoken予算、502/503/504後の待機、coding-defaultの候補除外、打ち切り出力の拒否を回帰テストする。これは実機LARMのSchema
+    Canaryではない。
+  </p>
+  <ol>
+    <li>
+      LARM側の変更をビルドし、稼働リリースへ反映してSchema
+      Canaryを確認する。後続のユーザー報告でrelease
+      82c6150a3437e5b3d7498e0931d61a5fd55eb179のcanary_verified
+      succeededを受領し、実機healthでもreleaseCommit一致を確認済み。
+    </li>
+    <li>
+      ContextStillの動的接続が通常HTTP・qwen-agent-workerを解決すること、認証、requestTimeoutMsとlease
+      TTLの整合性を確認する。tokenをログへ出さない。
+    </li>
+    <li>
+      ContextStillを反映し、実Episodeジョブ1件の完了と4件のEpisode永続化を確認済み。今回の実機経路は登録済み静的HTTP
+      targetであり、動的接続・Finding・Curationの実機確認や全体再開を完了と扱わない。
+    </li>
+  </ol>
+  <p>
+    対象外：agent-sessionの終了判定は既存terminal
+    event契約を使用する。Coveringは文章応答の外部検索経路も持つため、今回のSchema追加対象ではない。Museサブスクリプションのリセット時刻確認・Qwen二台の実稼働確認も本変更では完了と扱わない。
+  </p>
+</article>

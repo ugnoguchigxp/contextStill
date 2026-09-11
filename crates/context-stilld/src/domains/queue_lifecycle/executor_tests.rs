@@ -14,7 +14,7 @@ fn serve_covering_response(content: Value) -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let response_body = json!({
-        "choices": [{"message": {"content": content.to_string()}}]
+        "choices": [{"finish_reason":"stop","message": {"content": content.to_string()}}]
     })
     .to_string();
     let handle = thread::spawn(move || {
@@ -67,6 +67,27 @@ fn serve_embedding_response() -> (String, thread::JoinHandle<()>) {
             .unwrap();
     });
     (format!("http://{address}"), handle)
+}
+
+#[test]
+fn finalize_embedding_dimension_falls_back_to_runtime_and_prefers_index_metadata() {
+    let connection = Connection::open_in_memory().unwrap();
+    assert_eq!(finalize_embedding_dimension(&connection, 384), 384);
+
+    connection
+        .execute_batch(
+            r#"
+            create table core_vector_metadata (
+              name text primary key,
+              dimension integer not null
+            );
+            insert into core_vector_metadata (name, dimension)
+              values ('knowledge_items', 768);
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(finalize_embedding_dimension(&connection, 384), 768);
 }
 
 #[test]
@@ -489,6 +510,7 @@ fn rust_finalize_local_lane_preempts_covering_and_finding_provider_backlog() {
             sqlite_path.to_str().unwrap(),
         ),
         ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
+        ("CONTEXT_STILL_EMBEDDING_DIMENSION", "3"),
         ("CONTEXT_STILL_RUST_COVERING_MODE", "all"),
     ]);
 
@@ -898,6 +920,24 @@ fn rust_executor_keeps_provider_pool_targets_as_membership_source_of_truth() {
     assert_eq!(queues.len(), 1);
     assert_eq!(queues[0].queue_name, "episodeDistiller");
     assert_eq!(queues[0].preferred_target_ids, Vec::<String>::new());
+}
+
+#[test]
+fn rust_executor_excludes_coding_default_model_from_queue_pool() {
+    let settings = json!({
+        "taskRouting": {"episodeDistiller": {"provider": "local-llm", "providerPoolId": "pool"}},
+        "providerPools": [{"id": "pool", "enabled": true, "targets": [
+            {"provider": "local-llm", "localLlmModelId": "coding"},
+            {"provider": "local-llm", "localLlmModelId": "worker"}
+        ]}],
+        "providers": {"local-llm": {"models": [
+            {"id": "coding", "apiBaseUrl": "http://localhost:1", "model": "coding-default"},
+            {"id": "worker", "apiBaseUrl": "http://localhost:1", "model": "qwen-agent-worker"}
+        ]}}
+    });
+    let pools = provider_pools(&settings);
+    assert_eq!(pools.len(), 1);
+    assert_eq!(pools[0].targets, vec!["worker".to_string()]);
 }
 
 #[test]

@@ -352,6 +352,52 @@ fn rust_provider_claim_keeps_queue_order_ahead_of_older_higher_priority_episode_
 }
 
 #[test]
+fn rust_provider_claim_gives_curation_a_turn_after_episode_burst() {
+    let app_dir = temp_app_dir("provider_claim_curation_fairness");
+    let sqlite_path = app_dir.join("queue.sqlite");
+    let mut connection = Connection::open(&sqlite_path).unwrap();
+    create_provider_claim_queue_table(&connection, "episode_distiller_queue");
+    create_provider_claim_queue_table(&connection, "landscape_curation_queue");
+    create_provider_lease_table(&connection);
+    connection.execute_batch(r#"
+        insert into episode_distiller_queue(id,status,priority,created_at,updated_at,provider_policy)
+          values('episode','pending',100,'2026-01-01','2026-01-01','default');
+        insert into landscape_curation_queue(id,status,priority,created_at,updated_at)
+          values('curation','pending',1,'2026-09-01','2026-09-01');
+        insert into llm_provider_leases(id,pool_id,target_id,queue_name,queue_job_id,worker_id,status,expires_at,release_reason,released_at)
+          values
+          ('old-1','local-llm-default','local-a','episodeDistiller','e1','w','released',CURRENT_TIMESTAMP,'worker_finished',CURRENT_TIMESTAMP),
+          ('old-2','local-llm-default','local-a','episodeDistiller','e2','w','released',CURRENT_TIMESTAMP,'worker_finished',CURRENT_TIMESTAMP),
+          ('old-3','local-llm-default','local-a','episodeDistiller','e3','w','released',CURRENT_TIMESTAMP,'worker_finished',CURRENT_TIMESTAMP);
+    "#).unwrap();
+    let mut pool = provider_pool();
+    pool.targets = vec!["local-a".into()];
+    pool.max_concurrent = 1;
+    let spec = |queue: &str| super::types::ProviderQueueClaimSpec {
+        queue_name: queue.into(),
+        preferred_target_ids: vec!["local-a".into()],
+        route_target_column: None,
+        route_target_preferences: Vec::new(),
+        allowed_route_values: None,
+        candidate_polarity_filter: super::types::CandidatePolarityFilter::Any,
+        allowed_job_ids: None,
+    };
+    let claimed = claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &[spec("episodeDistiller"), spec("landscapeCuration")],
+        "worker",
+        "lease",
+        90,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(claimed.queue_name, "landscapeCuration");
+    assert_eq!(claimed.id, "curation");
+    std::fs::remove_dir_all(app_dir).unwrap();
+}
+
+#[test]
 fn rust_provider_claim_waits_for_route_target_instead_of_using_other_free_target() {
     let app_dir = temp_app_dir("provider_claim_wait_target");
     let sqlite_path = app_dir.join("queue.sqlite");

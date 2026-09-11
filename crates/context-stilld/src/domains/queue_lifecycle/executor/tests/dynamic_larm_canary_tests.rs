@@ -181,8 +181,11 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_connection() {
         .to_string();
         stream
             .write_all(
-                json_response(200, json!({"choices": [{"message": {"content": content}}]}))
-                    .as_bytes(),
+                json_response(
+                    200,
+                    json!({"choices": [{"finish_reason":"stop","message": {"content": content}}]}),
+                )
+                .as_bytes(),
             )
             .unwrap();
     });
@@ -280,6 +283,15 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_connection() {
         serde_json::from_str(provider_request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
     assert_eq!(provider_json["model"], "qwen-agent-worker");
     assert_eq!(provider_json["stream"], false);
+    assert_eq!(provider_json["response_format"]["type"], "json_schema");
+    assert_eq!(
+        provider_json["response_format"]["json_schema"]["name"],
+        "finding"
+    );
+    assert_eq!(
+        provider_json["response_format"]["json_schema"]["strict"],
+        true
+    );
     assert!(!provider_request.contains("44448"));
 
     let control_requests = control_requests_rx.try_iter().collect::<Vec<_>>();

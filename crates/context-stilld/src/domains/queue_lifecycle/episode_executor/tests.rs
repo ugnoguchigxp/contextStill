@@ -20,7 +20,7 @@ use super::super::provider_execution::open_query_only_connection;
 use super::super::types::{ClaimedProviderLeaseJob, ProviderLeaseAssignment};
 
 use rusqlite::Connection;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::thread;
 
@@ -29,6 +29,40 @@ fn rust_episode_source_fragment_key_matches_distiller_contract() {
     let key = episode_source_fragment_key("memory-1", 10, 40, "task_episode");
     assert!(key.starts_with("vibe_memory:memory-1:episode:"));
     assert!(key.ends_with(":episode-distiller-v1"));
+}
+
+#[test]
+fn rust_episode_budget_and_gateway_retry_contract() {
+    let mut segment = super::types::Segment {
+        text: "short".into(),
+        start_offset: 0,
+        end_offset: 5,
+        event_start: None,
+        event_end: None,
+        event_ids: vec![],
+    };
+    assert_eq!(
+        super::distillation::segment_budget(&segment, 1200),
+        (4096, 600)
+    );
+    segment.text = "a".repeat(8001);
+    assert_eq!(
+        super::distillation::segment_budget(&segment, 1200),
+        (8192, 1200)
+    );
+    assert_eq!(
+        super::distillation::segment_budget(&segment, 300),
+        (8192, 300)
+    );
+    for status in [502, 504] {
+        assert!(super::helpers::is_provider_terminal_failure(&format!(
+            "local-llm HTTP {status}"
+        )));
+    }
+    let delays: Vec<_> = (0..6)
+        .map(super::lease::episode_provider_backoff_seconds)
+        .collect();
+    assert_eq!(delays, vec![60, 120, 300, 600, 1200, 3600]);
 }
 
 #[test]
@@ -74,9 +108,9 @@ fn rust_episode_scores_coerce_fractional_and_string_values() {
 }
 
 #[test]
-fn rust_episode_parser_extracts_array_when_model_adds_trailing_text() {
+fn rust_episode_parser_rejects_trailing_text_instead_of_salvaging_a_prefix() {
     let episodes = parse_canonical_array(
-            r#"[{
+        r#"[{
               "title":"trailing text",
               "context":"The model returned JSON plus prose.",
               "intent":"Keep parser behavior tolerant.",
@@ -86,11 +120,8 @@ fn rust_episode_parser_extracts_array_when_model_adds_trailing_text() {
               "scores":{"importance":80,"confidence":70,"reusability":75,"decision_density":70,"failure_value":55,"causal_clarity":70,"project_specificity":75,"evidence_quality":70,"compression_quality":70,"staleness_risk":20}
             }]
             trailing explanation"#,
-        )
-        .unwrap();
-
-    assert_eq!(episodes.len(), 1);
-    assert_eq!(episodes[0].title, "trailing text");
+    );
+    assert!(episodes.is_err());
 }
 
 #[test]
@@ -138,7 +169,7 @@ fn rust_episode_distiller_writes_episode_card_from_local_llm_response() {
     let server = spawn_single_response_server(
             200,
             json!({
-                "choices": [{
+                "choices": [{"finish_reason":"stop",
                     "message": {
                         "content": json!([{
                             "title": "Rust queue executor episodeDistiller native path",
@@ -473,7 +504,13 @@ fn rust_episode_distiller_retry_does_not_carry_previous_failed_segment_count() {
 }
 
 #[test]
-fn rust_episode_distiller_retries_when_provider_returns_503() {
+fn rust_episode_distiller_schedules_gateway_failures_without_immediate_retry() {
+    for status in [502, 503, 504] {
+        assert_gateway_failure_is_scheduled(status);
+    }
+}
+
+fn assert_gateway_failure_is_scheduled(http_status: u16) {
     let connection = Connection::open_in_memory().unwrap();
     create_episode_runtime_tables(&connection);
     connection
@@ -500,9 +537,8 @@ fn rust_episode_distiller_retries_when_provider_returns_503() {
             )
             .unwrap();
     let server = spawn_single_response_server(
-        503,
-        r#"{"error":{"message":"Loading model","type":"unavailable_error","code":503}}"#
-            .to_string(),
+        http_status,
+        r#"{"error":{"message":"gateway failure"}}"#.to_string(),
     );
     let target = LocalLlmTargetConfig {
         target_id: "local-a".to_string(),
@@ -522,6 +558,17 @@ fn rust_episode_distiller_retries_when_provider_returns_503() {
     .unwrap();
 
     assert_eq!(status, EpisodeExecutionStatus::Retrying);
+    let last_error: String = connection
+        .query_row(
+            "select last_error from episode_distiller_queue where id='job-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        last_error.contains(&format!("HTTP {http_status}")),
+        "{last_error}"
+    );
     let row = connection
             .query_row(
                 "select status, attempt_count, last_outcome_kind, next_run_at is not null, completed_at is not null, metadata from episode_distiller_queue where id = 'job-1'",
@@ -1067,7 +1114,7 @@ fn test_canonical_episode() -> CanonicalEpisode {
 
 fn llm_response_body(title: &str, generation_kind: &str) -> String {
     json!({
-            "choices": [{
+            "choices": [{"finish_reason":"stop",
                 "message": {
                     "content": json!([{
                         "title": title,
@@ -1117,13 +1164,32 @@ fn spawn_response_sequence_server(responses: Vec<(u16, String)>) -> String {
             let (mut stream, _) = listener.accept().unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut line = String::new();
+            let mut content_length = 0;
             loop {
                 line.clear();
                 reader.read_line(&mut line).unwrap();
                 if line == "\r\n" || line.is_empty() {
                     break;
                 }
+                if let Some((name, value)) = line.split_once(':') {
+                    if name.eq_ignore_ascii_case("content-length") {
+                        content_length = value.trim().parse::<usize>().unwrap();
+                    }
+                }
             }
+            let mut request_body = vec![0; content_length];
+            reader.read_exact(&mut request_body).unwrap();
+            let request: Value = serde_json::from_slice(&request_body).unwrap();
+            assert_eq!(request["response_format"]["type"], "json_schema");
+            assert_eq!(request["response_format"]["json_schema"]["strict"], true);
+            assert!(matches!(
+                request["response_format"]["json_schema"]["name"].as_str(),
+                Some("episode" | "episode_duplicate")
+            ));
+            assert!(matches!(
+                request["max_tokens"].as_i64(),
+                Some(1536 | 4096 | 8192)
+            ));
             let reason = if status == 200 {
                 "OK"
             } else {

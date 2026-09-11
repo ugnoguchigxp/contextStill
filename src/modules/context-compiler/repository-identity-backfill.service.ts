@@ -145,6 +145,10 @@ function toBackfillRow(
     repoKey: row.repo_key,
     repoPath: row.repo_path,
     metadata: row.metadata,
+    provenance:
+      entityKind === "knowledge"
+        ? [{ source: "knowledge_applies_to", snapshot: record(row.applies_to) }]
+        : [],
     explicitGlobalPromotion: promotionSet(input, entityKind).has(String(row.id)),
     explicitGlobalPromotionReview: globalPromotionReview(input, entityKind, String(row.id)),
   };
@@ -191,7 +195,42 @@ function attachProvenance(
 ): void {
   for (const row of rows) {
     const provenance = byEntityId.get(row.id);
-    if (provenance?.length) row.provenance = provenance;
+    if (provenance?.length) row.provenance = [...(row.provenance ?? []), ...provenance];
+  }
+}
+
+type LinkedSourceIdentity = {
+  knowledge_id: string;
+  id: string;
+  classification_status: string;
+  scope: string;
+  project_ref: string | null;
+  repo_key: string | null;
+  repo_path: string | null;
+};
+
+function attachLinkedIdentity(
+  provenance: Map<string, RepositoryIdentityProvenance[]>,
+  sources: LinkedSourceIdentity[],
+  memories: Array<{ knowledge_id: string; id: string; metadata: unknown }>,
+): void {
+  for (const row of sources) {
+    const complete =
+      row.classification_status === "classified" &&
+      row.scope === "repo" &&
+      Boolean(row.project_ref?.trim() || row.repo_key?.trim() || row.repo_path?.trim());
+    addProvenance(provenance, row.knowledge_id, `knowledge_source:${row.id}`, [
+      {
+        classificationStatus: row.classification_status,
+        projectRef: row.project_ref,
+        repoKey: row.repo_key,
+        repoPath: row.repo_path,
+        identityEvidenceIncomplete: !complete,
+      },
+    ]);
+  }
+  for (const row of memories) {
+    addProvenance(provenance, row.knowledge_id, `knowledge_origin_vibe:${row.id}`, [row.metadata]);
   }
 }
 
@@ -207,6 +246,8 @@ async function collectPostgresData(
     legacyCoverResult,
     finalResult,
     runResult,
+    linkedSourceResult,
+    linkedMemoryResult,
   ] = await Promise.all([
     db.execute(
       sql`select id::text, classification_status, scope, project_ref, repo_key, repo_path, metadata, applies_to from knowledge_items`,
@@ -247,6 +288,13 @@ async function collectPostgresData(
                identity_contract_version, scope_mode
         from context_compile_runs
       `),
+    db.execute(sql`select distinct l.knowledge_id::text, s.id::text, s.classification_status, s.scope,
+        s.project_ref, s.repo_key, s.repo_path from knowledge_source_links l
+        join source_fragments f on f.id=l.source_fragment_id join sources s on s.id=f.source_id
+        where l.link_type='derived_from' order by l.knowledge_id::text, s.id::text`),
+    db.execute(sql`select distinct l.knowledge_id::text, v.id::text, v.metadata
+        from knowledge_origin_links l join vibe_memories v on v.id::text=l.origin_key
+        where l.origin_kind='vibe_memory' order by l.knowledge_id::text, v.id::text`),
   ]);
 
   const knowledgeRaw = knowledgeResult.rows as unknown as RawIdentityRow[];
@@ -256,6 +304,11 @@ async function collectPostgresData(
   const sourceRows = sourceRaw.map((row) => toBackfillRow(row, "source", input));
   const episodeRows = episodeRaw.map((row) => toBackfillRow(row, "episode", input));
   const provenance = new Map<string, RepositoryIdentityProvenance[]>();
+  attachLinkedIdentity(
+    provenance,
+    linkedSourceResult.rows as LinkedSourceIdentity[],
+    linkedMemoryResult.rows as Array<{ knowledge_id: string; id: string; metadata: unknown }>,
+  );
 
   for (const row of targetResult.rows as Array<{
     knowledge_ids: unknown;
@@ -357,6 +410,21 @@ function collectSqliteData(
   const sourceRows = sourceRaw.map((row) => toBackfillRow(row, "source", input));
   const episodeRows = episodeRaw.map((row) => toBackfillRow(row, "episode", input));
   const provenance = new Map<string, RepositoryIdentityProvenance[]>();
+  attachLinkedIdentity(
+    provenance,
+    sqliteRows<LinkedSourceIdentity>(
+      sqlite,
+      `select distinct l.knowledge_id, s.id, s.classification_status, s.scope,
+      s.project_ref, s.repo_key, s.repo_path from knowledge_source_links l
+      join source_fragments f on f.id=l.source_fragment_id join sources s on s.id=f.source_id
+      where l.link_type='derived_from' order by l.knowledge_id, s.id`,
+    ),
+    sqliteRows<{ knowledge_id: string; id: string; metadata: unknown }>(
+      sqlite,
+      `select distinct l.knowledge_id, v.id, v.metadata from knowledge_origin_links l
+       join vibe_memories v on v.id=l.origin_key where l.origin_kind='vibe_memory' order by l.knowledge_id, v.id`,
+    ),
+  );
   for (const row of sqliteRows<{ knowledge_ids: unknown; metadata: unknown }>(
     sqlite,
     "select knowledge_ids, metadata from distillation_target_states",
@@ -543,7 +611,7 @@ function applySqlitePlan(
   let updatedCount = 0;
   let auditInsertedCount = 0;
   for (const batch of chunks(plan.decisions, batchSize)) {
-    sqlite.db.exec("BEGIN IMMEDIATE");
+    sqlite.db.exec("SAVEPOINT identity_backfill_batch");
     try {
       for (const item of batch) {
         if (item.changed) {
@@ -647,9 +715,10 @@ function applySqlitePlan(
             changedRows: batch.filter((item) => item.changed).length,
           }),
         );
-      sqlite.db.exec("COMMIT");
+      sqlite.db.exec("RELEASE identity_backfill_batch");
     } catch (error) {
-      sqlite.db.exec("ROLLBACK");
+      sqlite.db.exec("ROLLBACK TO identity_backfill_batch");
+      sqlite.db.exec("RELEASE identity_backfill_batch");
       throw error;
     }
   }
@@ -848,7 +917,11 @@ export async function runRepositoryIdentityBackfill(
     path: backendConfig.sqlitePath,
     loadVectorExtension: false,
   });
+  let transactionOpen = false;
   try {
+    // Keep the evidence and aliases stable from planning through all writes.
+    sqlite.db.exec(mode === "write" ? "BEGIN IMMEDIATE" : "BEGIN");
+    transactionOpen = true;
     const data = collectSqliteData(sqlite, input);
     const plan = planRepositoryIdentityBackfill(data);
     validateReviewDecisionsAgainstPlan(input, plan);
@@ -871,6 +944,8 @@ export async function runRepositoryIdentityBackfill(
       batchSize,
       input.reviewDecisions ?? [],
     );
+    sqlite.db.exec("COMMIT");
+    transactionOpen = false;
     return {
       ...plan,
       ...applied,
@@ -880,6 +955,7 @@ export async function runRepositoryIdentityBackfill(
       backupReference: input.backupReference?.trim() ?? null,
     };
   } finally {
+    if (transactionOpen) sqlite.db.exec("ROLLBACK");
     sqlite.db.close();
   }
 }
