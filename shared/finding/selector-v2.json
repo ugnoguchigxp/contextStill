@@ -2,7 +2,18 @@
   "version": "finding-selector-v2",
   "signals": {
     "persistentPreference": {
-      "durabilityTerms": ["今後", "以後", "毎回", "常に", "必ず", "禁止", "always", "never", "must", "do not"],
+      "durabilityTerms": [
+        "今後",
+        "以後",
+        "毎回",
+        "常に",
+        "必ず",
+        "禁止",
+        "always",
+        "never",
+        "must",
+        "do not"
+      ],
       "requires": ["userRole", "concreteSubjectAndAction"]
     },
     "causalResolution": {

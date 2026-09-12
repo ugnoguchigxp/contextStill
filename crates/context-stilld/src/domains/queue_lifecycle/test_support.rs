@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use super::types::{ProviderPoolClaimConfig, ProviderQueueClaimSpec, RowTargetPreference};
@@ -8,11 +9,13 @@ pub(crate) fn temp_app_dir(name: &str) -> std::path::PathBuf {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
-        "context_still_queue_inspect_{}_{}_{}",
+        "context_still_queue_inspect_{}_{}_{}_{}",
         name,
         std::process::id(),
-        rand_num
+        rand_num,
+        NEXT_ID.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&path).unwrap();
     path

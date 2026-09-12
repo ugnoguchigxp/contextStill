@@ -3,7 +3,7 @@
   "maxLines": 1200,
   "policy": "Existing large modules may shrink but must not grow. Remove an exemption when its module is split. New modules require a responsibility boundary, not a larger budget.",
   "exceptions": {
-    "api/modules/graph/graph.repository.ts": 1811,
+    "src/modules/graph/graph.repository.ts": 1811,
     "api/modules/overview/overview.repository.ts": 1610,
     "api/modules/queue/queue.repository.ts": 1921,
     "crates/context-stilld/src/domains/context_compile/foundation.rs": 1236,

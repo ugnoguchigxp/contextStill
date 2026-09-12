@@ -5,14 +5,14 @@ import path from "node:path";
 import {
   fetchGraphNodeDetail,
   upsertGraphCommunityLabel,
-} from "../api/modules/graph/graph.repository.js";
+} from "../src/modules/graph/graph.repository.js";
 import {
   bulkUpdateKnowledgeStatus,
   createKnowledgeItem,
   deleteKnowledgeItem,
   recordKnowledgeFeedback,
   updateKnowledgeItem,
-} from "../api/modules/knowledge/knowledge.repository.js";
+} from "../src/modules/knowledge/knowledge-admin.repository.js";
 import { groupedConfig } from "../src/config.js";
 import {
   getRuntimeSqliteCoreDatabase,
@@ -22,7 +22,7 @@ import {
   getCompileRunSnapshot,
   listRecentCompileRuns,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
-import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
+import { compileContextPack } from "../src/modules/context-compiler/context-compiler.legacy.js";
 import {
   searchKnowledge,
   upsertKnowledgeFromSource,

@@ -193,7 +193,9 @@ describe("agentic-refine.service", () => {
       expect(request.messages[0].content).not.toContain("Test goal");
       const userPayload = JSON.parse(request.messages[1].content);
       expect(userPayload.goal).toBe("Test goal");
-      expect(userPayload.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ id: "1" })]));
+      expect(userPayload.candidates).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "1" })]),
+      );
     });
 
     it("passes negative guardrail metadata to the refine prompt", async () => {
@@ -234,7 +236,9 @@ describe("agentic-refine.service", () => {
       };
       const systemPrompt = body.messages[0]?.content ?? "";
       const userPrompt = body.messages[1]?.content ?? "";
-      expect(systemPrompt).toContain("protected=trueはincludeまたはconditionalにし、omitにしません");
+      expect(systemPrompt).toContain(
+        "protected=trueはincludeまたはconditionalにし、omitにしません",
+      );
       expect(systemPrompt).toContain("negativeを実行の後押しに読み替えず");
       const payload = JSON.parse(userPrompt);
       expect(payload.candidates[0]).toMatchObject({ polarity: "negative", section: "guardrails" });

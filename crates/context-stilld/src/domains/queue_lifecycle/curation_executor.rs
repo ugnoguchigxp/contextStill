@@ -9,9 +9,7 @@ use super::provider_execution::{
 use super::provider_lease::release_provider_lease_for_connection;
 use super::types::ClaimedProviderLeaseJob;
 use crate::domains::sqlite_writer;
-use crate::shared::agent_session::{
-    is_agent_session_api_path, run_agent_session_chat, AgentSessionRequest,
-};
+use crate::shared::agent_session::{is_agent_session_api_path, AgentSessionRequest};
 use crate::shared::errors::CliError;
 use reqwest::blocking::Client;
 use rusqlite::{params, Connection};
@@ -226,9 +224,10 @@ fn request_decision(
         {"role":"system","content":format!("{}\n\n{}", managed_context("landscape.curationPlan")?, PLANNER_SYSTEM_CONTEXT)},
         {"role":"user","content":snapshot.to_string()}
     ]);
-    let content = if is_agent_session_api_path(&target.api_path) {
-        run_agent_session_chat(
+    let content = if target.codex || is_agent_session_api_path(&target.api_path) {
+        target.run_agent_chat(
             &client,
+            timeout,
             AgentSessionRequest {
                 api_base_url: &target.api_base_url,
                 api_path: &target.api_path,
@@ -296,9 +295,10 @@ fn request_verification(
     let input_hash = repository::hash(&repository::canonical_json(snapshot));
     let input = json!({"inputHash":input_hash,"snapshot":snapshot,"proposal":decision});
     let messages = json!([{"role":"system","content":format!("{}\n\n{}", managed_context("landscape.curationVerify")?, VERIFIER_SYSTEM_CONTEXT_ARTIFACT)},{"role":"user","content":input.to_string()}]);
-    let content = if is_agent_session_api_path(&target.api_path) {
-        run_agent_session_chat(
+    let content = if target.codex || is_agent_session_api_path(&target.api_path) {
+        target.run_agent_chat(
             &client,
+            timeout,
             AgentSessionRequest {
                 api_base_url: &target.api_base_url,
                 api_path: &target.api_path,

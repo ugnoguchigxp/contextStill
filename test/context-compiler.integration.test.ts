@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { groupedConfig } from "../src/config.js";
 import { getDb } from "../src/db/index.js";
-import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
+import { compileContextPack } from "../src/modules/context-compiler/context-compiler.legacy.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
 import {
   getRuntimeSettingsSnapshot,

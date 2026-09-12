@@ -102,10 +102,7 @@ function normalizeAgenticOutput(value: unknown): AgenticLlmOutput | null {
       }),
     );
     const ordered = normalizeStringArray(obj.orderedOptionalIds) ?? [];
-    const selectedIds = [
-      ...ordered.filter((id) => selected.delete(id)),
-      ...selected,
-    ];
+    const selectedIds = [...ordered.filter((id) => selected.delete(id)), ...selected];
     return { selectedIds };
   }
   const selectedIds =

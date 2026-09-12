@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -194,7 +195,7 @@ pub fn run_executor_tick_report<E: EnvProvider>(
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| project_root.join("wiki"));
     let config = ExecutorTickConfig {
-        max_claims: env_u64_default(env, "CONTEXT_STILL_RUST_QUEUE_EXECUTOR_MAX_CLAIMS", 1)
+        max_claims: env_u64_default(env, "CONTEXT_STILL_RUST_QUEUE_EXECUTOR_MAX_CLAIMS", 3)
             .clamp(1, 32),
         local_finalize_max_claims: env_u64_default(
             env,
@@ -274,163 +275,26 @@ pub fn run_executor_tick_report<E: EnvProvider>(
         },
     )
     .map_err(|error| CliError::io(format!("SQLite writer finalize check failed: {error}")))?;
-    let mut prior_generic_report = None;
     if pending_finalize {
+        let mut finalize_config = config.clone();
+        // Finalization never claims provider jobs or runs inference on the writer.
+        finalize_config.max_claims = 0;
         let report = run_generic_executor_tick_for_path(
             &paths.sqlite_core_path,
             sqlite_core_path.clone(),
             run_dir.clone(),
-            config.clone(),
+            finalize_config,
         )?;
-        if report.claimed > 0 || !config.rust_covering_mode.enabled() {
-            return Ok(report);
-        }
-        prior_generic_report = Some(report);
-    }
-    if config.rust_covering_mode.enabled() {
-        let mut claimed = 0;
-        let mut completed = 0;
-        let mut failed = 0;
-        let mut retried = 0;
-        while claimed < config.max_claims {
-            let mut covering_executions = Vec::new();
-            for _ in claimed..config.max_claims {
-                let claim_config = config.clone();
-                let next = sqlite_writer::execute_for_path(
-                    &paths.sqlite_core_path,
-                    "queue.covering_claim",
-                    move |connection| {
-                        claim_covering_with_connection(connection, &claim_config)
-                            .map_err(|error| error.to_string())
-                    },
-                )
-                .map_err(|error| {
-                    CliError::io(format!("SQLite writer covering claim failed: {error}"))
-                })?;
-                let Some(execution) = next else {
-                    break;
-                };
-                covering_executions.push(execution);
-            }
-            if covering_executions.is_empty() {
-                break;
-            }
-            claimed += covering_executions.len() as u64;
-            let mut handles = Vec::with_capacity(covering_executions.len());
-            let mut execution_results = Vec::with_capacity(covering_executions.len());
-            for execution in covering_executions {
-                let sqlite_path = paths.sqlite_core_path.clone();
-                let timeout_seconds = config.llm_timeout_seconds;
-                let fallback_execution = execution.clone();
-                let spawned = thread::Builder::new()
-                    .name("context-still-covering-executor".to_string())
-                    .spawn(move || {
-                        let outcome = catch_unwind(AssertUnwindSafe(|| {
-                            let _heartbeat =
-                                NegativeCoveringHeartbeatGuard::start(&sqlite_path, &execution)?;
-                            Ok::<_, CliError>(execute_covering(&execution, timeout_seconds))
-                        }));
-                        let result = match outcome {
-                            Ok(Ok(result)) => result,
-                            Ok(Err(error)) => covering_worker_failure_result(&format!(
-                                "covering_heartbeat_setup_failed:{error}"
-                            )),
-                            Err(_) => covering_worker_failure_result("covering_executor_panicked"),
-                        };
-                        (execution, result)
-                    });
-                match spawned {
-                    Ok(handle) => handles.push((fallback_execution, handle)),
-                    Err(error) => execution_results.push((
-                        fallback_execution,
-                        covering_worker_failure_result(&format!(
-                            "covering_executor_thread_start_failed:{error}"
-                        )),
-                    )),
-                }
-            }
-            for (fallback_execution, handle) in handles {
-                execution_results.push(handle.join().unwrap_or_else(|_| {
-                    (
-                        fallback_execution,
-                        covering_worker_failure_result("covering_executor_thread_panicked"),
-                    )
-                }));
-            }
-            let mut first_persistence_error = None;
-            for (execution, result) in execution_results {
-                let persisted = sqlite_writer::execute_for_path(
-                    &paths.sqlite_core_path,
-                    "queue.covering_persist",
-                    move |connection| {
-                        persist_negative_covering_result(connection, &execution, &result)
-                            .map_err(|error| error.to_string())
-                    },
-                )
-                .map_err(|error| {
-                    CliError::io(format!(
-                        "SQLite writer covering persistence failed: {error}"
-                    ))
-                });
-                let persisted = match persisted {
-                    Ok(persisted) => persisted,
-                    Err(error) => {
-                        if first_persistence_error.is_none() {
-                            first_persistence_error = Some(error);
-                        }
-                        continue;
-                    }
-                };
-                match persisted {
-                    NegativeCoveringPersistStatus::Completed => completed += 1,
-                    NegativeCoveringPersistStatus::Failed => failed += 1,
-                    NegativeCoveringPersistStatus::Retrying => retried += 1,
-                    NegativeCoveringPersistStatus::Superseded => retried += 1,
-                }
-            }
-            if let Some(error) = first_persistence_error {
-                return Err(error);
-            }
-        }
-        if claimed > 0 {
-            let status = if failed > 0 || retried > 0 {
-                "degraded"
-            } else {
-                "executed"
-            };
-            let report = QueueExecutorTickReport {
-                process: QUEUE_SUPERVISOR.state_name,
-                action: "executor_tick",
-                status: status.to_string(),
-                sqlite_status: "ok",
-                sqlite_core_path,
-                claimed,
-                completed,
-                failed,
-                retried,
-                unsupported: 0,
-                message: format!(
-                    "queue executor tick completed; coveringMode={} claimed={claimed} completed={completed} failed={failed} retried={retried} unsupported=0",
-                    config.rust_covering_mode.as_str(),
-                ),
-            };
-            write_executor_state(
-                &run_dir,
-                &report,
-                config.rust_covering_mode.as_str(),
-                &config.covering_canary_job_ids,
-                config.finding_execution_mode.as_str(),
-                config.episode_execution_mode.as_str(),
-            )?;
+        if report.claimed > 0 {
             return Ok(report);
         }
     }
-    if let Some(report) = prior_generic_report {
-        Ok(report)
-    } else if curation_pending
+    if config.rust_covering_mode.enabled()
+        || curation_pending
         || config.finding_execution_mode == ProviderExecutionMode::Split
         || config.episode_execution_mode == ProviderExecutionMode::Split
         || dynamic_routes_configured
+        || has_provider_queue_pool(&paths.sqlite_core_path)?
     {
         run_split_provider_executor_tick_for_path(
             &paths.sqlite_core_path,
@@ -446,6 +310,12 @@ pub fn run_executor_tick_report<E: EnvProvider>(
             config,
         )
     }
+}
+
+fn has_provider_queue_pool(path: &std::path::Path) -> Result<bool, CliError> {
+    let reader = open_query_only_connection(path)?;
+    let settings = load_settings_document(&reader)?.unwrap_or_else(|| json!({}));
+    Ok(!provider_pools(&settings).is_empty())
 }
 
 fn covering_worker_failure_result(reason: &str) -> NegativeCoveringResult {
@@ -485,10 +355,194 @@ struct PreparedProviderClaim {
     request_timeout_seconds: u64,
 }
 
+/// Return any claim left active by an early error or panic. Successful persistence
+/// already releases ownership, so dropping this guard then is a read-only check.
+struct ProviderClaimGuard {
+    sqlite_path: std::path::PathBuf,
+    job: super::types::ClaimedProviderLeaseJob,
+}
+
+impl Drop for ProviderClaimGuard {
+    fn drop(&mut self) {
+        let owned = open_query_only_connection(&self.sqlite_path).and_then(|reader| {
+            super::provider_execution::owns_provider_execution(&reader, &self.job.provider_lease)
+        });
+        if matches!(owned, Ok(true)) {
+            let _ = return_provider_job_for_path(
+                &self.sqlite_path,
+                &self.job,
+                "provider worker exited before persistence",
+            );
+        }
+    }
+}
+
 fn run_split_provider_executor_tick_for_path(
     sqlite_path: &std::path::Path,
     sqlite_core_path: String,
     run_dir: std::path::PathBuf,
+    config: ExecutorTickConfig,
+) -> Result<QueueExecutorTickReport, CliError> {
+    let reader = open_query_only_connection(sqlite_path)?;
+    let settings = load_settings_document(&reader)?.unwrap_or_else(|| json!({}));
+    let capacity: u64 = provider_pools(&settings)
+        .iter()
+        .map(|pool| pool.max_concurrent.min(pool.targets.len() as u64))
+        .sum();
+    drop(reader);
+    let workers = capacity.max(1).min(config.max_claims).clamp(1, 32);
+    let remaining = AtomicU64::new(config.max_claims);
+    let reports = thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..workers {
+            let mut worker_config = config.clone();
+            worker_config.max_claims = 1;
+            // Parallel inference must never execute while holding the single SQLite writer.
+            worker_config.finding_execution_mode = ProviderExecutionMode::Split;
+            worker_config.episode_execution_mode = ProviderExecutionMode::Split;
+            let core = sqlite_core_path.clone();
+            let dir = run_dir.clone();
+            let remaining = &remaining;
+            handles.push(scope.spawn(move || {
+                let mut reports = Vec::new();
+                while remaining
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
+                    .is_ok()
+                {
+                    let result = run_split_provider_worker_tick_for_path(
+                        sqlite_path,
+                        core.clone(),
+                        dir.clone(),
+                        worker_config.clone(),
+                    );
+                    let idle = result.as_ref().is_ok_and(|report| report.claimed == 0);
+                    let failed = result.is_err();
+                    if idle {
+                        remaining.fetch_add(1, Ordering::Release);
+                    }
+                    reports.push(result);
+                    if idle || failed {
+                        break;
+                    }
+                }
+                reports
+            }));
+        }
+        handles
+            .into_iter()
+            .flat_map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| vec![Err(CliError::io("provider worker panicked"))])
+            })
+            .collect::<Vec<_>>()
+    });
+    let mut report = QueueExecutorTickReport {
+        process: QUEUE_SUPERVISOR.state_name,
+        action: "executor_tick",
+        status: "idle".to_string(),
+        sqlite_status: "ok",
+        sqlite_core_path,
+        claimed: 0,
+        completed: 0,
+        failed: 0,
+        retried: 0,
+        unsupported: 0,
+        message: String::new(),
+    };
+    let mut first_error = None;
+    for result in reports {
+        match result {
+            Ok(item) => {
+                report.claimed += item.claimed;
+                report.completed += item.completed;
+                report.failed += item.failed;
+                report.retried += item.retried;
+                report.unsupported += item.unsupported;
+                if item.status == "waiting_for_dynamic_provider" {
+                    report.status = item.status;
+                }
+            }
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    if report.claimed > 0 {
+        report.status = if report.failed + report.retried > 0 {
+            "degraded"
+        } else {
+            "executed"
+        }
+        .to_string();
+    }
+    report.message = format!(
+        "queue provider workers={workers}; claimed={} completed={} failed={} retried={}",
+        report.claimed, report.completed, report.failed, report.retried
+    );
+    write_executor_state(
+        &run_dir,
+        &report,
+        config.rust_covering_mode.as_str(),
+        &config.covering_canary_job_ids,
+        config.finding_execution_mode.as_str(),
+        config.episode_execution_mode.as_str(),
+    )?;
+    Ok(report)
+}
+
+// Covering shares the same worker slots and provider leases as every other LLM queue.
+// Claim and persistence use the writer; inference never holds it.
+fn run_pool_covering_job(
+    sqlite_path: &std::path::Path,
+    config: &ExecutorTickConfig,
+) -> Result<Option<NegativeCoveringPersistStatus>, CliError> {
+    let claim_config = config.clone();
+    let execution =
+        sqlite_writer::execute_for_path(sqlite_path, "queue.covering_claim", move |connection| {
+            claim_covering_with_connection(connection, &claim_config).map_err(|e| e.to_string())
+        })
+        .map_err(|e| CliError::io(format!("SQLite writer covering claim failed: {e}")))?;
+    let Some(execution) = execution else {
+        return Ok(None);
+    };
+    let _claim_guard = ProviderClaimGuard {
+        sqlite_path: sqlite_path.to_path_buf(),
+        job: super::types::ClaimedProviderLeaseJob {
+            queue_name: "coveringEvidence".into(),
+            id: execution.job_id.clone(),
+            provider_lease: execution.provider_lease.clone(),
+        },
+    };
+    // Keep heartbeats alive through persistence, including time waiting for the writer.
+    let heartbeat = NegativeCoveringHeartbeatGuard::start(sqlite_path, &execution);
+    let outcome = catch_unwind(AssertUnwindSafe(|| match &heartbeat {
+        Ok(_) => Ok(execute_covering(&execution, config.llm_timeout_seconds)),
+        Err(error) => Err(error.to_string()),
+    }));
+    let result = match outcome {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => {
+            covering_worker_failure_result(&format!("covering_executor_failed:{error}"))
+        }
+        Err(_) => covering_worker_failure_result("covering_executor_panicked"),
+    };
+    sqlite_writer::execute_for_path(sqlite_path, "queue.covering_persist", move |connection| {
+        persist_negative_covering_result(connection, &execution, &result)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    })
+    .map_err(|e| CliError::io(format!("SQLite writer covering persistence failed: {e}")))
+}
+
+fn run_split_provider_worker_tick_for_path(
+    sqlite_path: &std::path::Path,
+    sqlite_core_path: String,
+    _run_dir: std::path::PathBuf,
     config: ExecutorTickConfig,
 ) -> Result<QueueExecutorTickReport, CliError> {
     let dynamic_routes_configured = dynamic_provider_routes_configured(sqlite_path)?;
@@ -499,6 +553,18 @@ fn run_split_provider_executor_tick_for_path(
     let mut unsupported = 0;
 
     while claimed < config.max_claims {
+        if config.rust_covering_mode.enabled() {
+            if let Some(outcome) = run_pool_covering_job(sqlite_path, &config)? {
+                claimed += 1;
+                match outcome {
+                    NegativeCoveringPersistStatus::Completed => completed += 1,
+                    NegativeCoveringPersistStatus::Failed => failed += 1,
+                    NegativeCoveringPersistStatus::Retrying
+                    | NegativeCoveringPersistStatus::Superseded => retried += 1,
+                }
+                continue;
+            }
+        }
         let dynamic_setup =
             claim_dynamic_provider_execution_for_path(sqlite_path, config.queue_stale_seconds)?;
         let (setup, _dynamic_manager) = match dynamic_setup {
@@ -532,6 +598,10 @@ fn run_split_provider_executor_tick_for_path(
         };
         claimed += 1;
 
+        let _claim_guard = ProviderClaimGuard {
+            sqlite_path: sqlite_path.to_path_buf(),
+            job: setup.job.clone(),
+        };
         if setup.job.queue_name == "landscapeCuration" {
             let reader = open_query_only_connection(sqlite_path)?;
             let settings = load_settings_document(&reader)?.unwrap_or_else(|| json!({}));
@@ -708,14 +778,6 @@ fn run_split_provider_executor_tick_for_path(
             )
         },
     };
-    write_executor_state(
-        &run_dir,
-        &report,
-        config.rust_covering_mode.as_str(),
-        &config.covering_canary_job_ids,
-        config.finding_execution_mode.as_str(),
-        config.episode_execution_mode.as_str(),
-    )?;
     Ok(report)
 }
 
@@ -727,7 +789,7 @@ fn claim_provider_execution_for_connection(
         return Ok(None);
     };
     let paused_queues = load_paused_queues(connection)?;
-    for pool in provider_pools(&settings) {
+    for mut pool in provider_pools(&settings) {
         let priority_queues =
             executor_priority_queues_for_pool(&settings, &pool.pool_id, &paused_queues);
         if priority_queues.is_empty() {
@@ -737,13 +799,19 @@ fn claim_provider_execution_for_connection(
         // must not leave a running job and active lease behind while setup unwinds.
         let mut prepared_targets = BTreeMap::new();
         for target_id in &pool.targets {
-            prepared_targets.insert(
-                target_id.clone(),
-                (
-                    local_llm_target_config(&settings, target_id)?,
-                    local_llm_target_secret_key(&settings, target_id)?,
-                ),
-            );
+            if let (Ok(target), Ok(secret_key)) = (
+                local_llm_target_config(&settings, target_id),
+                local_llm_target_secret_key(&settings, target_id),
+            ) {
+                prepared_targets.insert(
+                    target_id.clone(),
+                    (bind_quota_store(target, connection), secret_key),
+                );
+            }
+        }
+        pool.targets.retain(|id| prepared_targets.contains_key(id));
+        if pool.targets.is_empty() {
+            continue;
         }
         let worker_id = format!(
             "context-stilld-rust-executor:{}:{}",
@@ -817,7 +885,15 @@ fn return_provider_setup_failure(
     setup: &PreparedProviderClaim,
     error: &str,
 ) -> Result<(), CliError> {
-    let job = setup.job.clone();
+    return_provider_job_for_path(sqlite_path, &setup.job, error)
+}
+
+fn return_provider_job_for_path(
+    sqlite_path: &std::path::Path,
+    job: &super::types::ClaimedProviderLeaseJob,
+    error: &str,
+) -> Result<(), CliError> {
+    let job = job.clone();
     let error = error.to_string();
     sqlite_writer::execute_for_path(
         sqlite_path,
@@ -1095,7 +1171,12 @@ fn claim_covering_with_connection(
     {
         return Ok(None);
     }
-    for pool in provider_pools(&settings) {
+    for mut pool in provider_pools(&settings) {
+        pool.targets
+            .retain(|id| local_llm_target_config(&settings, id).is_ok());
+        if pool.targets.is_empty() {
+            continue;
+        }
         let Some(covering_spec) = queue_spec_for_pool(&settings, "coveringEvidence", &pool.pool_id)
         else {
             continue;
@@ -1160,7 +1241,10 @@ fn claim_covering_with_connection(
         let claimed_job_id = claimed.id.clone();
         let claimed_lease_id = claimed.provider_lease.id.clone();
         let execution = (|| {
-            let target = local_llm_target_config(&settings, &claimed.provider_lease.target_id)?;
+            let target = bind_quota_store(
+                local_llm_target_config(&settings, &claimed.provider_lease.target_id)?,
+                connection,
+            );
             let secret_key =
                 local_llm_target_secret_key(&settings, &claimed.provider_lease.target_id)?;
             let api_key = load_secret_value(connection, &secret_key).or_else(|| {
@@ -1814,7 +1898,7 @@ pub(super) fn provider_pools(settings: &Value) -> Vec<ProviderPoolClaimConfig> {
         let Some(group_id) = route_claim_group_id(route) else {
             continue;
         };
-        let mut targets = if route_provider_pool_id(route).is_some() {
+        let targets = if route_provider_pool_id(route).is_some() {
             legacy_pools
                 .get(&group_id)
                 .map(|pool| pool.targets.clone())
@@ -1822,11 +1906,6 @@ pub(super) fn provider_pools(settings: &Value) -> Vec<ProviderPoolClaimConfig> {
         } else {
             local_llm_route_target_ids(settings, route)
         };
-        targets.retain(|target| {
-            local_llm_target_config(settings, target)
-                .map(|config| config.model.trim() != "coding-default")
-                .unwrap_or(true)
-        });
         if targets.is_empty() {
             continue;
         }
@@ -2126,13 +2205,14 @@ fn route_target_preference(
 }
 
 fn route_claim_group_id(route: &Value) -> Option<String> {
-    if string_field(route, "provider").as_deref() != Some("local-llm") {
+    if let Some(pool_id) = route_provider_pool_id(route) {
+        return Some(pool_id);
+    }
+    let provider = string_field(route, "provider")?;
+    if provider != "local-llm" && provider != "codex" {
         return None;
     }
-    route_provider_pool_id(route)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .or_else(|| Some("task-routing:local-llm".to_string()))
+    route_provider_pool_id(route).or_else(|| Some(format!("task-routing:{provider}")))
 }
 
 fn is_larm_route(route: &Value) -> bool {
@@ -2146,6 +2226,9 @@ fn route_provider_pool_id(route: &Value) -> Option<String> {
 }
 
 fn local_llm_route_target_ids(settings: &Value, route: &Value) -> Vec<String> {
+    if string_field(route, "provider").as_deref() == Some("codex") {
+        return vec!["codex".to_string()];
+    }
     if string_field(route, "provider").as_deref() != Some("local-llm") {
         return Vec::new();
     }
@@ -2213,13 +2296,85 @@ fn target_id(target: &Value) -> Option<String> {
     }
 }
 
+fn codex_target(settings: &Value, id: &str) -> Option<Value> {
+    settings
+        .get("providerPools")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|pool| {
+            pool.get("targets")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .find(|t| {
+            string_field(t, "provider").as_deref() == Some("codex")
+                && string_field(t, "targetId").as_deref() == Some(id)
+        })
+        .cloned()
+        .or_else(|| {
+            (id == "codex").then(|| {
+                task_routing_routes(settings)
+                    .into_iter()
+                    .find(|route| string_field(route, "provider").as_deref() == Some("codex"))
+                    .cloned()
+                    .unwrap_or_else(|| json!({"provider":"codex"}))
+            })
+        })
+}
+
+fn bind_quota_store(
+    mut target: LocalLlmTargetConfig,
+    connection: &Connection,
+) -> LocalLlmTargetConfig {
+    target.quota_db = connection
+        .path()
+        .filter(|p| !p.is_empty())
+        .map(std::path::PathBuf::from);
+    target
+}
+
 fn local_llm_target_config(
     settings: &Value,
     target_id: &str,
 ) -> Result<LocalLlmTargetConfig, CliError> {
+    if let Some(target) = codex_target(settings, target_id) {
+        if settings
+            .pointer("/providers/codex/enabled")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            return Err(CliError::io("Codex provider is disabled"));
+        }
+        let model = string_field(&target, "model")
+            .or_else(|| {
+                settings
+                    .pointer("/providers/codex/model")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .ok_or_else(|| CliError::io("Codex queue model is missing"))?;
+        if model != super::target_chat::SPARK_MODEL {
+            return Err(CliError::io(
+                "Codex queue target must explicitly select gpt-5.3-codex-spark",
+            ));
+        }
+        return Ok(LocalLlmTargetConfig {
+            codex: true,
+            quota_db: None,
+            target_id: target_id.to_owned(),
+            api_base_url: String::new(),
+            api_path: String::new(),
+            model,
+        });
+    }
     let provider = settings
         .pointer("/providers/local-llm")
         .ok_or_else(|| CliError::io("local-llm provider settings are missing"))?;
+    if provider.get("enabled").and_then(Value::as_bool) == Some(false) {
+        return Err(CliError::io("local-llm provider is disabled"));
+    }
     let target = provider
         .get("models")
         .and_then(Value::as_array)
@@ -2237,6 +2392,8 @@ fn local_llm_target_config(
         .or_else(|| string_field(provider, "model"))
         .ok_or_else(|| CliError::io(format!("local-llm target {target_id} has no model")))?;
     Ok(LocalLlmTargetConfig {
+        codex: false,
+        quota_db: None,
         target_id: target_id.to_string(),
         api_base_url: api_base_url.trim_end_matches('/').to_string(),
         api_path,
@@ -2245,6 +2402,9 @@ fn local_llm_target_config(
 }
 
 fn local_llm_target_secret_key(settings: &Value, target_id: &str) -> Result<String, CliError> {
+    if codex_target(settings, target_id).is_some() {
+        return Ok(String::new());
+    }
     let provider = settings
         .pointer("/providers/local-llm")
         .ok_or_else(|| CliError::io("local-llm provider settings are missing"))?;
@@ -2284,18 +2444,7 @@ fn stable_local_llm_model_id(model: &Value) -> Option<String> {
 }
 
 fn load_secret_value(connection: &Connection, key: &str) -> Option<String> {
-    if !table_exists(connection, "settings").ok()? {
-        return None;
-    }
-    let value = connection
-        .query_row(
-            "select value from settings where namespace = 'runtime.secret' and key = ?1 limit 1",
-            [key],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()?;
-    let parsed = serde_json::from_str::<Value>(&value).ok()?;
-    string_field(&parsed, "value")
+    crate::domains::secret_store::row_token(connection, key)
 }
 
 fn string_field(value: &Value, key: &str) -> Option<String> {
@@ -2404,3 +2553,7 @@ impl QueueExecutorTickReport {
 #[cfg(test)]
 #[path = "executor_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "executor_pool_tests.rs"]
+mod pool_tests;

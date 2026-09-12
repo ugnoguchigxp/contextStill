@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { buildGraphSnapshot } from "../api/modules/graph/graph.repository.js";
+import { buildGraphSnapshot } from "../src/modules/graph/graph.repository.js";
 import { groupedConfig } from "../src/config.js";
 import {
   getCompileRunSnapshot,

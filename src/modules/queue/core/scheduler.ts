@@ -21,6 +21,7 @@ export const providerPoolQueuePriorityOrder: DistillationQueueName[] = [
 
 export function routeClaimGroupId(route: RuntimeSettingsRoute | undefined): string | null {
   if (route && isLarmAgentConnectionRoute(route)) return null;
+  if (route?.providerPoolId?.trim()) return route.providerPoolId.trim();
   if (!route || route.provider === "auto") return null;
   return route.providerPoolId?.trim() || `task-routing:${route.provider}`;
 }

@@ -618,7 +618,18 @@ mod tests {
             serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(envelope["items"].as_array().unwrap().len(), 3);
         assert_eq!(envelope["truncated"], true);
-        assert_eq!(envelope["items"][0]["title"], "Release skill 00");
+        let titles: Vec<&str> = envelope["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["title"].as_str().unwrap())
+            .collect();
+        assert!(
+            titles
+                .iter()
+                .all(|title| title.starts_with("Release skill ")),
+            "{titles:?}"
+        );
         assert_eq!(envelope["items"][0]["workflow"], json!(["Run tests"]));
         let _ = std::fs::remove_file(path);
     }

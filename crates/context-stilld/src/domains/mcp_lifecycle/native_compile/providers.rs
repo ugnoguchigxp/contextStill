@@ -177,9 +177,7 @@ pub(super) fn query_setting_value(
 }
 
 pub(super) fn query_secret_value(connection: &Connection, key: &str) -> Option<String> {
-    let value = query_setting_value(connection, "runtime.secret", key)?;
-    let parsed = serde_json::from_str::<Value>(&value).ok()?;
-    string_value(parsed.get("value")).filter(|value| !value.is_empty())
+    crate::domains::secret_store::row_token(connection, key)
 }
 
 pub(super) fn provider_route(settings: &RuntimeSettings) -> Vec<String> {
@@ -275,7 +273,10 @@ pub(super) fn chat_azure(
     );
     let response = client
         .post(url)
-        .header("api-key", settings.api_key.trim())
+        .header(
+            "api-key",
+            crate::domains::secret_store::header(&settings.api_key, false)?,
+        )
         .json(&json!({
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -337,7 +338,10 @@ pub(super) fn chat_local(
     }
     let mut request = client.post(url).header("content-type", "application/json");
     if !local.api_key.trim().is_empty() {
-        request = request.header("authorization", format!("Bearer {}", local.api_key.trim()));
+        request = request.header(
+            "authorization",
+            crate::domains::secret_store::header(&local.api_key, true)?,
+        );
     }
     let response = request
         .json(&json!({
@@ -363,7 +367,10 @@ pub(super) fn chat_openai(
     let settings = settings.ok_or_else(|| "OpenAI is not configured".to_string())?;
     let response = client
         .post(format!("{}/chat/completions", settings.api_base_url))
-        .bearer_auth(settings.api_key.trim())
+        .header(
+            "authorization",
+            crate::domains::secret_store::header(&settings.api_key, true)?,
+        )
         .json(&json!({
             "model": settings.model,
             "messages": [

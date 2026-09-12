@@ -1,10 +1,10 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { buildGraphSnapshot } from "../api/modules/graph/graph.repository.js";
+import { buildGraphSnapshot } from "../src/modules/graph/graph.repository.js";
 import {
   createKnowledgeItem,
   updateKnowledgeItem,
-} from "../api/modules/knowledge/knowledge.repository.js";
+} from "../src/modules/knowledge/knowledge-admin.repository.js";
 import { db } from "../src/db/index.js";
 import { auditLogs, knowledgeSourceLinks, sourceFragments } from "../src/db/schema.js";
 import {

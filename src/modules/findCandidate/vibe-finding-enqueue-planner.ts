@@ -173,8 +173,7 @@ export function planVibeFindingEnqueueRows(
       selectorVersion: normalized.selectorVersion,
     });
 
-    const canUseUncertain =
-      eligibility.verdict === "uncertain" && uncertainCount < uncertainLimit;
+    const canUseUncertain = eligibility.verdict === "uncertain" && uncertainCount < uncertainLimit;
     if (!eligibility.eligible && !canUseUncertain) {
       report.rejected += 1;
       if (report.items.length < maxReportedItems) {

@@ -1,4 +1,4 @@
-import { buildGraphSnapshot } from "../../../api/modules/graph/graph.repository.js";
+import { buildGraphSnapshot } from "../graph/graph.repository.js";
 import {
   type LandscapeRelationCommunityAssignment,
   buildLandscapeCommunityComparison,

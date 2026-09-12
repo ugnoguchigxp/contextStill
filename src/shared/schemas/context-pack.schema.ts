@@ -30,6 +30,7 @@ export const contextPackSchema = z.object({
   rules: z.array(contextPackItemSchema),
   procedures: z.array(contextPackItemSchema),
   guardrails: z.array(contextPackItemSchema).default([]),
+  episodes: z.array(contextPackItemSchema).optional(),
   warnings: z.array(z.string()),
   sourceRefs: z.array(z.string()),
   diagnostics: z.object({

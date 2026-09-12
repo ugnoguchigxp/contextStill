@@ -346,9 +346,9 @@ pub(crate) fn persist_negative_covering_result(
                 evidence_id,
                 execution.distillation_version,
                 finalize_priority,
-                execution.provider_policy,
                 execution.protocol_version,
                 revision_id,
+                execution.provider_policy,
                 json!({
                     "queueVersion": "v2",
                     "sourceQueue": "coveringEvidence",

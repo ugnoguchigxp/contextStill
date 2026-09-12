@@ -12,7 +12,7 @@ const {
   loadSemanticNeighborPairsMock: vi.fn(),
 }));
 
-vi.mock("../api/modules/graph/graph.repository.js", () => ({
+vi.mock("../src/modules/graph/graph.repository.js", () => ({
   buildGraphSnapshot: buildGraphSnapshotMock,
 }));
 

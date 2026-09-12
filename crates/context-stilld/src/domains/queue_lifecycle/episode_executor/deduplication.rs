@@ -5,9 +5,7 @@ use reqwest::header::RETRY_AFTER;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
-use crate::shared::agent_session::{
-    is_agent_session_api_path, run_agent_session_chat, AgentSessionRequest,
-};
+use crate::shared::agent_session::{is_agent_session_api_path, AgentSessionRequest};
 use crate::shared::errors::CliError;
 
 use super::distillation::{
@@ -260,20 +258,22 @@ pub(super) fn review_near_duplicate_episode(
         .build()
         .map_err(|error| CliError::io(format!("failed to build local-llm client: {error}")))?;
     let messages = near_duplicate_review_messages(item, candidates);
-    if is_agent_session_api_path(&target.api_path) {
-        let content = run_agent_session_chat(
-            &client,
-            AgentSessionRequest {
-                api_base_url: &target.api_base_url,
-                api_path: &target.api_path,
-                api_key,
-                model: &target.model,
-                messages: &messages,
-                max_tokens: 1536,
-                json_response: true,
-            },
-        )
-        .map_err(CliError::io)?;
+    if target.codex || is_agent_session_api_path(&target.api_path) {
+        let content = target
+            .run_agent_chat(
+                &client,
+                timeout_seconds,
+                AgentSessionRequest {
+                    api_base_url: &target.api_base_url,
+                    api_path: &target.api_path,
+                    api_key,
+                    model: &target.model,
+                    messages: &messages,
+                    max_tokens: 1536,
+                    json_response: true,
+                },
+            )
+            .map_err(CliError::io)?;
         return parse_near_duplicate_review(&content);
     }
     let url = build_local_llm_chat_completions_url(&target.api_base_url, &target.api_path);
@@ -286,7 +286,10 @@ pub(super) fn review_near_duplicate_episode(
         "response_format":super::super::structured_output::format("episode_duplicate")
     }));
     if let Some(api_key) = api_key.map(str::trim).filter(|value| !value.is_empty()) {
-        request = request.bearer_auth(api_key);
+        request = request.header(
+            "authorization",
+            crate::domains::secret_store::header(api_key, true).map_err(CliError::io)?,
+        );
     }
     let response = request
         .send()

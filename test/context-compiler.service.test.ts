@@ -10,7 +10,7 @@ import {
   updateCompileRunFailure,
   updateCompileRunSnapshot,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
-import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
+import { compileContextPack } from "../src/modules/context-compiler/context-compiler.legacy.js";
 import { composeContextResponse } from "../src/modules/context-compiler/context-response-composer.service.js";
 import {
   recordEpisodeUsage,

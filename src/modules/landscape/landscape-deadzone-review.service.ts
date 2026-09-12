@@ -1,6 +1,6 @@
 import { inArray } from "drizzle-orm";
-import { buildGraphSnapshot } from "../../../api/modules/graph/graph.repository.js";
-import { updateKnowledgeItem } from "../../../api/modules/knowledge/knowledge.repository.js";
+import { buildGraphSnapshot } from "../graph/graph.repository.js";
+import { updateKnowledgeItem } from "../knowledge/knowledge-admin.repository.js";
 import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { knowledgeItems } from "../../db/schema.js";

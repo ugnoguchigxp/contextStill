@@ -27,7 +27,7 @@ import {
   listKnowledgeTagDefinitionsForApi,
   recordKnowledgeFeedback,
   updateKnowledgeItem,
-} from "../api/modules/knowledge/knowledge.repository.js";
+} from "../src/modules/knowledge/knowledge-admin.repository.js";
 import { knowledgeRouter } from "../api/modules/knowledge/knowledge.routes.js";
 import {
   fetchOverviewDashboardForApi,
@@ -103,7 +103,7 @@ vi.mock("../api/modules/candidates/candidates.repository.js", () => ({
   listCandidateItems: vi.fn(),
 }));
 
-vi.mock("../api/modules/knowledge/knowledge.repository.js", () => ({
+vi.mock("../src/modules/knowledge/knowledge-admin.repository.js", () => ({
   bulkUpdateKnowledgeStatus: vi.fn(),
   countKnowledgeItems: vi.fn(),
   createKnowledgeItem: vi.fn(),

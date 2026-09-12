@@ -1,0 +1,175 @@
+<article lang="ja">
+  <h1>改善実装の追加証拠と切替条件（2026-09-13）</h1>
+  <p>
+    対象計画は<a href="validated-improvements-implementation-plan-2026-09-12.html">改善実装計画</a
+    >。本書は実装済みの範囲と未充足の受入条件を区別する。先行作業の結果は<a
+      href="validated-improvements-first-implementation-evidence-2026-09-12.html"
+      >初回証拠</a
+    >を参照する。
+  </p>
+  <h2>秘密ストア</h2>
+  <p>
+    macOS Keychain adapter、認証付き常駐IPC、TS設定保存・読出し・移行、Rust
+    compile/queue/agent-sessionのリクエスト直前の参照解決を実装した。Writer内のKeychainアクセスは拒否する。秘密値を保存する前に新世代をjournalへ記録し、読出し検証後のCASで参照を切り替える。clearは無効状態を保存し、参照失敗・破損rowで環境変数へ暗黙に戻さない。
+  </p>
+  <p>
+    合成秘密を用い、実際のTS
+    clientから常駐プロセスへ保存、旧平文移行、再起動、Keychain読出し、削除、backup内のバイト検査、別復元先のprofile拒否を検証した。既存のoffline
+    backupはWriter lock取得後にcheckpointとVACUUM
+    INTOを行うため、旧freelistの秘密をbackupへ複製しない。実機検証はmacOS
+    arm64であり、他OSは環境変数運用のみ。利用者の実DBは変更していない。
+  </p>
+  <p>
+    複数キー更新はキー単位で確定する。一括transactionではない。回収journalには1時間の待機期限を置き、移行再実行で未参照世代を回収する。期限内の更新中世代は削除しない。削除済み旧世代を古いbackupから復活させない。手順は<a
+      href="pub/secret-storage.md"
+      >秘密値の保存と移行</a
+    >に記載した。
+  </p>
+  <h2>CI・依存境界・導入動線</h2>
+  <p>
+    SQLite専用テストは9ファイルをmanifestで管理し、別Bunプロセス・隔離DBで実行する。新規Bunテストの登録漏れは失敗となる。API配下のgraph/knowledge管理repositoryをsrc共有層へ移し、API側は再公開とHTTP処理に限定した。TypeScript
+    resolverによるsrc→api検査、type-onlyとruntimeの区別、新規循環edgeの検査をverify:fastへ追加した。既存runtime循環はedgeごとに記録し、増加を拒否する。
+  </p>
+  <p>
+    onboardingは公開APIによるwiki
+    source登録、知識のsource参照、compile、公開MCPでのeval保存、再起動後のsource/run/eval読出しへ拡張した。公開手順のcommand・goal・facetを共有fixtureで照合する。provider呼出しは0回で、Writer停止・readiness復旧・backup復元も維持する。
+  </p>
+  <p>
+    Bun/Cargo更新と週次監査workflowを実装した。Cargo監査は検出なし。Bun監査は120秒以内に応答せず監査不能として失敗した。重大検出・空report・timeout・期限切れ例外が成功へ変換されないことをfixtureで検証する。GitHubではsecret
+    scanningとpush protectionが有効、Dependabot security updatesは無効、CodeQL default
+    setupは未設定だった。analysis
+    APIは権限不足を含む404のため過去実行を断定しない。新workflowの定期実行履歴・通知はdefault
+    branchへの反映後に確認する。手順は<a href="pub/dependency-monitoring.md">依存監視</a
+    >にまとめた。
+  </p>
+  <h2>coverageの測定面</h2>
+  <p>
+    Vitestの実装対象をsrc/API/webへ広げた。型宣言（.d.ts）、テストソース、migration生成物のみを除外する。.types.tsにもschema・関数・classがあるためファイル名だけで除外しない。初期測定からこの分母を拡張した。Bun
+    nativeはmanifest各ファイルのLCOVを行番号単位で結合し、Rustはllvm-covで別計測する。各runtimeの分母が違うため合算平均は製品coverageとして表示しない。PR
+    baseとの差分から、runtime別の変更行coverageもreport-onlyで出す。削除行は分母に含めず、未計測行を成功扱いしない。Rust値にはinline
+    unit testが含まれる点に注意する。
+  </p>
+  <table>
+    <caption>
+      行coverageの初期実測と下限
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">計測面</th>
+        <th scope="col">実測</th>
+        <th scope="col">下限</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Vitest src</td>
+        <td>58.54%</td>
+        <td>57%</td>
+      </tr>
+      <tr>
+        <td>Vitest API</td>
+        <td>31.92%</td>
+        <td>30%</td>
+      </tr>
+      <tr>
+        <td>Vitest web</td>
+        <td>73.62%</td>
+        <td>72%</td>
+      </tr>
+      <tr>
+        <td>Bun src</td>
+        <td>40.33%</td>
+        <td>39%</td>
+      </tr>
+      <tr>
+        <td>Bun API</td>
+        <td>53.90%</td>
+        <td>52%</td>
+      </tr>
+      <tr>
+        <td>Rust crates</td>
+        <td>81.57%</td>
+        <td>79%</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    閾値はmacOS初期測定から1〜3ポイントの余裕を設けた。Linux
+    CIでの初回結果は未取得であり、OS差を検証せず同一測定値と主張しない。report欠落・空report・manifest対象の欠落・下限未達は失敗する。対象や下限を変える場合は理由と前後をレビューする。詳細は<a
+      href="assets/validated-improvements-2026-09-12/coverage-baseline.json"
+      >初期計測JSON</a
+    >に残した。
+  </p>
+  <p>
+    最終計測ではVitest 2,308件成功・13件skip（282 files成功・2 files skip）。行coverageはVitest src
+    65.46%、API 69.21%、web 78.77%、Bun src 40.49%、API 53.90%、Rust
+    81.44%で、初期下限を全領域で満たした。対象拡張と同時進行のテスト追加を含む作業ツリーの測定であり、本改善だけの増加量とは解釈しない。<a
+      href="assets/validated-improvements-2026-09-12/coverage-final.json"
+      >最終coverage JSON</a
+    >と<a href="assets/validated-improvements-2026-09-12/coverage-changed-lines.json"
+      >変更行report</a
+    >を参照。
+  </p>
+  <h2>検索性能とcompile統一の判定</h2>
+  <p>
+    source参照を候補制限後に最大256件ごとの一括取得へ変更した。1万件から256件を保持するfixtureでsource
+    queryは1回となり、既存順序・上限5件・snapshot整合性・多数bind・空候補の回帰試験を通した。1千/1万件、参照0/8件、日本語・短語・長goalの21反復fixtureを追加した。
+  </p>
+  <p>
+    初回の競合した計測は採用せず、旧版ff77032と修正版を同じprocessで交互に21回測定した。12条件すべてで完全な結果JSONが一致し、11条件でp95が改善した。1千件・参照0件・長goalは初回274ms→481msと悪化し、再測定693ms→579msで改善したが、ばらつきが大きいため両方を残した。1万件・参照8件・日本語ではp95が2,392msから488ms、長goalでは3,670msから1,778msだった。source
+    queryは1万回から1回となった。<a
+      href="assets/validated-improvements-2026-09-12/retrieval-paired-matrix.json"
+      >対比較JSON</a
+    >に全条件と計測方法を記録した。製品環境のlatency保証ではなく、FTS候補削減の昇格は既存v2のrecall・isolation
+    gateに従う。
+  </p>
+  <p>
+    最初の比較で見つかったmarkdownの差は、SQLiteのTS入口を現在のRust
+    engineへ接続することで解消した。CLI・API/UI・init-projectは認証付き内部endpointを利用し、Rustがrunとsnapshotを一度だけ保存する。Postgresと明示securityIntelligenceShadowだけはlegacy互換経路を残し、通信失敗で旧engineへfallbackしない。共通JSON
+    fixtureとZod、Rust unit tests、公開導線でDTO・source/session・DB
+    binding・version・Origin/auth・128 byte相当の保守的予算・停止時503を検証した。
+  </p>
+  <p>
+    <a href="assets/validated-improvements-2026-09-12/compile-parity.json">切替後の比較JSON</a
+    >で空結果・知識ありの採用ID、実source refs、No
+    Content、markdownが一致した。現在のresident検索方式を共通化した範囲の受入であり、新しいv2
+    rankerやFTSの昇格を承認するものではない。出力予算による縮約ではcomposerの採用済み根拠だけを使い、不採用候補を戻さない回帰テストを追加した。未対応の旧引数は明示エラーとし、init-projectはpartial/degradedで成功判定しない。<a
+      href="pub/compile-native-client.md"
+      >公開互換手順</a
+    >を参照。
+  </p>
+  <h2>配布候補</h2>
+  <p>
+    旧版ff77032をgit
+    archiveから別directoryへbuildし、合成DBを候補版で開いて知識・run・evalの維持と追加compileを検証した。更新前backupを候補版で復元し、同じ知識・run・evalを確認した。旧版へ秘密参照を渡す復旧は許可しない。<a
+      href="assets/validated-improvements-2026-09-12/update-rehearsal.json"
+      >更新・復旧JSON</a
+    >に両binaryのchecksumを残す。
+  </p>
+  <p>
+    package/Cargoの0.1.0一致、schema revision 8、tag v0.1.0の検査、frozen install、web/Rust release
+    build、noteとchecksum生成をmacOS arm64で実行した。<a
+      href="assets/validated-improvements-2026-09-12/release-dry-run.json"
+      >最終配布候補manifest</a
+    >のSHA-256と実ファイルを照合した。dry-run
+    workflowはcontents:readのみで公開しない。manifestはreleaseEligible:falseとし、署名・起動identityの受入が揃うまで配布可能と判定しない。手順は<a
+      href="pub/release-update.md"
+      >配布候補と更新</a
+    >に記載した。
+  </p>
+  <h2>最終検証と残る公開条件</h2>
+  <p>
+    verify:fast、verify:sqlite、verify:rust-daemon、verify:onboarding、verify:compile-parity、verify:secrets、ブラウザ4件、旧版からの更新/復旧、配布dry-runを実行した。Rustの最終測定は507件成功・5件ignoreで、ignoreされた性能matrixとmacOS
+    Keychain受入は個別に実行した。Bunは9ファイル88件が成功した。利用者の実DBへ秘密移行を適用していない。
+  </p>
+  <p>
+    Rust運用gateは隔離profileと空のログ入力先で実行した。親環境からqueue無効設定を継承した初回smokeは意図した状態と異なり、環境を修正して再検証した。全並列Rust
+    testでは既存recall性能試験が一度失敗し、test
+    threadsを2に固定した最終実行で成功した。閾値は緩和していない。
+  </p>
+  <p>
+    Bun依存監査は2回とも120秒でtimeoutした。監査不能を成功とは扱わず、Cargo監査の検出なしと区別する。新規GitHub
+    workflowの実行履歴・通知、署名済み配布物と自動起動identityの確認は公開前の条件として残る。Release公開・GitHub設定変更は実施していない。FTS/new
+    rankerの昇格と実タスクA/Bは本計画の必須工程に含めない。
+  </p>
+</article>

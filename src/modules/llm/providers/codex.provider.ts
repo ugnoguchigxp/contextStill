@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { groupedConfig } from "../../../config.js";
 import { checkCodexAuthStatus } from "../../codex/codex-auth.service.js";
+import { sparkEnvironment } from "../../codex/spark-runtime.js";
 import { renderPrompt } from "../../system-context/system-context.service.js";
 import type {
   LlmChatRequest,
@@ -24,7 +25,13 @@ async function loadCodexSdk() {
 }
 
 export function createCodexProvider(
-  options: { timeoutMs?: number; model?: string } = {},
+  options: {
+    timeoutMs?: number;
+    model?: string;
+    codexPath?: string;
+    workingDirectory?: string;
+    sparkOnly?: boolean;
+  } = {},
 ): LlmProvider {
   const defaultTimeoutMs = options.timeoutMs ?? 60_000;
   const configuredModel = options.model || undefined;
@@ -40,9 +47,14 @@ export function createCodexProvider(
     },
 
     async chat(request: LlmChatRequest): Promise<LlmChatResponse> {
+      const model = request.model?.trim() || configuredModel;
+      if (options.sparkOnly && model !== "gpt-5.3-codex-spark") {
+        throw new Error("Spark queue target requires gpt-5.3-codex-spark");
+      }
       const CodexClass = await loadCodexSdk();
 
       const sdkOptions: any = {
+        ...(options.codexPath ? { codexPathOverride: options.codexPath } : {}),
         config: {
           max_tokens: request.maxTokens,
         },
@@ -54,12 +66,19 @@ export function createCodexProvider(
           CODEX_ACCESS_TOKEN: groupedConfig.codex.accessToken.trim(),
         };
       }
+      if (options.sparkOnly) {
+        sdkOptions.env = sparkEnvironment();
+        sdkOptions.config.forced_login_method = "chatgpt";
+      }
 
       const codex = new CodexClass(sdkOptions);
 
       // Start the conversation thread with safety defaults
       const thread = codex.startThread({
-        model: configuredModel,
+        model,
+        ...(options.workingDirectory
+          ? { workingDirectory: options.workingDirectory, skipGitRepoCheck: true }
+          : {}),
         sandboxMode: "read-only",
         approvalPolicy: "never",
         networkAccessEnabled: false,

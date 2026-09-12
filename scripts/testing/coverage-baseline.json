@@ -1,0 +1,5 @@
+{
+  "vitest": { "src": 57, "api": 30, "web": 72 },
+  "bun": { "src": 39, "api": 52 },
+  "rust": { "crates": 79 }
+}

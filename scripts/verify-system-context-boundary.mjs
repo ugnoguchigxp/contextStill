@@ -55,7 +55,9 @@ for (const absolute of await collectTypeScriptFiles(sourceRoot)) {
   }
 }
 
-const nativeCurationPath = path.resolve("crates/context-stilld/src/domains/queue_lifecycle/curation_executor.rs");
+const nativeCurationPath = path.resolve(
+  "crates/context-stilld/src/domains/queue_lifecycle/curation_executor.rs",
+);
 const nativeCuration = await readFile(nativeCurationPath, "utf8");
 for (const required of [
   'managed_context("landscape.curationPlan")',
@@ -64,12 +66,20 @@ for (const required of [
   'include_str!("../../../../../shared/prompts/landscape-curation-v2.txt")',
 ]) {
   if (!nativeCuration.includes(required)) {
-    violations.push(`crates/context-stilld/src/domains/queue_lifecycle/curation_executor.rs: missing managed Curation SystemContext binding: ${required}`);
+    violations.push(
+      `crates/context-stilld/src/domains/queue_lifecycle/curation_executor.rs: missing managed Curation SystemContext binding: ${required}`,
+    );
   }
 }
-for (const forbidden of ["Curate knowledge autonomously.", "proposed_canonical_body", "Only high confidence"]) {
+for (const forbidden of [
+  "Curate knowledge autonomously.",
+  "proposed_canonical_body",
+  "Only high confidence",
+]) {
   if (nativeCuration.includes(forbidden)) {
-    violations.push(`crates/context-stilld/src/domains/queue_lifecycle/curation_executor.rs: stale inline Curation v1 contract: ${forbidden}`);
+    violations.push(
+      `crates/context-stilld/src/domains/queue_lifecycle/curation_executor.rs: stale inline Curation v1 contract: ${forbidden}`,
+    );
   }
 }
 

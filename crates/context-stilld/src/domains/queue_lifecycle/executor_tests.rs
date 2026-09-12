@@ -923,7 +923,7 @@ fn rust_executor_keeps_provider_pool_targets_as_membership_source_of_truth() {
 }
 
 #[test]
-fn rust_executor_excludes_coding_default_model_from_queue_pool() {
+fn rust_executor_accepts_configured_models_without_name_based_exclusions() {
     let settings = json!({
         "taskRouting": {"episodeDistiller": {"provider": "local-llm", "providerPoolId": "pool"}},
         "providerPools": [{"id": "pool", "enabled": true, "targets": [
@@ -937,7 +937,10 @@ fn rust_executor_excludes_coding_default_model_from_queue_pool() {
     });
     let pools = provider_pools(&settings);
     assert_eq!(pools.len(), 1);
-    assert_eq!(pools[0].targets, vec!["worker".to_string()]);
+    assert_eq!(
+        pools[0].targets,
+        vec!["coding".to_string(), "worker".to_string()]
+    );
 }
 
 #[test]
@@ -987,4 +990,21 @@ fn rust_executor_treats_provider_pool_routes_as_pool_wide_selection() {
         .find(|queue| queue.queue_name == "coveringEvidence")
         .unwrap();
     assert_eq!(covering.preferred_target_ids, Vec::<String>::new());
+}
+
+#[test]
+fn mixed_pool_resolves_explicit_spark_without_using_codex_default() {
+    let settings = json!({"providers":{"codex":{"enabled":true,"model":"gpt-5.4-mini"},"local-llm":{"models":[{"id":"qwen","model":"qwen-agent-worker","apiBaseUrl":"http://127.0.0.1:1"}]}},
+      "providerPools":[{"id":"mixed","enabled":true,"maxConcurrent":3,"targets":[{"provider":"local-llm","localLlmModelId":"qwen"},{"provider":"codex","targetId":"spark","model":"gpt-5.3-codex-spark"}]}],
+      "taskRouting":{"episodeDistiller":{"provider":"local-llm","providerPoolId":"mixed","model":"qwen-agent-worker"}}});
+    let pools = provider_pools(&settings);
+    assert_eq!(pools[0].targets, vec!["qwen", "spark"]);
+    let spark = local_llm_target_config(&settings, "spark").unwrap();
+    assert!(spark.codex);
+    assert_eq!(spark.model, "gpt-5.3-codex-spark");
+    assert_eq!(local_llm_target_secret_key(&settings, "spark").unwrap(), "");
+    assert!(!local_llm_target_config(&settings, "qwen").unwrap().codex);
+    let mut wrong = settings.clone();
+    wrong["providerPools"][0]["targets"][1]["model"] = json!("gpt-5.4-mini");
+    assert!(local_llm_target_config(&wrong, "spark").is_err());
 }

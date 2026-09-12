@@ -19,3 +19,9 @@ data/
 artifacts/*.png
 artifacts/*.PNG
 exports/
+
+# Generated verification reports
+artifacts/coverage/
+artifacts/dependency-audit/
+artifacts/release/
+artifacts/improvements-coverage/

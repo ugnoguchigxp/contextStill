@@ -88,7 +88,7 @@ vi.mock("../src/modules/landscape/landscape-review-candidate.service.js", () => 
   LandscapeReviewCandidateLinkError: LandscapeReviewCandidateLinkErrorMock,
 }));
 
-vi.mock("../api/modules/graph/graph.repository.js", () => ({
+vi.mock("../src/modules/graph/graph.repository.js", () => ({
   buildGraphSnapshot: vi.fn(),
   fetchGraphNodeDetail: vi.fn(),
   listGraphCommunityLabels: vi.fn(),

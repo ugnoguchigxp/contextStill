@@ -22,6 +22,8 @@ const repositoryMocks = vi.hoisted(() => ({
   testAzureOpenAiDeployment: vi.fn(),
   testLocalLlmModel: vi.fn(),
   testRuntimeProvider: vi.fn(),
+  fetchCodexAuthStatus: vi.fn(),
+  fetchCodexLoginCommand: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -57,6 +59,8 @@ vi.mock("../../../web/src/modules/admin/repositories/admin.repository", async ()
     testAzureOpenAiDeployment: repositoryMocks.testAzureOpenAiDeployment,
     testLocalLlmModel: repositoryMocks.testLocalLlmModel,
     testRuntimeProvider: repositoryMocks.testRuntimeProvider,
+    fetchCodexAuthStatus: repositoryMocks.fetchCodexAuthStatus,
+    fetchCodexLoginCommand: repositoryMocks.fetchCodexLoginCommand,
   };
 });
 
@@ -447,6 +451,22 @@ describe("SettingsPage", () => {
     repositoryMocks.fetchRuntimeSettings.mockReset();
     repositoryMocks.updateRuntimeSettings.mockReset();
     repositoryMocks.reloadRuntimeSettingsCache.mockReset();
+    repositoryMocks.fetchCodexAuthStatus.mockReset();
+    repositoryMocks.fetchCodexLoginCommand.mockReset();
+    repositoryMocks.fetchCodexAuthStatus.mockResolvedValue({
+      codexHome: "/tmp/codex",
+      cliAvailable: true,
+      authJsonExists: true,
+      accessTokenConfigured: true,
+      tokenInfo: {
+        authMode: "chatgpt",
+        email: "dev@example.com",
+        expiresAt: "2026-12-01T00:00:00.000Z",
+        isExpired: false,
+      },
+      recommendedAction: "ready",
+    });
+    repositoryMocks.fetchCodexLoginCommand.mockResolvedValue({ command: "codex login --device" });
     repositoryMocks.testAzureOpenAiDeployment.mockReset();
     repositoryMocks.testLocalLlmModel.mockReset();
     repositoryMocks.testRuntimeProvider.mockReset();
@@ -1475,6 +1495,61 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("button", { name: "Add Pool" })).toBeDisabled();
   });
 
+  it("creates a Spark-only pool without a Local LLM endpoint", async () => {
+    const settings = buildSettingsView();
+    settings.providerPools = [];
+    settings.providers["local-llm"].models = [];
+    settings.providers["local-llm"].apiBaseUrl = "";
+    settings.providers["local-llm"].model = "";
+    settings.providers.codex.enabled = true;
+    repositoryMocks.fetchRuntimeSettings.mockResolvedValue({
+      ...buildSnapshot(),
+      settings,
+      effective: settings,
+    });
+    routerState.pathname = "/setting/llmpool";
+    renderPage();
+    const add = await screen.findByRole("button", { name: "Add Pool" });
+    expect(add).toBeEnabled();
+    fireEvent.click(add);
+    expect(
+      screen.getByRole("checkbox", { name: "Use Codex Spark for Queue Pool 1" }),
+    ).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    expect(
+      repositoryMocks.updateRuntimeSettings.mock.calls[0][0].settings.providerPools[0].targets,
+    ).toEqual([{ provider: "codex", targetId: "codex-spark", model: "gpt-5.3-codex-spark" }]);
+  });
+
+  it("allows removing a configured Spark target after Codex is disabled", async () => {
+    const settings = buildSettingsView();
+    settings.providers.codex.enabled = false;
+    settings.providerPools[0].targets.push({
+      provider: "codex",
+      targetId: "codex-spark",
+      model: "gpt-5.3-codex-spark",
+    });
+    repositoryMocks.fetchRuntimeSettings.mockResolvedValue({
+      ...buildSnapshot(),
+      settings,
+      effective: settings,
+    });
+    routerState.pathname = "/setting/llmpool";
+    renderPage();
+    const spark = await screen.findByRole("checkbox", {
+      name: "Use Codex Spark for Local LLM pool",
+    });
+    expect(spark).toBeChecked();
+    expect(spark).toBeEnabled();
+    fireEvent.click(spark);
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    expect(
+      repositoryMocks.updateRuntimeSettings.mock.calls[0][0].settings.providerPools[0].targets,
+    ).toEqual([{ provider: "local-llm", localLlmModelId: "local-primary" }]);
+  });
+
   it("preserves Provider Pool targets when Local LLM models initially have no ids", async () => {
     const settings = buildSettingsView();
     settings.providerPools = [];
@@ -1578,6 +1653,19 @@ describe("SettingsPage", () => {
     expect(payload.secrets.localLlmApiKey2).toEqual({ value: "qwen-secret" });
   });
 
+  it("saves an explicit environment choice without sending a secret value", async () => {
+    routerState.pathname = "/setting/llmprovider";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Provider Endpoints" })).toBeInTheDocument();
+    const row = getLocalLlmEditRow("Qwen");
+    fireEvent.click(within(row).getByRole("button", { name: "Use environment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    expect(
+      repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0].secrets.localLlmApiKey2,
+    ).toEqual({ useEnvironment: true });
+  });
+
   it("renders Advanced sync settings and allows toggling them", async () => {
     routerState.pathname = "/setting/advanced";
     renderPage();
@@ -1629,5 +1717,111 @@ describe("SettingsPage", () => {
     expect(payload.settings.distillationRuntime.llmContextWindowTokens).toBe(128000);
     expect(payload.settings.distillationRuntime.llmMaxInputTokens).toBe(80000);
     expect(payload.settings.distillationRuntime.llmInputSafetyMarginTokens).toBe(4096);
+  });
+
+  it("reorders distillation priority on the General tab and updates timezone", async () => {
+    routerState.pathname = "/setting/general";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "General Settings" })).toBeInTheDocument();
+    expect(screen.getByText("knowledge_candidate")).toBeInTheDocument();
+
+    const timezone = screen.getByLabelText("Application Timezone");
+    fireEvent.change(timezone, { target: { value: "UTC" } });
+    expect(screen.getByText(/Timezone updated to UTC/)).toBeInTheDocument();
+
+    const knowledgeRow = screen.getByText("knowledge_candidate").closest(".rounded-md");
+    expect(knowledgeRow).toBeTruthy();
+    const moveButtons = within(knowledgeRow as HTMLElement).getAllByRole("button");
+    fireEvent.click(moveButtons[1]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.general.distillationPriority.targetPriorityOrder[0]).toBe("web_ingest");
+    expect(payload.settings.general.distillationPriority.targetPriorityOrder[1]).toBe(
+      "knowledge_candidate",
+    );
+  });
+
+  it("toggles search providers and edits routing fields", async () => {
+    routerState.pathname = "/setting/search";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Search Routing" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Search Secrets" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("brave enabled"));
+    fireEvent.click(screen.getByLabelText("exa enabled"));
+    fireEvent.click(screen.getByLabelText("duckduckgo enabled"));
+    fireEvent.change(screen.getByLabelText("Max Provider Attempts"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Result Count"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Timeout (seconds)"), { target: { value: "20" } });
+    fireEvent.change(screen.getByLabelText("Rate Limit Cooldown (sec)"), {
+      target: { value: "120" },
+    });
+
+    const braveRow = screen.getByText("brave").closest(".settings-provider-order-item");
+    expect(braveRow).toBeTruthy();
+    const providerButtons = within(braveRow as HTMLElement).getAllByRole("button");
+    fireEvent.click(providerButtons[1]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.search.providers.brave.enabled).toBe(false);
+    expect(payload.settings.search.providers.exa.enabled).toBe(false);
+    expect(payload.settings.search.providers.duckduckgo.enabled).toBe(false);
+    expect(payload.settings.search.maxProviderAttempts).toBe(3);
+    expect(payload.settings.search.resultCount).toBe(5);
+    expect(payload.settings.search.timeoutMs).toBe(20000);
+    expect(payload.settings.search.rateLimitCooldownSeconds).toBe(120);
+    expect(payload.settings.search.providerOrder[0]).toBe("exa");
+  });
+
+  it("updates embedding provider fields", async () => {
+    routerState.pathname = "/setting/embedding";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Embedding Provider" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "openai" } });
+    fireEvent.change(screen.getByLabelText("External provider URL"), {
+      target: { value: "http://127.0.0.1:9999" },
+    });
+    fireEvent.change(screen.getByLabelText("OpenAI Model"), {
+      target: { value: "text-embedding-3-large" },
+    });
+    fireEvent.change(screen.getByLabelText("Timeout (seconds)"), { target: { value: "45" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.embedding).toMatchObject({
+      provider: "openai",
+      daemonUrl: "http://127.0.0.1:9999",
+      openaiModel: "text-embedding-3-large",
+      timeoutMs: 45000,
+    });
+  });
+
+  it("shows the Codex ready guide on the provider tab", async () => {
+    routerState.pathname = "/setting/llmprovider";
+    renderPage();
+    expect(await screen.findByText("Ready to use Codex as an LLM provider.")).toBeInTheDocument();
+  });
+
+  it("loads a Codex login command when authentication is required", async () => {
+    repositoryMocks.fetchCodexAuthStatus.mockResolvedValue({
+      codexHome: "/tmp/codex",
+      cliAvailable: true,
+      authJsonExists: false,
+      accessTokenConfigured: false,
+      tokenInfo: null,
+      recommendedAction: "run-codex-login",
+    });
+    routerState.pathname = "/setting/llmprovider";
+    renderPage();
+    const getCommand = await screen.findByRole("button", { name: "Get Login Command" });
+    fireEvent.click(getCommand);
+    await waitFor(() => expect(repositoryMocks.fetchCodexLoginCommand).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("codex login --device")).toBeInTheDocument();
   });
 });

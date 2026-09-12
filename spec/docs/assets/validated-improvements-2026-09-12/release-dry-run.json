@@ -1,0 +1,11 @@
+{
+  "tag": "v0.1.0",
+  "version": "0.1.0",
+  "schemaRevision": 8,
+  "platform": "darwin",
+  "arch": "arm64",
+  "sha256": "5a91997019dc8030cff79363c164dbf88f9218326219bfd002b0fd9c7258d5b6",
+  "published": false,
+  "releaseEligible": false,
+  "reason": "Dry-run only: signing, launch identity acceptance and hosted CI results require release review before publication."
+}

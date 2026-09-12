@@ -118,7 +118,7 @@ describe("settings.repository.sqlite", () => {
     mockDb.query.mockImplementation(
       () =>
         ({
-          run: vi.fn(),
+          run: vi.fn().mockReturnValue({ changes: 1 }),
           get: vi.fn().mockReturnValue(null), // select returns null
         }) as any,
     );
@@ -137,7 +137,7 @@ describe("settings.repository.sqlite", () => {
     mockDb.query.mockImplementation(
       () =>
         ({
-          run: vi.fn(),
+          run: vi.fn().mockReturnValue({ changes: 1 }),
         }) as any,
     );
 

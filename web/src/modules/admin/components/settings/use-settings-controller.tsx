@@ -96,7 +96,7 @@ export function useSettingsController() {
     () =>
       (Object.keys(secretDrafts) as RuntimeSecretKey[]).some((key) => {
         const item = secretDrafts[key];
-        return Boolean(item?.clear || item?.value.trim().length);
+        return Boolean(item?.useEnvironment || item?.clear || item?.value.trim().length);
       }),
     [secretDrafts],
   );
@@ -280,6 +280,21 @@ export function useSettingsController() {
             <Trash2 size={14} />
             Clear
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              setSecretDrafts((current) => ({
+                ...current,
+                [key]: { value: "", clear: false, useEnvironment: true },
+              }))
+            }
+          >
+            Use environment
+          </Button>
+          {draftSecret.useEnvironment ? <Badge variant="warning">pending environment</Badge> : null}
+          <span>Clear disables this credential, including environment fallback.</span>
           {draftSecret.clear ? <Badge variant="destructive">pending clear</Badge> : null}
           {draftSecret.value.trim() ? <Badge variant="warning">pending replace</Badge> : null}
         </div>

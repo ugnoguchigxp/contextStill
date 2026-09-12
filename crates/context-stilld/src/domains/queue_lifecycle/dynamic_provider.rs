@@ -301,6 +301,8 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
             .target()
             .ok_or_else(|| CliError::runtime("ready LARM manager has no claimed target"))?;
         let target = LocalLlmTargetConfig {
+            codex: false,
+            quota_db: None,
             target_id: plan.pool.targets[0].clone(),
             api_base_url: claimed_target.api_base_url.clone(),
             api_path: "/v1/chat/completions".to_string(),

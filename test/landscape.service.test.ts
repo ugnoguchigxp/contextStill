@@ -11,7 +11,7 @@ const mockLoadLandscapeFeedbackAggregates = vi.fn();
 const mockLoadLandscapeSourceRefCountMap = vi.fn();
 
 // インポート解決用モックパスの修正 (test/ から見た相対パス)
-vi.mock("../api/modules/graph/graph.repository.js", () => ({
+vi.mock("../src/modules/graph/graph.repository.js", () => ({
   buildGraphSnapshot: (...args: any[]) => mockBuildGraphSnapshot(...args),
 }));
 

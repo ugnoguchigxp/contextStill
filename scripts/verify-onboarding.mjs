@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { copyFile } from "node:fs/promises";
+import { copyFile, readFile } from "node:fs/promises";
 import path from "node:path";
+import { callIsolatedMcp } from "./testing/isolated-mcp.mjs";
 import {
   TEST_ADMIN_KEY,
   createIsolatedRuntime,
@@ -9,6 +10,24 @@ import {
   waitUntil,
 } from "./testing/isolated-runtime.mjs";
 
+const fixture = JSON.parse(
+  await readFile(
+    new URL(
+      "../spec/docs/assets/validated-improvements-2026-09-12/onboarding-fixture.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+const guide = await readFile(
+  new URL("../spec/docs/pub/getting-started.md", import.meta.url),
+  "utf8",
+);
+for (const command of fixture.requiredCommands)
+  assert.ok(guide.includes(command), `Getting Started must document ${command}`);
+assert.ok(guide.includes(`--goal "${fixture.goal}"`));
+assert.ok(guide.includes(`--change-types ${fixture.changeTypes.join(",")}`));
+assert.ok(guide.includes(`--domains ${fixture.domains.join(",")}`));
 const runtime = await createIsolatedRuntime();
 try {
   await runtime.initialize();
@@ -32,19 +51,30 @@ try {
     "--no-env-file",
     "src/cli/compile.ts",
     "--goal",
-    "understand this repository's development workflow",
+    fixture.goal,
     "--repo-path",
     projectRoot,
     "--change-types",
-    "docs,plan",
+    fixture.changeTypes.join(","),
     "--domains",
-    "onboarding,workflow",
+    fixture.domains.join(","),
     "--json",
   ];
   const empty = JSON.parse(await runtime.run("bun", compileArgs));
   assert.equal(empty.rules.length + empty.procedures.length, 0);
   assert.ok(empty.runId);
 
+  const sourceResponse = await api("/sources/pages", {
+    method: "POST",
+    body: JSON.stringify({
+      slug: "onboarding-proof",
+      title: "Onboarding workflow evidence",
+      body: "For onboarding workflow changes, run the isolated onboarding smoke and confirm backup verification before declaring the workflow ready.",
+    }),
+  });
+  assert.equal(sourceResponse.status, 200, await sourceResponse.clone().text());
+  const sourcePage = await (await api("/sources/pages/onboarding-proof")).json();
+  assert.ok(sourcePage.path);
   const created = await api("/knowledge", {
     method: "POST",
     body: JSON.stringify({
@@ -56,6 +86,7 @@ try {
       body: "For onboarding workflow changes, run the isolated onboarding smoke and confirm backup verification before declaring the workflow ready.",
       domains: ["onboarding", "workflow"],
       changeTypes: ["docs", "plan"],
+      metadata: { sourceRefs: [sourcePage.path] },
       confidence: 95,
       importance: 95,
     }),
@@ -69,6 +100,20 @@ try {
     ),
     "first populated compile must retrieve the saved knowledge",
   );
+  const evalResult = await callIsolatedMcp(runtime, "compile_eval", {
+    runId: pack.runId,
+    outcome: "useful",
+    body: "The saved source-backed onboarding rule was retrieved.",
+    relevance: 100,
+    actionability: 100,
+    coverage: 100,
+    clarity: 100,
+    specificity: 100,
+  });
+  assert.ok(evalResult.content.length);
+  const detailBefore = await (await api(`/context/runs/${pack.runId}`)).json();
+  assert.equal(detailBefore.detail.evaluations.length, 1);
+  assert.ok(JSON.stringify(detailBefore.detail).includes(sourcePage.path));
   const persisted = await runtime.writer(
     "SELECT id FROM context_compile_runs WHERE id = ?",
     [pack.runId],
@@ -92,6 +137,9 @@ try {
     async () => (await fetch(`${origin}/api/health/ready`)).status === 200,
     "writer recovery readiness",
   );
+  const detailAfter = await (await api(`/context/runs/${pack.runId}`)).json();
+  assert.equal(detailAfter.detail.evaluations.length, 1);
+  assert.equal((await (await api("/sources/pages/onboarding-proof")).json()).body, sourcePage.body);
   await runtime.stopWriter();
   const backup = JSON.parse(await runtime.cli("backup", "create", "--json"));
   const verified = JSON.parse(

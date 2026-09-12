@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
 
 const tasks = [
+  { label: "boundary:check", script: "boundary:check" },
+  { label: "test:sqlite-manifest", script: "test:sqlite-manifest" },
   { label: "maintainability:check", script: "maintainability:check" },
   { label: "test:context-effectiveness", script: "test:context-effectiveness" },
   { label: "system-context:check", script: "system-context:check" },

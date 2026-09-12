@@ -55,9 +55,19 @@ pub(super) fn search_knowledge_items(
     identity: &super::super::project_identity::ResolvedCompileProjectIdentity,
     request_facets: &RepositoryRequestFacets,
     include_query_matches: bool,
-) -> Vec<PackKnowledge> {
+) -> Result<Vec<PackKnowledge>, String> {
+    // Keep candidate rows and their source links on the same SQLite snapshot after the
+    // candidate statement reaches DONE. Reuse an enclosing transaction when there is one.
+    let _snapshot =
+        if connection.is_autocommit() {
+            Some(connection.unchecked_transaction().map_err(|error| {
+                format!("failed to start knowledge retrieval snapshot: {error}")
+            })?)
+        } else {
+            None
+        };
     if !table_exists(connection, "knowledge_items") {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let (scope_clause, values) = eligible_scope_clause(identity);
     let sql = format!(
@@ -71,7 +81,7 @@ pub(super) fn search_knowledge_items(
     );
     let mut statement = match connection.prepare(&sql) {
         Ok(statement) => statement,
-        Err(_) => return Vec::new(),
+        Err(error) => return Err(format!("knowledge retrieval failed: {error}")),
     };
     let rows = match statement.query_map(query_params(&values), |row| {
         Ok((
@@ -90,7 +100,7 @@ pub(super) fn search_knowledge_items(
         ))
     }) {
         Ok(rows) => rows,
-        Err(_) => return Vec::new(),
+        Err(error) => return Err(format!("knowledge retrieval failed: {error}")),
     };
     let mut items = rows
         .flatten()
@@ -125,7 +135,7 @@ pub(super) fn search_knowledge_items(
                 let query_score = score_text(&format!("{title}\n{body}"), query);
                 let score = query_score + dynamic_score.round() as i64;
                 (score > 0 || (include_query_matches && query_score > 0)).then(|| PackKnowledge {
-                    source_refs: knowledge_source_refs(connection, &id),
+                    source_refs: Vec::new(),
                     scope_snapshot: scope_snapshot(
                         identity,
                         &item_scope,
@@ -154,28 +164,30 @@ pub(super) fn search_knowledge_items(
                 .then_with(|| left.id.cmp(&right.id))
         });
         items.truncate(limit);
-        return items;
+    } else {
+        items = foundation_candidate_pool(
+            items,
+            limit,
+            8,
+            |item| item.query_score > 0,
+            |left, right| {
+                right
+                    .query_score
+                    .cmp(&left.query_score)
+                    .then_with(|| {
+                        normalized_ranking_score(right.dynamic_score, 0.0, 100.0)
+                            .cmp(&normalized_ranking_score(left.dynamic_score, 0.0, 100.0))
+                    })
+                    .then_with(|| {
+                        normalized_ranking_score(right.importance, 0.0, 100.0)
+                            .cmp(&normalized_ranking_score(left.importance, 0.0, 100.0))
+                    })
+                    .then_with(|| left.id.cmp(&right.id))
+            },
+        );
     }
-    foundation_candidate_pool(
-        items,
-        limit,
-        8,
-        |item| item.query_score > 0,
-        |left, right| {
-            right
-                .query_score
-                .cmp(&left.query_score)
-                .then_with(|| {
-                    normalized_ranking_score(right.dynamic_score, 0.0, 100.0)
-                        .cmp(&normalized_ranking_score(left.dynamic_score, 0.0, 100.0))
-                })
-                .then_with(|| {
-                    normalized_ranking_score(right.importance, 0.0, 100.0)
-                        .cmp(&normalized_ranking_score(left.importance, 0.0, 100.0))
-                })
-                .then_with(|| left.id.cmp(&right.id))
-        },
-    )
+    populate_knowledge_source_refs(connection, &mut items);
+    Ok(items)
 }
 
 pub(super) fn search_episode_cards(
@@ -396,29 +408,51 @@ pub(super) fn foundation_score(query_score: i64, dynamic_score: f64, importance:
         .saturating_add(normalized_ranking_score(importance, 0.0, 100.0))
 }
 
-pub(super) fn knowledge_source_refs(connection: &Connection, knowledge_id: &str) -> Vec<String> {
-    let mut statement = match connection.prepare(
-        r#"
-        select s.uri, sf.locator
-        from knowledge_source_links ksl
-        join source_fragments sf on sf.id = ksl.source_fragment_id
-        join sources s on s.id = sf.source_id
-        where ksl.knowledge_id = ?1
-        order by ksl.confidence desc, ksl.created_at desc
-        limit 5
-        "#,
-    ) {
-        Ok(statement) => statement,
-        Err(_) => return Vec::new(),
-    };
-    statement
-        .query_map([knowledge_id], |row| {
-            let uri: String = row.get(0)?;
-            let locator: String = row.get(1)?;
-            Ok(format!("{uri}#{locator}"))
-        })
-        .map(|rows| rows.flatten().collect())
-        .unwrap_or_default()
+// Below SQLite's default bind-variable limit, including older supported runtimes.
+const SOURCE_REF_CHUNK_SIZE: usize = 256;
+
+fn populate_knowledge_source_refs(connection: &Connection, items: &mut [PackKnowledge]) {
+    for chunk in items.chunks_mut(SOURCE_REF_CHUNK_SIZE) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
+            r#"
+            select knowledge_id, uri, locator from (
+                select ksl.knowledge_id, s.uri, sf.locator,
+                       row_number() over (
+                           partition by ksl.knowledge_id
+                           order by ksl.confidence desc, ksl.created_at desc
+                       ) as ref_rank
+                from knowledge_source_links ksl
+                join source_fragments sf on sf.id = ksl.source_fragment_id
+                join sources s on s.id = sf.source_id
+                where ksl.knowledge_id in ({placeholders})
+            ) where ref_rank <= 5
+            order by knowledge_id, ref_rank
+            "#,
+        );
+        let Ok(mut statement) = connection.prepare(&sql) else {
+            // Source tables are optional in legacy databases, as in the previous per-item query.
+            continue;
+        };
+        let Ok(rows) = statement.query_map(
+            rusqlite::params_from_iter(chunk.iter().map(|item| &item.id)),
+            |row| {
+                let id: String = row.get(0)?;
+                let uri: String = row.get(1)?;
+                let locator: String = row.get(2)?;
+                Ok((id, format!("{uri}#{locator}")))
+            },
+        ) else {
+            continue;
+        };
+        let mut refs = std::collections::HashMap::<String, Vec<String>>::new();
+        for (id, source_ref) in rows.flatten() {
+            refs.entry(id).or_default().push(source_ref);
+        }
+        for item in chunk {
+            item.source_refs = refs.remove(&item.id).unwrap_or_default();
+        }
+    }
 }
 
 pub(super) fn degraded_reasons(connection: &Connection) -> Vec<String> {

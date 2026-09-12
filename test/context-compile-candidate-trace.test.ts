@@ -7,7 +7,7 @@ import {
   insertContextPackItems,
   updateCompileRunSnapshot,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
-import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
+import { compileContextPack } from "../src/modules/context-compiler/context-compiler.legacy.js";
 import { searchEpisodes } from "../src/modules/episodic-memory/episode-card.service.js";
 import { recordCompileRunKnowledgeUsageSignals } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";

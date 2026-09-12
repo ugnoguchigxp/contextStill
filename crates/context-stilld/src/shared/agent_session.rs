@@ -47,7 +47,7 @@ pub(crate) fn run_agent_session_chat(
                 "approval_policy": "strict"
             })),
         request.api_key,
-    )
+    )?
     .send()
     .map_err(|error| format!("local-llm agent session create failed: {error}"))?;
     let session = parse_json_response(session_response, "agent session create")?;
@@ -69,7 +69,7 @@ pub(crate) fn run_agent_session_chat(
             .post(session_child_url(&sessions_url, session_id, "release"))
             .header("Idempotency-Key", idempotency_key("release")),
         request.api_key,
-    )
+    )?
     .send()
     .map_err(|error| format!("local-llm agent session release failed: {error}"))
     .and_then(|response| ensure_success(response, "agent session release"));
@@ -94,12 +94,12 @@ fn run_agent_session_turn(
             .header("Idempotency-Key", idempotency_key("turn"))
             .json(&json!({"input": [{"type": "text", "text": prompt}]})),
         request.api_key,
-    )
+    )?
     .send()
     .map_err(|error| format!("local-llm agent session turn failed: {error}"))?;
     ensure_success(turn_response, "agent session turn")?;
 
-    let events_response = with_bearer(client.get(events_url), request.api_key)
+    let events_response = with_bearer(client.get(events_url), request.api_key)?
         .send()
         .map_err(|error| format!("local-llm agent session events failed: {error}"))?;
     if !events_response.status().is_success() {
@@ -108,10 +108,13 @@ fn run_agent_session_turn(
     read_events(events_response)
 }
 
-fn with_bearer(request: RequestBuilder, api_key: Option<&str>) -> RequestBuilder {
+fn with_bearer(request: RequestBuilder, api_key: Option<&str>) -> Result<RequestBuilder, String> {
     match api_key.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(api_key) => request.bearer_auth(api_key),
-        None => request,
+        Some(api_key) => Ok(request.header(
+            "authorization",
+            crate::domains::secret_store::header(api_key, true)?,
+        )),
+        None => Ok(request),
     }
 }
 
@@ -192,11 +195,7 @@ fn ensure_success(response: Response, label: &str) -> Result<(), String> {
 fn http_error(response: Response, label: &str) -> String {
     let status = response.status();
     let body = response.text().unwrap_or_default();
-    format!(
-        "local-llm {label} HTTP {}: {}",
-        status.as_u16(),
-        body.chars().take(500).collect::<String>()
-    )
+    format!("local-llm {label} HTTP {}: {}", status.as_u16(), body)
 }
 
 fn read_events(response: Response) -> Result<String, String> {
@@ -271,13 +270,25 @@ fn apply_event(
             return Ok(Some(content.to_string()));
         }
         "turn.failed" | "turn.cancelled" => {
-            return Err(format!("local-llm agent session stopped at {event_name}"));
+            let details = match event_data.as_object() {
+                Some(data) if !data.is_empty() => format!(": {event_data}"),
+                _ => String::new(),
+            };
+            return Err(format!(
+                "local-llm agent session stopped at {event_name}{details}"
+            ));
         }
         _ if event_name.contains("approval")
             || event_name.contains("user_input")
             || event_name.contains("user-input") =>
         {
-            return Err(format!("local-llm agent session stopped at {event_name}"));
+            let details = match event_data.as_object() {
+                Some(data) if !data.is_empty() => format!(": {event_data}"),
+                _ => String::new(),
+            };
+            return Err(format!(
+                "local-llm agent session stopped at {event_name}{details}"
+            ));
         }
         _ => {}
     }
@@ -333,6 +344,60 @@ mod tests {
         )
         .unwrap();
         assert_eq!(content.as_deref(), Some("pong"));
+    }
+
+    #[test]
+    fn http_error_preserves_full_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let body =
+            json!({"message": "x".repeat(600), "code": "runtime_quota_exceeded"}).to_string();
+        let response_body = body.clone();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request(&mut stream);
+            stream
+                .write_all(json_response(429, &response_body, "application/json").as_bytes())
+                .unwrap();
+        });
+        let response = Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap()
+            .get(format!("http://{address}"))
+            .send()
+            .unwrap();
+        assert_eq!(
+            super::http_error(response, "agent session"),
+            format!("local-llm agent session HTTP 429: {body}")
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn failed_turn_preserves_provider_details() {
+        let reason =
+            "Subscription quota exhausted. Your usage window resets at 2026-09-14T00:00:00Z.";
+        let details = json!({"terminal": "failed", "reason": reason,
+            "error": {"code": "rate_limit_error", "retryable": false,
+                "message": "x".repeat(600), "request_id": "original-request"}});
+        for event in ["turn.failed", "turn.cancelled"] {
+            let error = apply_event(
+                event,
+                &json!({"data": details}).to_string(),
+                &mut String::new(),
+                &mut String::new(),
+            )
+            .unwrap_err();
+            let prefix = format!("local-llm agent session stopped at {event}: ");
+            let preserved: serde_json::Value =
+                serde_json::from_str(error.strip_prefix(&prefix).unwrap()).unwrap();
+            assert_eq!(preserved, details);
+        }
+        assert_eq!(
+            apply_event("turn.failed", "{}", &mut String::new(), &mut String::new()).unwrap_err(),
+            "local-llm agent session stopped at turn.failed"
+        );
     }
 
     #[test]

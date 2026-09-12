@@ -24,6 +24,7 @@ pub(super) struct EvidenceGroup {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct EvidenceRender {
+    pub(super) included_ids: HashSet<(&'static str, String)>,
     pub(super) markdown: String,
     pub(super) partial_reasons: Vec<String>,
 }
@@ -114,6 +115,7 @@ fn append_groups(
     max_count: usize,
     usable_bytes: usize,
     partial_reasons: &mut Vec<String>,
+    included_ids: &mut HashSet<(&'static str, String)>,
 ) {
     let mut included = 0;
     let mut section = String::new();
@@ -128,7 +130,13 @@ fn append_groups(
         } else {
             "\n\n".to_string()
         };
-        if markdown.len() + section.len() + prefix.len() + candidate.len() > usable_bytes {
+        if markdown.len()
+            + usize::from(!markdown.is_empty()) * 2
+            + section.len()
+            + prefix.len()
+            + candidate.len()
+            > usable_bytes
+        {
             let reason = if group.protected {
                 "protected_group_omitted"
             } else {
@@ -139,6 +147,7 @@ fn append_groups(
         }
         section.push_str(&prefix);
         section.push_str(&candidate);
+        included_ids.insert((group.kind, group.entity_id));
         included += 1;
     }
     if !section.is_empty() {
@@ -177,6 +186,7 @@ pub(super) fn render(
     let usable_bytes = max_bytes.saturating_sub(NOTICE_RESERVE_BYTES);
     let mut markdown = String::new();
     let mut partial_reasons = Vec::new();
+    let mut included_ids = HashSet::new();
     append_groups(
         &mut markdown,
         "適用条件・禁止事項",
@@ -184,6 +194,7 @@ pub(super) fn render(
         DEFAULT_KNOWLEDGE_LIMIT,
         usable_bytes,
         &mut partial_reasons,
+        &mut included_ids,
     );
     append_groups(
         &mut markdown,
@@ -192,6 +203,7 @@ pub(super) fn render(
         DEFAULT_KNOWLEDGE_LIMIT,
         usable_bytes,
         &mut partial_reasons,
+        &mut included_ids,
     );
     append_groups(
         &mut markdown,
@@ -200,6 +212,7 @@ pub(super) fn render(
         DEFAULT_EPISODE_LIMIT,
         usable_bytes,
         &mut partial_reasons,
+        &mut included_ids,
     );
     if !partial_reasons.is_empty() {
         let shown = partial_reasons.iter().take(3).cloned().collect::<Vec<_>>();
@@ -213,7 +226,7 @@ pub(super) fn render(
             "## 不足・衝突\n\n- 一部の根拠を予算内に収録できませんでした: {}{suffix}",
             shown.join(", ")
         );
-        if markdown.len() + notice.len() <= max_bytes {
+        if markdown.len() + usize::from(!markdown.is_empty()) * 2 + notice.len() <= max_bytes {
             if !markdown.is_empty() {
                 markdown.push_str("\n\n");
             }
@@ -221,6 +234,7 @@ pub(super) fn render(
         }
     }
     EvidenceRender {
+        included_ids,
         markdown: if markdown.is_empty() {
             "No Content".to_string()
         } else {

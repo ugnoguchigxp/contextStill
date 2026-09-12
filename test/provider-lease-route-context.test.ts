@@ -60,3 +60,35 @@ describe("provider lease route context", () => {
     );
   });
 });
+
+test("mixed pool Codex target overrides a Qwen route model and clears fallback", async () => {
+  const settings = cloneDefaultSettings();
+  settings.providers.codex.model = "gpt-5.4-mini";
+  settings.providerPools = [
+    {
+      id: "mixed",
+      label: "mixed",
+      enabled: true,
+      maxConcurrent: 3,
+      staleLeaseSeconds: 120,
+      lowPriorityAgingSeconds: 1800,
+      targets: [{ provider: "codex", targetId: "spark", model: "gpt-5.3-codex-spark" }],
+    },
+  ];
+  await runWithProviderLeaseRouteContext({ poolId: "mixed", targetId: "spark" }, async () => {
+    expect(
+      applyProviderLeaseRouteContext(settings, {
+        provider: "auto",
+        model: "qwen",
+        localLlmModel: "qwen",
+        providerPoolId: "mixed",
+        fallback: ["codex"],
+      }),
+    ).toMatchObject({
+      provider: "codex",
+      model: "gpt-5.3-codex-spark",
+      localLlmModel: undefined,
+      fallback: [],
+    });
+  });
+});

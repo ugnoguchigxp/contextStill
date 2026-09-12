@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveCodexExecutable } from "../modules/codex/spark-runtime.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
@@ -179,6 +180,16 @@ function renderPlist(): string {
       process.env.CONTEXT_STILL_SOURCE_CONTENT_ROOT ?? path.resolve(projectRoot, "wiki"),
     ],
     ["{{PATH}}", launchPath],
+    [
+      "{{CODEX_CLI_PATH}}",
+      (() => {
+        try {
+          return resolveCodexExecutable();
+        } catch {
+          return process.env.CONTEXT_STILL_CODEX_CLI_PATH ?? "";
+        }
+      })(),
+    ],
     ["{{APP_DATA_DIR}}", appDataDir],
     ["{{DB_BACKEND}}", process.env.CONTEXT_STILL_DB_BACKEND ?? "sqlite"],
     ["{{SQLITE_CORE_PATH}}", sqliteCorePath],
@@ -200,7 +211,7 @@ function renderPlist(): string {
     ],
     [
       "{{RUST_QUEUE_EXECUTOR_MAX_CLAIMS}}",
-      process.env.CONTEXT_STILL_RUST_QUEUE_EXECUTOR_MAX_CLAIMS ?? "2",
+      process.env.CONTEXT_STILL_RUST_QUEUE_EXECUTOR_MAX_CLAIMS ?? "3",
     ],
     [
       "{{RUST_FINDING_EXECUTION_MODE}}",

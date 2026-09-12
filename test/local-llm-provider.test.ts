@@ -222,6 +222,59 @@ describe("local-llm provider", () => {
     expect(spy.mock.calls[0]?.[0]).toBe("http://127.0.0.1:44449/v1/agents/models?runtime=muse");
   });
 
+  test("agent session preserves the full HTTP error body", async () => {
+    const body = JSON.stringify({ message: "x".repeat(600), code: "runtime_quota_exceeded" });
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(new Response(body, { status: 429 }));
+    await expect(
+      createLocalLlmProvider({
+        timeoutMs: 1000,
+        modelConfig: {
+          apiBaseUrl: "http://127.0.0.1:44449",
+          apiPath: "/v1/agents/sessions",
+          model: "muse/muse-spark-1.3-contributor",
+        },
+      }).chat({ messages: [{ role: "user", content: "ping" }], maxTokens: 8, temperature: 0 }),
+    ).rejects.toMatchObject({ status: 429, message: `local-llm agent session HTTP 429: ${body}` });
+  });
+
+  test.each(["turn.failed", "turn.cancelled"])(
+    "chat preserves %s provider details",
+    async (event) => {
+      const data = {
+        terminal: "failed",
+        reason: "Subscription quota exhausted. Your usage window resets at 2026-09-14T00:00:00Z.",
+        error: {
+          code: "rate_limit_error",
+          retryable: false,
+          message: "x".repeat(600),
+          request_id: "original-request",
+        },
+      };
+      const payload = { data };
+      const spy = vi
+        .spyOn(global, "fetch")
+        .mockResolvedValueOnce(new Response(JSON.stringify({ id: "ags_test" }), { status: 201 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ id: "agt_test" }), { status: 202 }))
+        .mockResolvedValueOnce(
+          new Response(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`),
+        )
+        .mockResolvedValueOnce(new Response("{}"));
+      const result = createLocalLlmProvider({
+        timeoutMs: 1000,
+        modelConfig: {
+          apiBaseUrl: "http://127.0.0.1:44449",
+          apiPath: "/v1/agents/sessions",
+          model: "muse/muse-spark-1.3-contributor",
+        },
+      }).chat({ messages: [{ role: "user", content: "ping" }], maxTokens: 8, temperature: 0 });
+      await expect(result).rejects.toMatchObject({
+        message: `local-llm agent session stopped at ${event}: ${JSON.stringify(data)}`,
+        cause: payload,
+      });
+      expect(spy.mock.calls.at(-1)?.[0]).toContain("/ags_test/release");
+    },
+  );
+
   test("chat runs an agent session turn, reads SSE output, and releases the session", async () => {
     const events = [
       'event: message.delta\ndata: {"data":{"text":"po"}}',

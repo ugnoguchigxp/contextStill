@@ -1,0 +1,41 @@
+{
+  "base": "HEAD",
+  "mode": "report-only",
+  "note": "Executable changed lines per runtime; no cross-runtime averaging or unmeasured-line success inference",
+  "vitest": {
+    "api": {
+      "covered": 3,
+      "total": 6,
+      "percent": 50
+    },
+    "src": {
+      "covered": 1110,
+      "total": 1320,
+      "percent": 84.0909090909091
+    },
+    "web": {
+      "covered": 18,
+      "total": 19,
+      "percent": 94.73684210526316
+    }
+  },
+  "bun": {
+    "src": {
+      "covered": 1969,
+      "total": 4236,
+      "percent": 46.48253068932956
+    },
+    "api": {
+      "covered": 3,
+      "total": 3,
+      "percent": 100
+    }
+  },
+  "rust": {
+    "crates": {
+      "covered": 1292,
+      "total": 2015,
+      "percent": 64.11910669975187
+    }
+  }
+}

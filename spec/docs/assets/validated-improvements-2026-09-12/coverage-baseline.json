@@ -1,0 +1,57 @@
+{
+  "measuredAt": "2026-09-13",
+  "host": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "metrics": "line coverage; each runtime has a separate denominator",
+  "measurements": {
+    "vitest": {
+      "api": {
+        "covered": 638,
+        "total": 1999,
+        "percent": 31.915957978989496
+      },
+      "src": {
+        "covered": 16225,
+        "total": 27715,
+        "percent": 58.54230561068014
+      },
+      "web": {
+        "covered": 3514,
+        "total": 4773,
+        "percent": 73.6224596689713
+      }
+    },
+    "bun": {
+      "src": {
+        "covered": 26771,
+        "total": 66383,
+        "percent": 40.328096048687165
+      },
+      "api": {
+        "covered": 1699,
+        "total": 3152,
+        "percent": 53.90228426395939
+      }
+    },
+    "rust": {
+      "crates": {
+        "covered": 33187,
+        "total": 40683,
+        "percent": 81.57461347491581
+      }
+    }
+  },
+  "thresholds": {
+    "vitest": {
+      "src": 57,
+      "api": 30,
+      "web": 72
+    },
+    "bun": {
+      "src": 39,
+      "api": 52
+    },
+    "rust": {
+      "crates": 79
+    }
+  }
+}

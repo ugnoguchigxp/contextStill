@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "baselineSha256": "5ef38fb6f22964ed2eff748c4c36da39aa2bd61ca67abf20670c0c05d5b116ae",
+  "candidateSha256": "bbb68c1ac709885dce4589f2b2a8a9d631910eb3cf104eaf8e5057c3293dd4ed",
+  "upgrade": "knowledge/run/eval preserved; new compile persisted",
+  "recovery": "pre-update backup restored with candidate; knowledge/run/eval preserved",
+  "syntheticProfileOnly": true,
+  "secrets": "No secrets in old-version fixture; Keychain migration and profile binding covered by verify:secrets",
+  "schemaRevision": 8,
+  "baselineRevision": "ff7703244547f323c9bf31e6d4d7f38ef4e2f3af",
+  "seededEvidenceCompiledBeforeAndAfter": true
+}

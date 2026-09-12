@@ -188,7 +188,7 @@ function resolveProviderPoolTarget(
     id: `provider-pool:${providerPoolId}:${target.provider}:${target.targetId}`,
     label: target.targetId,
     source: "provider_pool",
-    model: target.targetId,
+    model: target.model ?? settings.providers[target.provider].model,
     endpoint: null,
     providerPoolId,
   };
@@ -548,6 +548,7 @@ export function resolveSecretValue(
   key: RuntimeSecretKey,
   secretRow: SettingsRow | undefined,
 ): SecretValueEntry | null {
+  if (secretRow?.value.disabled === true) return null;
   const dbValue = getSecretStringFromRow(secretRow);
   if (dbValue) {
     return {

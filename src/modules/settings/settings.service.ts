@@ -1,5 +1,7 @@
 import { APP_CONSTANTS } from "../../constants.js";
 import { applyProviderLeaseRouteContext } from "./provider-lease-route-context.js";
+import { SecretStoreError, resolveSecretRows } from "./secret-store.client.js";
+import { saveSecretUpdate } from "./settings-secret.service.js";
 import {
   bootstrap,
   cloneDefaultSettings,
@@ -12,7 +14,6 @@ import {
   SETTINGS_DOCUMENT_KEY,
   SETTINGS_DOCUMENT_NAMESPACE,
   SETTINGS_SECRET_NAMESPACE,
-  deleteSettingsRow,
   findSettingsRow,
   listSettingsRows,
   upsertSettingsRow,
@@ -55,7 +56,7 @@ async function loadRuntimeSettingsInternal(): Promise<void> {
   ]);
 
   const settings = parseDocumentValue(documentRow);
-  const secretRowMap = buildSecretMap(secretRows);
+  const secretRowMap = buildSecretMap(await resolveSecretRows(secretRows));
   const resolvedSecrets: Partial<Record<RuntimeSecretKey, ReturnType<typeof resolveSecretValue>>> =
     {
       openaiApiKey: resolveSecretValue("openaiApiKey", secretRowMap.openaiApiKey),
@@ -147,7 +148,11 @@ export async function ensureRuntimeSettingsLoaded(): Promise<void> {
     return;
   }
   loadingPromise = loadRuntimeSettingsInternal()
-    .catch(() => {
+    .catch((error) => {
+      if (error instanceof SecretStoreError) {
+        applyRuntimeSettingsToProcess(runtimeSettingsCache.settings, {});
+        throw error;
+      }
       const fallback = defaultCache();
       applyRuntimeSettingsToProcess(fallback.settings, {
         openaiApiKey: fallback.view.providers.openai.apiKeySecret.configured
@@ -224,6 +229,20 @@ export async function saveRuntimeSettings(
   const existing = await findSettingsRow(SETTINGS_DOCUMENT_NAMESPACE, SETTINGS_DOCUMENT_KEY);
   const nextRevision = Math.max(1, (existing?.schemaVersion ?? 0) + 1);
 
+  if (input.secrets) {
+    for (const [rawKey, update] of Object.entries(input.secrets)) {
+      const key = normalizeSecretKey(rawKey);
+      if (!key) continue;
+      try {
+        await saveSecretUpdate(key, update, input.updatedBy ?? null);
+      } finally {
+        // Invalidate even after a partially completed update or failed cleanup.
+        invalidateRuntimeSettingsCache();
+        applyRuntimeSettingsToProcess(normalized, {});
+      }
+    }
+  }
+
   const written = await upsertSettingsRow({
     namespace: SETTINGS_DOCUMENT_NAMESPACE,
     key: SETTINGS_DOCUMENT_KEY,
@@ -233,29 +252,6 @@ export async function saveRuntimeSettings(
     description: "Runtime settings control-plane document",
     valueKind: "json",
   });
-
-  if (input.secrets) {
-    for (const [rawKey, update] of Object.entries(input.secrets)) {
-      const key = normalizeSecretKey(rawKey);
-      if (!key) continue;
-      if (update.clear) {
-        await deleteSettingsRow(SETTINGS_SECRET_NAMESPACE, key);
-        continue;
-      }
-      const value = update.value?.trim();
-      if (!value) continue;
-      await upsertSettingsRow({
-        namespace: SETTINGS_SECRET_NAMESPACE,
-        key,
-        value: { value },
-        schemaVersion: nextRevision,
-        updatedBy: input.updatedBy ?? null,
-        description: `Secret for ${key}`,
-        valueKind: "encrypted",
-        isSecret: true,
-      });
-    }
-  }
 
   await reloadRuntimeSettingsCache();
   return {

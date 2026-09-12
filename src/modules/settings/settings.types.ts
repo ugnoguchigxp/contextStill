@@ -135,6 +135,7 @@ export type RuntimeProviderPoolTarget =
   | {
       provider: "openai" | "bedrock" | "codex";
       targetId: string;
+      model?: string;
     }
   | {
       provider: "larm-agent-connection";
@@ -533,6 +534,7 @@ const runtimeProviderPoolTargetSchema = z.discriminatedUnion("provider", [
   z.object({
     provider: z.enum(["openai", "bedrock", "codex"] as const),
     targetId: z.string().trim().min(1).max(120),
+    model: z.string().trim().min(1).max(120).optional(),
   }),
   z.object({
     provider: z.literal("larm-agent-connection"),
@@ -798,9 +800,17 @@ export const runtimeSecretUpdateSchema = z
   .object({
     value: z.string().optional(),
     clear: z.boolean().optional(),
+    useEnvironment: z.boolean().optional(),
   })
-  .refine((value) => value.clear === true || typeof value.value === "string", {
-    message: "value または clear=true のどちらかが必要です",
+  .refine(
+    (value) =>
+      value.clear === true || value.useEnvironment === true || typeof value.value === "string",
+    {
+      message: "value、clear=true、useEnvironment=true のいずれかが必要です",
+    },
+  )
+  .refine((value) => !(value.useEnvironment && (value.clear || value.value?.trim())), {
+    message: "useEnvironment cannot be combined with clear or value",
   });
 
 function objectRecord(value: unknown): Record<string, unknown> | null {

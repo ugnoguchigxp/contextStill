@@ -345,12 +345,18 @@ async function runSmokeCompile(
   const relevantKnowledgeCount = pack.rules.length + pack.procedures.length;
   const degradedReasons = [...pack.diagnostics.degradedReasons];
   const suggestedNext =
-    relevantKnowledgeCount > 0
+    relevantKnowledgeCount > 0 && pack.status === "ok"
       ? []
-      : initProjectLocaleText[options.lang].smokeNoKnowledgeSuggestions;
+      : pack.status !== "ok"
+        ? [
+            options.lang.startsWith("ja")
+              ? "compileの根拠が不完全です。診断を確認してから設定を適用してください。"
+              : "Compile evidence is incomplete. Review diagnostics before applying setup.",
+          ]
+        : initProjectLocaleText[options.lang].smokeNoKnowledgeSuggestions;
 
   return {
-    ok: relevantKnowledgeCount > 0,
+    ok: relevantKnowledgeCount > 0 && pack.status === "ok",
     status: pack.status,
     runId: pack.runId,
     relevantKnowledgeCount,

@@ -23,9 +23,9 @@ export function LocalLlmPools({ draft, patchDraft }: Props) {
       complete: Boolean(model.apiBaseUrl.trim() && model.model.trim()),
     }))
     .filter((model) => model.complete);
-  const localTargetIds = new Set(localModels.map((model) => model.id).filter(Boolean));
   const poolList = draft.providerPools.length ? draft.providerPools : [localLlmProviderPool(draft)];
-  const canAddPool = localModels.some((model) => Boolean(model.id));
+  const canAddPool =
+    draft.providers.codex.enabled || localModels.some((model) => Boolean(model.id));
 
   const patchPool = (poolId: string, nextPool: RuntimeProviderPool) =>
     patchDraft((current) => ({
@@ -151,9 +151,15 @@ export function LocalLlmPools({ draft, patchDraft }: Props) {
 
   const addPool = () =>
     patchDraft((current) => {
-      const firstTarget = current.providers["local-llm"].models
+      const localId = current.providers["local-llm"].models
+        .filter((model) => model.apiBaseUrl.trim() && model.model.trim())
         .map(localLlmPoolTargetId)
         .find((id): id is string => Boolean(id));
+      const firstTarget: RuntimeProviderPool["targets"][number] | undefined = localId
+        ? { provider: "local-llm", localLlmModelId: localId }
+        : current.providers.codex.enabled
+          ? { provider: "codex", targetId: "codex-spark", model: "gpt-5.3-codex-spark" }
+          : undefined;
       if (!firstTarget) return current;
       const existingIds = new Set(current.providerPools.map((pool) => pool.id));
       let index = current.providerPools.length + 1;
@@ -168,9 +174,9 @@ export function LocalLlmPools({ draft, patchDraft }: Props) {
           ...current.providerPools,
           {
             id,
-            label: `Local LLM Pool ${index}`,
+            label: `Queue Pool ${index}`,
             enabled: true,
-            targets: [{ provider: "local-llm", localLlmModelId: firstTarget }],
+            targets: [firstTarget],
             maxConcurrent: 1,
             staleLeaseSeconds: 660,
             lowPriorityAgingSeconds: 1800,
@@ -182,8 +188,8 @@ export function LocalLlmPools({ draft, patchDraft }: Props) {
   return (
     <section className="settings-route-section">
       <div className="settings-route-section-header">
-        <h3>Local LLM Pools</h3>
-        <p>Choose which Local LLM endpoints belong to each named routing pool.</p>
+        <h3>Queue Provider Pools</h3>
+        <p>Choose Local LLM endpoints and Codex Spark as equal queue candidates.</p>
         <Button type="button" size="sm" variant="outline" onClick={addPool} disabled={!canAddPool}>
           <Plus size={14} />
           Add Pool
@@ -295,6 +301,45 @@ export function LocalLlmPools({ draft, patchDraft }: Props) {
               ) : null}
             </div>
             <div className="settings-provider-pool-targets">
+              <label className="settings-provider-pool-target">
+                <Checkbox
+                  aria-label={`Use Codex Spark for ${pool.label || pool.id}`}
+                  checked={pool.targets.some(
+                    (target) =>
+                      target.provider === "codex" && target.model === "gpt-5.3-codex-spark",
+                  )}
+                  disabled={
+                    (!draft.providers.codex.enabled &&
+                      !pool.targets.some(
+                        (target) =>
+                          target.provider === "codex" && target.model === "gpt-5.3-codex-spark",
+                      )) ||
+                    (targetCount <= 1 &&
+                      pool.targets.some(
+                        (target) =>
+                          target.provider === "codex" && target.model === "gpt-5.3-codex-spark",
+                      ))
+                  }
+                  onChange={(event) => {
+                    const targets = pool.targets.filter(
+                      (target) =>
+                        !(target.provider === "codex" && target.model === "gpt-5.3-codex-spark"),
+                    );
+                    if (event.target.checked)
+                      targets.push({
+                        provider: "codex",
+                        targetId: "codex-spark",
+                        model: "gpt-5.3-codex-spark",
+                      });
+                    patchPool(pool.id, {
+                      ...pool,
+                      targets,
+                      maxConcurrent: Math.min(pool.maxConcurrent, targets.length),
+                    });
+                  }}
+                />
+                <span>Codex Spark</span>
+              </label>
               {localModels.map((model) => {
                 const checked = Boolean(model.id && selectedTargetIds.has(model.id));
                 const disabled = !model.id || (checked && targetCount <= 1);

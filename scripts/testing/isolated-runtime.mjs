@@ -139,8 +139,8 @@ export async function createIsolatedRuntime() {
   }
 
   let mcp;
-  async function startWriter() {
-    mcp = start(binary, ["run"]);
+  async function startWriter(executable = binary) {
+    mcp = start(executable, ["run"]);
     await waitUntil(async () => {
       if (mcp.child.exitCode !== null) throw new Error(mcp.output());
       try {
@@ -162,11 +162,12 @@ export async function createIsolatedRuntime() {
     startWriter,
     cli: (...args) => run(binary, args),
     stopWriter: () => stop(mcp.child),
-    async initialize() {
-      await run("cargo", ["build", "--locked", "-q", "-p", "context-stilld"], {}, 600_000);
-      const report = JSON.parse(await run(binary, ["bootstrap", "init", "--json"]));
+    async initialize(executable = binary) {
+      if (executable === binary)
+        await run("cargo", ["build", "--locked", "-q", "-p", "context-stilld"], {}, 600_000);
+      const report = JSON.parse(await run(executable, ["bootstrap", "init", "--json"]));
       assert.equal(report.paths.sqliteCorePath, env.CONTEXT_STILL_SQLITE_CORE_PATH);
-      await startWriter();
+      await startWriter(executable);
       // Persist the same minimal-mode choice exposed in Settings, through the real writer.
       await writer(
         "INSERT INTO settings(id, namespace, key, value) VALUES(?, 'runtime', 'settings.v1', ?) ON CONFLICT(namespace, key) DO UPDATE SET value = excluded.value",

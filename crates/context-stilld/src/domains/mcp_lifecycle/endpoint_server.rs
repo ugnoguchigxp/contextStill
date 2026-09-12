@@ -1,3 +1,7 @@
+#[path = "endpoint_writer.rs"]
+mod writer_http;
+use writer_http::handle_writer_request;
+
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
@@ -281,6 +285,12 @@ pub fn start_in_process<E: EnvProvider>(env: &E) -> Result<RunningEndpoint, CliE
         writer_token_path.as_deref(),
         auth_token_path.as_deref(),
         profile,
+        dispatch.native_context().as_ref().map(|context| {
+            context
+                .compile_runtime
+                .database_identity_fingerprint
+                .as_str()
+        }),
     ) {
         cleanup_startup_files(&endpoint_path, &secret_paths);
         return Err(error);
@@ -419,6 +429,7 @@ fn persist_endpoint(
     writer_token_path: Option<&std::path::Path>,
     auth_token_path: Option<&std::path::Path>,
     profile: ToolProfile,
+    database_fingerprint: Option<&str>,
 ) -> Result<(), CliError> {
     let value = match profile {
         ToolProfile::Default => json!({
@@ -430,6 +441,8 @@ fn persist_endpoint(
             "workerId": format!("rust-mcp-worker-{}", std::process::id()),
             "startedAt": now_timestamp(),
             "sessionStatePath": sessions_path.to_string_lossy(),
+            "effectiveDatabaseFingerprint": database_fingerprint,
+            "compileContractVersion": 1,
             "writerUrl": endpoint.url.replace("/mcp", "/writer/query"),
             "writerTokenPath": writer_token_path.unwrap_or(Path::new("")).to_string_lossy(),
         }),
@@ -788,7 +801,10 @@ fn handle_request(
         return json_response(403, json!({"ok": false, "error": "mcp_loopback_only"}), &[]);
     }
     if !dispatch.is_typed_memory()
-        && (request.path == "/writer/health" || request.path == "/writer/query")
+        && (request.path == "/writer/health"
+            || request.path == "/writer/query"
+            || request.path == "/writer/secrets"
+            || request.path == "/internal/context-compile")
     {
         return handle_writer_request(request, &dispatch);
     }
@@ -835,55 +851,6 @@ fn handle_request(
             json!({ "ok": false, "error": "method_not_allowed" }),
             &[("Allow", "GET, POST, DELETE".to_string())],
         ),
-    }
-}
-
-fn handle_writer_request(request: HttpRequest, dispatch: &DispatchConfig) -> String {
-    let Some((sqlite_core_path, writer_token)) = dispatch.writer() else {
-        return json_response(404, json!({"ok":false,"error":"not_found"}), &[]);
-    };
-    let supplied_token = request
-        .headers
-        .get("authorization")
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .unwrap_or_default();
-    if !constant_time_eq(supplied_token.as_bytes(), writer_token.as_bytes()) {
-        return json_response(
-            401,
-            json!({"ok": false, "error": "writer_unauthorized"}),
-            &[],
-        );
-    }
-    if request.path == "/writer/health" && request.method == "GET" {
-        return match crate::domains::sqlite_writer::global_writer_for_path(sqlite_core_path) {
-            Ok(writer) => json_response(200, json!({"ok": true, "writer": writer.status()}), &[]),
-            Err(error) => json_response(503, json!({"ok": false, "error": error}), &[]),
-        };
-    }
-    if request.path != "/writer/query" || request.method != "POST" {
-        return json_response(
-            405,
-            json!({"ok": false, "error": "method_not_allowed"}),
-            &[("Allow", "POST".to_string())],
-        );
-    }
-    let writer_request = match serde_json::from_str::<
-        crate::domains::sqlite_writer::protocol::SqliteWriterRequest,
-    >(&request.body)
-    {
-        Ok(request) => request,
-        Err(error) => {
-            return json_response(
-                400,
-                json!({"ok": false, "error": format!("invalid writer request: {error}")}),
-                &[],
-            )
-        }
-    };
-    match crate::domains::sqlite_writer::protocol::execute_request(sqlite_core_path, writer_request)
-    {
-        Ok(response) => json_response(200, json!(response), &[]),
-        Err(error) => json_response(500, json!({"ok": false, "error": error}), &[]),
     }
 }
 

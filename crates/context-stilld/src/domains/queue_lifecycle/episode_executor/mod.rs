@@ -11,6 +11,8 @@ mod progress;
 mod quality;
 mod source;
 mod store;
+#[cfg(test)]
+mod test_support;
 mod tests;
 mod types;
 pub(crate) use entry::{

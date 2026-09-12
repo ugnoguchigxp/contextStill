@@ -27,6 +27,7 @@ function localLlmRouteTargetValue(model: {
 
 function routeClaimGroupId(route: RuntimeSettingsRoute): string | null {
   if (isLarmAgentConnectionRoute(route)) return null;
+  if (route.providerPoolId?.trim()) return route.providerPoolId.trim();
   if (route.provider === "auto") return null;
   return route.providerPoolId?.trim() || `task-routing:${route.provider}`;
 }
@@ -115,6 +116,8 @@ export function applyProviderLeaseRouteContext(
   return {
     ...route,
     provider: target.provider,
+    model: target.model ?? settings.providers[target.provider].model,
+    localLlmModel: undefined,
     fallback: [],
     azureDeploymentSlots: undefined,
   };

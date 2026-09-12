@@ -84,6 +84,7 @@ fn production_retrieval_keeps_wrong_project_out() {
         &RepositoryRequestFacets::default(),
         true
     )
+    .unwrap()
     .is_empty());
 }
 
@@ -180,7 +181,8 @@ fn regression_dataset_preserves_expected_retrieval_despite_history_distractors()
             &task_identity(task).unwrap(),
             &RepositoryRequestFacets::default(),
             true,
-        );
+        )
+        .unwrap();
         let ids = rank_foundation_knowledge(&candidates)
             .iter()
             .map(|k| k.id.clone())

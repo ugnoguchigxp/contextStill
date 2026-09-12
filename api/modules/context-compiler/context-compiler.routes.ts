@@ -1,5 +1,6 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
+import { NativeCompileError } from "../../../src/modules/context-compiler/native-compile.errors.js";
 import {
   compileRunEpisodeFeedbackWriteSchema,
   compileRunKnowledgeFeedbackWriteSchema,
@@ -21,8 +22,19 @@ import {
 export const contextCompilerRouter = new Hono()
   .post("/compile", zValidator("json", compileInputSchema), async (c) => {
     const input = c.req.valid("json");
-    const result = await compilePackForApi(input);
-    return c.json(result);
+    try {
+      const result = await compilePackForApi(input);
+      return c.json(result);
+    } catch (error) {
+      if (error instanceof NativeCompileError)
+        return c.json(
+          { error: error.message },
+          error.message.includes("unsupported") || error.message.includes("token_budget")
+            ? 400
+            : 503,
+        );
+      throw error;
+    }
   })
   .get("/runs", zValidator("query", listRunsQuerySchema), async (c) => {
     const query = c.req.valid("query");

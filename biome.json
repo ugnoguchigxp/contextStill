@@ -29,6 +29,9 @@
   },
   "files": {
     "ignore": [
+      "artifacts/improvements-coverage/**",
+      "artifacts/coverage/**",
+      "artifacts/dependency-audit/**",
       "coverage/**",
       "coverage.json",
       "dist/**",

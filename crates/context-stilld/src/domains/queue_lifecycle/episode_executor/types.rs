@@ -28,6 +28,8 @@ pub(super) const MIN_EPISODE_COMPRESSION_QUALITY: i64 = 45;
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalLlmTargetConfig {
+    pub(crate) codex: bool,
+    pub(crate) quota_db: Option<std::path::PathBuf>,
     pub(crate) target_id: String,
     pub(crate) api_base_url: String,
     pub(crate) api_path: String,

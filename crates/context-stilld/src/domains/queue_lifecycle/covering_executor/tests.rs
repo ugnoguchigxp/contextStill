@@ -1,6 +1,7 @@
 #![cfg(test)]
 use super::applicability::{merge_applicability, merge_execution_applicability};
 use super::execution::execute_covering;
+use super::external_evidence::run_positive_external_evidence;
 use super::external_fetch::{
     classify_external_fetch_error, clean_duckduckgo_result_url, inspect_external_evidence_guard,
     is_public_external_ip, is_supported_external_content_type, read_bounded_external_body,
@@ -204,6 +205,8 @@ fn execution() -> NegativeCoveringExecution {
                 worker_id: "worker-1".to_string(),
             },
             target: LocalLlmTargetConfig {
+                codex: false,
+                quota_db: None,
                 target_id: "local-1".to_string(),
                 api_base_url: "http://localhost:1".to_string(),
                 api_path: "/v1/chat/completions".to_string(),
@@ -764,6 +767,14 @@ fn persist_negative_knowledge_ready_completes_and_enqueues_finalize_once() {
         )
         .unwrap();
     assert!(finalize_revision.is_some());
+    let stored_protocol: i64 = connection
+        .query_row(
+            "select protocol_version from finalize_distille_queue",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored_protocol, execution.protocol_version);
     let lease = connection
         .query_row(
             "select status, release_reason from llm_provider_leases where id = 'lease-1'",
@@ -997,4 +1008,49 @@ fn stale_covering_result_cannot_overwrite_reclaimed_job() {
     assert_eq!(evidence_count, 0);
     assert_eq!(queue_owner, ("running".to_string(), "worker-2".to_string()));
     assert_eq!(discarded_events, 1);
+}
+
+#[test]
+fn positive_external_evidence_reports_provider_failure_when_query_endpoint_is_down() {
+    let result = run_positive_external_evidence(&execution(), &json!({}), "source body", 1);
+    assert_eq!(result.status, "provider_failed");
+    assert_eq!(result.stage, "web");
+    assert!(result
+        .reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("external_search_query_provider_failed"));
+}
+
+#[test]
+fn positive_external_evidence_reports_search_failure_when_no_providers_are_configured() {
+    let (origin, handle) = serve_chat_content(json!("sqlite writer ownership"));
+    let mut execution = execution();
+    execution.target.api_base_url = origin;
+    execution.external_search.provider_order = Vec::new();
+    let result = run_positive_external_evidence(&execution, &json!({}), "source body", 2);
+    handle.join().unwrap();
+    assert_eq!(result.status, "tool_failed");
+    assert_eq!(result.stage, "web");
+    assert!(result
+        .reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("external_search_failed"));
+}
+
+#[test]
+fn positive_external_evidence_stops_when_configured_providers_return_no_results() {
+    let (origin, handle) = serve_chat_content(json!("sqlite writer ownership"));
+    let mut execution = execution();
+    execution.target.api_base_url = origin;
+    execution.external_search.provider_order = vec!["unsupported".to_string()];
+    let result = run_positive_external_evidence(&execution, &json!({}), "source body", 2);
+    handle.join().unwrap();
+    assert_eq!(result.status, "tool_failed");
+    assert!(result
+        .reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("external_search_failed"));
 }

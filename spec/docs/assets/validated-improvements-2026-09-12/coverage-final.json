@@ -1,0 +1,38 @@
+{
+  "vitest": {
+    "api": {
+      "covered": 1387,
+      "total": 2004,
+      "percent": 69.21157684630738
+    },
+    "src": {
+      "covered": 18255,
+      "total": 27889,
+      "percent": 65.45591451826886
+    },
+    "web": {
+      "covered": 3763,
+      "total": 4777,
+      "percent": 78.77328867490057
+    }
+  },
+  "bun": {
+    "src": {
+      "covered": 26853,
+      "total": 66313,
+      "percent": 40.4943223802271
+    },
+    "api": {
+      "covered": 1699,
+      "total": 3152,
+      "percent": 53.90228426395939
+    }
+  },
+  "rust": {
+    "crates": {
+      "covered": 33705,
+      "total": 41385,
+      "percent": 81.44255164914824
+    }
+  }
+}

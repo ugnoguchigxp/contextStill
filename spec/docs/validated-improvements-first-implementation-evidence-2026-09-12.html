@@ -1,0 +1,136 @@
+<article lang="ja">
+  <h1>改善実装 第一段の変更と検証結果</h1>
+  <p>
+    2026-09-12。対象は<a href="validated-improvements-implementation-plan-2026-09-12.html"
+      >改善実装計画</a
+    >のA1調査、B、Cの更新設定、E1のsource参照取得。全計画の完了記録ではない。コード・CI設定はローカル作業ツリー上にあり、commit、push、GitHub上のjob実行、live
+    daemon更新は行っていない。
+  </p>
+  <h2>1. 実装した変更</h2>
+  <ul>
+    <li>
+      B：<code>scripts/testing/sqlite-test-manifest.json</code>にBun専用8ファイルを登録し、<code>sqlite-test-suite.mjs</code>で個別プロセス・逐次実行する。環境変数・dotenv・DB・endpointを隔離する。未登録、削除済み、重複のmanifestは失敗する。
+    </li>
+    <li>
+      B：<code>test:sqlite-all</code>と<code>test:sqlite-manifest</code>を追加。<code>verify:sqlite</code>は同じ一覧を利用し、<code>verify:fast</code>で登録漏れを検出する。PR
+      workflowには独立したsqlite jobを追加した。
+    </li>
+    <li>
+      B：Bun依存のCLIをimportする<code>backfill-repository-identity.cli.bun.ts</code>を<code>bun:test</code>へ合わせた。Vitestへ移すとNodeのloaderが<code>bun:sqlite</code>を解決できないため、Bun
+      suiteで実行する。
+    </li>
+    <li>
+      C：Dependabotの週次更新対象に<code>bun</code>と<code>cargo</code>を追加。Bunのテキストlockfileには専用ecosystemを使う。週次脆弱性監査、例外管理、GitHub設定の実確認は未実装。
+    </li>
+    <li>
+      E1：Rust検索で順位・候補集合を決めた後、256件ずつsource
+      refsを取得する。各knowledgeのconfidence降順・created_at降順・最大5件を維持し、返すknowledgeの順序は変更しない。
+    </li>
+    <li>
+      E1：候補とsource refsを同一read
+      snapshotで取得する。既存transactionがあれば再利用し、ない場合だけ検索中のread
+      transactionを作る。関数終了時に解放し、外部provider待機をまたがない。snapshot開始失敗はNo
+      Contentへ変換せずエラーを伝播する。
+    </li>
+    <li>
+      A1：<a href="secret-store-migration-contract-2026-09-12.html">consumer一覧と移行契約</a
+      >を作成。OSストア参照、環境変数fallback、clear、cache失効、部分失敗、backup復元の挙動を整理した。実値の保存先切替はまだ行っていない。
+    </li>
+  </ul>
+  <h2>2. 検証結果</h2>
+  <table>
+    <caption>
+      今回実行したローカル検証
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">検証</th>
+        <th scope="col">結果</th>
+        <th scope="col">範囲と限界</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>bun run test:sqlite-all</td>
+        <td>8ファイル・81テスト成功</td>
+        <td>API keyなし、隔離DB。GitHub runner上の結果ではない。</td>
+      </tr>
+      <tr>
+        <td>SQLite runnerのVitest</td>
+        <td>4テスト成功</td>
+        <td>manifest漏れ・重複、再帰検出、環境隔離、子プロセス失敗を検証。</td>
+      </tr>
+      <tr>
+        <td>bun run test:unit</td>
+        <td>2124成功・13 skip、262ファイル成功</td>
+        <td>観測時点の作業ツリー全体。skipを成功数に含めない。</td>
+      </tr>
+      <tr>
+        <td>cargo test --workspace</td>
+        <td>479成功・3 ignored</td>
+        <td>
+          source参照batch化後の全体検証。snapshotの追加試験とエラー伝播の変更後はnative_compile対象を再検証した。
+        </td>
+      </tr>
+      <tr>
+        <td>cargo test -p context-stilld native_compile</td>
+        <td>成功</td>
+        <td>
+          順位・scope・budget等の既存テストに加え、source参照の順序、欠落、chunk境界、1万件、外側transaction、同時更新snapshot、snapshot開始失敗を検証。
+        </td>
+      </tr>
+      <tr>
+        <td>typecheck、lint、build:web</td>
+        <td>成功</td>
+        <td>型検査、TS lint、Web buildを個別実行。</td>
+      </tr>
+      <tr>
+        <td>system-context:check / system-context:boundary</td>
+        <td>成功</td>
+        <td>既存SystemContextの生成物と境界を検証。</td>
+      </tr>
+      <tr>
+        <td>YAMLと今回の変更ファイルの整形</td>
+        <td>成功</td>
+        <td>Dependabot・PR jobをparseし、変更したJS/TS/JSONをBiome、Rustをrustfmtで確認。</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>3. 検索の変更前後</h2>
+  <p>
+    同じ合成fixtureで、変更前に回帰試験が失敗することを確認してから実装した。1万件のactive
+    knowledge、各1source、候補limit=256の条件でsource参照クエリは10000回から1回へ減少。1100件から600件を残す条件は1100回から3回、limit=0の条件はsource参照クエリ0回となった。テストではSQLite
+    authorizerでsource URI読出しを含むstatementのprepare回数を数えている。
+  </p>
+  <p>
+    最初の1万件測定は変更前287.272ms、batch化直後81.792ms。後続のsnapshot保持を含む検証では104.913msを観測した。これは開発環境の単発retrieval計測であり、compile全体のp50/p95、peak
+    memory、実運用での改善率を示さない。クエリ本数と結果互換性は自動assertし、時間の固定閾値はこの測定から設定していない。
+  </p>
+  <p>
+    全文採点はまだ残っている。候補削減、1千/1万件の密なsource分布を含む性能matrix、v2索引のrecall
+    gateはE1の測定補完・E2として継続する。候補数の削減やranking変更を今回の成果に含めない。
+  </p>
+  <h2>4. 全体gateの残存失敗</h2>
+  <p>
+    <code>verify:fast</code
+    >は今回変更していない<code>queue_lifecycle/finalize_executor.rs</code>が2156行でbudget
+    2059行を超え、maintainability
+    gateで停止した。<code>verify:rust-daemon</code>は今回変更していない<code>covering_executor/negative_response.rs</code>の<code>map_or</code>に対するClippy
+    <code>unnecessary_map_or</code>で停止した。
+  </p>
+  <p>
+    全体<code>format:check</code>もsharedのselector JSONや既存boundary
+    script等の整形差分で失敗した。作業中の別変更を一括整形したりbudgetを緩めたりせず、後続のtypecheck・unit・lint・build・SystemContextを個別に実行した。したがって全体verify通過、merge可能、配布可能とは判定していない。
+  </p>
+  <h2>5. 次の工程</h2>
+  <p>
+    最優先はA1のOS
+    adapter/IPC実機検証を閉じ、A2でTS・Rust・queueを同時に秘密参照へ対応させること。BはGitHubでの初回実行を確認する。Cは週次監査と失敗・例外の分類、Eは残る測定とv2候補検索へ進む。D、F、G、H、Iは本段では未実装。
+  </p>
+  <p>
+    Dependabotのecosystem選択はGitHub公式の「Dependabot supported ecosystems and
+    repositories」を確認した。参照先：<code>https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories</code>。Bun
+    1.1.39以降のtext lock対応を使用し、このrepositoryのBun
+    1.3.14と<code>bun.lock</code>に合わせた。
+  </p>
+</article>

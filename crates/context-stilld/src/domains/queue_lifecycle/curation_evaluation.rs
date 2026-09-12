@@ -135,6 +135,8 @@ fn audit_curation_system_context_live() {
     let output =
         std::env::var("CURATION_EVALUATION_OUTPUT").expect("set CURATION_EVALUATION_OUTPUT");
     let target = LocalLlmTargetConfig {
+        codex: false,
+        quota_db: None,
         target_id: "curation-evaluation".into(),
         api_base_url: std::env::var("CURATION_EVALUATION_API_BASE")
             .expect("set CURATION_EVALUATION_API_BASE"),

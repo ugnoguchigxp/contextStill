@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { resolveDatabaseBackendConfig } from "../../../src/db/backend.js";
 import { db } from "../../../src/db/index.js";
 import type { SqliteCoreDatabase } from "../../../src/db/sqlite/index.js";
+import { getRuntimeSqliteCoreDatabase } from "../../../src/db/sqlite/runtime.js";
 import { resolveCoverEvidenceRouteByPolicy } from "../../../src/modules/coverEvidence/provider-policy.js";
 import {
   type DistillationProviderSetting,
@@ -118,7 +119,6 @@ type ActiveProviderLeaseRow = {
 };
 
 async function getSqliteCoreDatabase(): Promise<SqliteCoreDatabase> {
-  const { getRuntimeSqliteCoreDatabase } = await import("../../../src/db/sqlite/runtime.js");
   return getRuntimeSqliteCoreDatabase();
 }
 

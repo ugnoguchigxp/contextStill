@@ -35,7 +35,7 @@
         "policyDigest": "sha256:3230ec70a4923e5473ca7a39b3fbbf1c45cf7e33d9d642e4b13922f7d8c6dad2"
       },
       "rawUtf8Sha256": "836160c860f884bc174892a8fe0084bff0b6220014efd917800d94f59d314d54",
-      "selectorSchemaSha256": "67e5b5a2abe20144e165de5dc4fd16de15db71153c033789f34e618ba0903459"
+      "selectorSchemaSha256": "fa5a77992fd7b3e2d3f75629087dfd3bf2baf55717c469827237ed88af04f949"
     },
     {
       "key": "contextCompiler.selectEvidence",
@@ -70,7 +70,7 @@
         "policyDigest": "sha256:3230ec70a4923e5473ca7a39b3fbbf1c45cf7e33d9d642e4b13922f7d8c6dad2"
       },
       "rawUtf8Sha256": "c2df2134d56f596ab68b83d49fd86b34ee3502b513c1a8b7c66533a06970bf77",
-      "selectorSchemaSha256": "67e5b5a2abe20144e165de5dc4fd16de15db71153c033789f34e618ba0903459"
+      "selectorSchemaSha256": "fa5a77992fd7b3e2d3f75629087dfd3bf2baf55717c469827237ed88af04f949"
     }
   ]
 }

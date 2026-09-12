@@ -65,7 +65,10 @@ describe("system-context.service", () => {
 
   it("exports static evidence-selector system bytes for both locales", async () => {
     const artifact = JSON.parse(
-      await readFile(new URL("../.s11tnext/compile-prompts.generated.json", import.meta.url), "utf8"),
+      await readFile(
+        new URL("../.s11tnext/compile-prompts.generated.json", import.meta.url),
+        "utf8",
+      ),
     ) as { messages: Array<{ locale: string; role: string; text: string; rawUtf8Sha256: string }> };
 
     expect(artifact.messages.map((message) => message.locale)).toEqual(["ja-JP", "en-US"]);
@@ -78,9 +81,7 @@ describe("system-context.service", () => {
       const invocation = renderPrompt("contextCompiler.selectEvidence", {}, binding);
       expect(invocation.role).toBe("system");
       expect(invocation.content.text).toBe(message.text);
-      expect(createHash("sha256").update(message.text).digest("hex")).toBe(
-        message.rawUtf8Sha256,
-      );
+      expect(createHash("sha256").update(message.text).digest("hex")).toBe(message.rawUtf8Sha256);
     }
   });
 

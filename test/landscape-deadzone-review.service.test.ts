@@ -33,7 +33,7 @@ const {
   };
 });
 
-vi.mock("../api/modules/graph/graph.repository.js", () => ({
+vi.mock("../src/modules/graph/graph.repository.js", () => ({
   buildGraphSnapshot: buildGraphSnapshotMock,
 }));
 
@@ -45,7 +45,7 @@ vi.mock("../src/db/index.js", () => ({
   db: dbMock,
 }));
 
-vi.mock("../api/modules/knowledge/knowledge.repository.js", () => ({
+vi.mock("../src/modules/knowledge/knowledge-admin.repository.js", () => ({
   updateKnowledgeItem: updateKnowledgeItemMock,
 }));
 

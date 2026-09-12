@@ -38,7 +38,7 @@ import {
   listKnowledgeTagDefinitionsForApi,
   recordKnowledgeFeedback,
   updateKnowledgeItem,
-} from "../api/modules/knowledge/knowledge.repository.js";
+} from "../src/modules/knowledge/knowledge-admin.repository.js";
 import { knowledgeRouter } from "../api/modules/knowledge/knowledge.routes.js";
 import {
   fetchOverviewDashboardForApi,
@@ -65,6 +65,13 @@ import {
 } from "../src/modules/vibe-memory/vibe-memory.service.js";
 import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema.js";
 import { contextPackSchema } from "../src/shared/schemas/context-pack.schema.js";
+
+// Route contracts mock their services; loading the app must never open a native database.
+vi.mock("../src/db/sqlite/runtime.js", () => ({
+  getRuntimeSqliteCoreDatabase: vi.fn(() => {
+    throw new Error("Unexpected native DB access in route contract test");
+  }),
+}));
 
 const TEST_ADMIN_API_KEY = "test-admin-key-0123456789abcdef0123456789abcdef";
 const ROTATED_ADMIN_API_KEY = "rotated-admin-key-0123456789abcdef0123456789abcdef";
@@ -166,7 +173,7 @@ vi.mock("../api/modules/candidates/candidates.repository.js", () => ({
   listCandidateItems: vi.fn(),
 }));
 
-vi.mock("../api/modules/knowledge/knowledge.repository.js", () => ({
+vi.mock("../src/modules/knowledge/knowledge-admin.repository.js", () => ({
   bulkUpdateKnowledgeStatus: vi.fn(),
   countKnowledgeItems: vi.fn(),
   createKnowledgeItem: vi.fn(),

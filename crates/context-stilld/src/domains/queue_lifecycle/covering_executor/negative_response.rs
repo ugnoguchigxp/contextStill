@@ -35,9 +35,10 @@ pub(super) fn parse_negative_response(
             "evidence",
             "originRefs",
         ];
-        if raw.as_object().map_or(true, |object| {
-            object.keys().any(|key| !allowed.contains(&key.as_str()))
-        }) {
+        if raw
+            .as_object()
+            .is_none_or(|object| object.keys().any(|key| !allowed.contains(&key.as_str())))
+        {
             return Err(CliError::io(
                 "negative evidence response has an unknown field",
             ));

@@ -1,0 +1,40 @@
+{
+  "exceptions": [
+    {
+      "edge": "src/mcp/tools/index.ts -> src/mcp/tools/system.tool.ts",
+      "reason": "Existing runtime dependency at the 2026-09-13 baseline; no new cycle edge is permitted.",
+      "owner": "contextStill maintainers",
+      "resolution": "Separate initialization from shared domain functions when this edge is changed."
+    },
+    {
+      "edge": "src/mcp/tools/system.tool.ts -> src/modules/doctor/doctor.service.ts",
+      "reason": "Existing runtime dependency at the 2026-09-13 baseline; no new cycle edge is permitted.",
+      "owner": "contextStill maintainers",
+      "resolution": "Separate initialization from shared domain functions when this edge is changed."
+    },
+    {
+      "edge": "src/modules/doctor/doctor.service.ts -> src/modules/doctor/inspectors/mcp.inspector.ts",
+      "reason": "Existing runtime dependency at the 2026-09-13 baseline; no new cycle edge is permitted.",
+      "owner": "contextStill maintainers",
+      "resolution": "Separate initialization from shared domain functions when this edge is changed."
+    },
+    {
+      "edge": "src/modules/doctor/inspectors/mcp.inspector.ts -> src/mcp/tools/index.ts",
+      "reason": "Existing runtime dependency at the 2026-09-13 baseline; no new cycle edge is permitted.",
+      "owner": "contextStill maintainers",
+      "resolution": "Separate initialization from shared domain functions when this edge is changed."
+    },
+    {
+      "edge": "src/modules/landscape/deadzone-merge-review-queue.service.ts -> src/modules/landscape/merge-activation-finalize.service.ts",
+      "reason": "Existing runtime dependency at the 2026-09-13 baseline; no new cycle edge is permitted.",
+      "owner": "contextStill maintainers",
+      "resolution": "Separate initialization from shared domain functions when this edge is changed."
+    },
+    {
+      "edge": "src/modules/landscape/merge-activation-finalize.service.ts -> src/modules/landscape/deadzone-merge-review-queue.service.ts",
+      "reason": "Existing runtime dependency at the 2026-09-13 baseline; no new cycle edge is permitted.",
+      "owner": "contextStill maintainers",
+      "resolution": "Separate initialization from shared domain functions when this edge is changed."
+    }
+  ]
+}

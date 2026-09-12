@@ -1,0 +1,46 @@
+{
+  "fixtureVersion": 1,
+  "mode": "split_legacy_rank",
+  "provider": "disabled",
+  "cases": [
+    {
+      "fixture": "empty",
+      "tsIds": [],
+      "rustIds": [],
+      "selectedIdsEqual": true,
+      "sourceRefsEqual": true,
+      "tsNoContent": true,
+      "rustNoContent": true,
+      "markdownEqual": true,
+      "persistCount": 2
+    },
+    {
+      "fixture": "global-rule",
+      "tsIds": [
+        "fde01e95-177c-426f-9891-b11d1743ed8e"
+      ],
+      "rustIds": [
+        "fde01e95-177c-426f-9891-b11d1743ed8e"
+      ],
+      "selectedIdsEqual": true,
+      "sourceRefsEqual": true,
+      "tsNoContent": false,
+      "rustNoContent": false,
+      "markdownEqual": true,
+      "persistCount": 2
+    }
+  ],
+  "cutoverApproved": true,
+  "transport": {
+    "auth": true,
+    "origin": true,
+    "dbBinding": true,
+    "version": true,
+    "rejectedRequestsPersisted": 0,
+    "budget128": true,
+    "sourceAndSession": true,
+    "unavailable503": true
+  },
+  "rankingPromotion": false,
+  "compatibility": "Postgres and explicit securityIntelligenceShadow retain legacy-only semantics"
+}

@@ -23,6 +23,8 @@
     <dict>
         <key>PATH</key>
         <string>{{PATH}}</string>
+        <key>CONTEXT_STILL_CODEX_CLI_PATH</key>
+        <string>{{CODEX_CLI_PATH}}</string>
         <key>CONTEXT_STILL_PROJECT_ROOT</key>
         <string>{{PROJECT_ROOT}}</string>
         <key>CONTEXT_STILL_SOURCE_CONTENT_ROOT</key>

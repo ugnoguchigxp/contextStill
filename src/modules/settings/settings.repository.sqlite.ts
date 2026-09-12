@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { assertSecretReferenceWrite } from "./settings-secret-write.js";
 import type { SettingsRow } from "./settings.repository.js";
 
 type SqliteSettingsRow = {
@@ -93,12 +94,14 @@ export async function upsertSettingsRowSqlite(input: {
   isSecret?: boolean;
   description?: string | null;
   schemaVersion: number;
+  expectedVersion?: number;
   updatedBy?: string | null;
 }): Promise<SettingsRow> {
+  assertSecretReferenceWrite(input);
   const sqlite = await getSqliteCoreDatabase();
   const now = new Date().toISOString();
   const id = randomUUID();
-  sqlite.db
+  const changed = sqlite.db
     .query(
       `INSERT INTO settings (
         id, namespace, key, value, value_kind, secret_ref, is_secret,
@@ -112,7 +115,8 @@ export async function upsertSettingsRowSqlite(input: {
         description = excluded.description,
         schema_version = excluded.schema_version,
         updated_at = excluded.updated_at,
-        updated_by = excluded.updated_by`,
+        updated_by = excluded.updated_by
+      WHERE ? IS NULL OR settings.schema_version = ?`,
     )
     .run(
       id,
@@ -127,7 +131,10 @@ export async function upsertSettingsRowSqlite(input: {
       now,
       now,
       input.updatedBy ?? null,
+      input.expectedVersion ?? null,
+      input.expectedVersion ?? null,
     );
+  if (changed.changes === 0) throw new Error("settings_revision_conflict");
   const row = await findSettingsRowSqlite(input.namespace, input.key);
   if (!row) throw new Error(`failed to upsert setting: ${input.namespace}.${input.key}`);
   return row;

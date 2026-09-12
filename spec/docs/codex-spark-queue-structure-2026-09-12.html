@@ -1,0 +1,327 @@
+<article lang="ja">
+  <h1>既存Codex SDKによるSpark・Muse・QwenのQueue分業：再調査と改訂案</h1>
+  <p>
+    2026-09-12。公式文書本文、Codexの読み取りAPI、稼働Gateway、ContextStillの実DB、実装を照合した。以下の調査時点の記録に加え、末尾に実装・検証結果を記載する。稼働環境の設定は未変更。
+  </p>
+  <h2>1. Sparkの利用枠は通常Codexと別</h2>
+  <p>
+    <strong>GPT-5.3-Codex-Sparkは通常Codexとは別の利用枠を持つ。</strong
+    >公式Pricingに別の上限で管理すると明記されている。初回調査の「確定できない」は本文の確認不足だった。SDKを回避すること自体は必要条件ではない。
+  </p>
+  <blockquote>
+    <p>usage is governed by a separate usage limit that may adjust based on demand.</p>
+  </blockquote>
+  <p>
+    一次情報：OpenAI
+    Pricing、https://learn.chatgpt.com/docs/pricing#what-are-the-usage-limits-for-my-plan。公式Modelsもgpt-5.3-codex-sparkのCLI指定とPro向け提供を案内する。https://learn.chatgpt.com/docs/models。いずれも本文を取得して確認した。
+  </p>
+  <table>
+    <caption>
+      この端末のaccount/rateLimits/read取得結果
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">区分</th>
+        <th scope="col">limitId</th>
+        <th scope="col">確認時点の使用率</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>通常Codex</td>
+        <td>codex</td>
+        <td>週間10%</td>
+      </tr>
+      <tr>
+        <td>GPT-5.3-Codex-Spark</td>
+        <td>codex_bengalfox</td>
+        <td>5時間0%、週間0%</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Codexアプリ、通常CLI、SDK同梱CLIで別bucketを確認した。CLIのaccount/readはいずれもtype=chatgpt、planType=pro。枠は需要により変動する。モデル一覧と利用枠の読み取りに限定し、thread/startやturn/startは実行していない。
+  </p>
+  <h2>2. 既存SDKは有効。ただし実行CLIとモデル解決に差がある</h2>
+  <p>
+    稼働daemonが開くdata/context-still-core.sqliteをmode=roで読み、settings.v1.settings.providers.codexがenabled=true、model=gpt-5.4-miniであることを確認した。SDK導入や有効化を新規に行う必要はない。
+  </p>
+  <table>
+    <caption>
+      実際に使用するバイナリを分けて確認
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">経路</th>
+        <th scope="col">バージョン</th>
+        <th scope="col">model/list結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>PATH上のCodex CLI</td>
+        <td>0.149.1</td>
+        <td>gpt-5.3-codex-sparkあり。hidden=false、text入力、effort=low/medium/high/xhigh。</td>
+      </tr>
+      <tr>
+        <td>プロジェクトの@openai/codex-sdkが解決したCLI</td>
+        <td>SDK 0.135.0／CLI 0.135.0</td>
+        <td>通常のmodel/listは5モデル、nextCursor=null、Sparkなし。別bucketは返る。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    SDKの実バイナリはnode_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex。new
+    Codex()が解決したexecutablePathと--versionで確認した。PATH側だけを確認してSDKも同じと見なせない。古いCLIのcatalogにないことだけで推論不可能とは断定しないが、現SDKでSpark推論が動くという証明もまだない。
+  </p>
+  <p>
+    src/modules/llm/agentic-llm.service.tsのbuildProviderはproviders.codex.modelをcreateCodexProviderへ渡す。src/modules/llm/providers/codex.provider.tsはstartThreadでこのconfiguredModelを使い、chat(request)のrequest.modelを参照しない。Sparkをrouteやrequestに書くだけでは、現在の共通モデルgpt-5.4-miniが選ばれる経路が残る。withUsageLoggingはrequest.modelを記録するため、実モデルと記録モデルの不一致にも注意する。
+  </p>
+  <p>
+    SDKのREADMEとdist/index.jsを確認した。SDKはCLIを起動し、指定modelを--modelとして渡す。codexPathOverrideも提供されているが、ContextStillの現providerは公開していない。Spark利用枠を使うためにSDKを捨てる理由はない。
+  </p>
+  <h2>3. Muse・QwenとQueueの実態</h2>
+  <table>
+    <caption>
+      推論を伴わない実環境の読み取り
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">確認結果</th>
+        <th scope="col">根拠</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Muse Gateway</td>
+        <td>127.0.0.1:44449で稼働。Muse ready、Grok disabled、Codex runtimeなし。</td>
+        <td>GET /v1/agents/runtimes。PID 1039のcwdは/Users/y.noguchi/Code/local-llm。</td>
+      </tr>
+      <tr>
+        <td>Museモデル</td>
+        <td>muse/muse-spark-1.3-contributor。native provider=meta。Codex Sparkとは別モデル。</td>
+        <td>GET /v1/agents/models?runtime=muse。</td>
+      </tr>
+      <tr>
+        <td>Qwen提供先</td>
+        <td>192.168.0.130:9810のhealth=ok。qwen-agent-workerが公開されている。</td>
+        <td>
+          認証済みGET /health、/v1/models。releaseCommit=be5e86272165f4e13e69f4da204b1425486c6070。
+        </td>
+      </tr>
+      <tr>
+        <td>Queue route</td>
+        <td>関連10routeはlarm-qwen-background、fallback=[]。Museは接続登録済みだがpool未参加。</td>
+        <td>settings.v1.settingsを実DBから読み取り。</td>
+      </tr>
+      <tr>
+        <td>実行枠</td>
+        <td>
+          Qwen poolのmaxConcurrent=1。coding-defaultは登録されているがRust
+          executorで除外され、実行候補はqwen-agent-workerの1接続。
+        </td>
+        <td>実設定とexecutor.rsのprovider_pools。</td>
+      </tr>
+      <tr>
+        <td>Queue制御</td>
+        <td>全7laneはpaused=false。QwenのFinding active leaseあり。</td>
+        <td>queue.controls.v1とllm_provider_leases。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    観測時のpending行はFinding 4,712、Episode 7,118、Covering 29、Curation
+    874。既存failed行もあるため、lane再開を全job正常と同一視しない。
+  </p>
+  <p>
+    local-llm/agent_runtime/service.pyのbuild_agent_serviceもMuseRuntimeとGrokRuntimeだけを登録する。従ってSparkをMuse
+    Gatewayへ設定追加するだけでは動かない。ただし既存Codex
+    SDKを使えば、この別プロジェクトへ新runtimeを作る必要はない。
+  </p>
+  <h2>4. Queue側で必要な変更</h2>
+  <ol>
+    <li>
+      <strong>RustからSDKへの接続。</strong
+      >crates/context-stilld/src/domains/queue_lifecycle/executor.rsの静的route_claim_group_idはlocal-llmだけを選び、claim_provider_execution_for_connectionは全targetをproviders.local-llm.modelsから解決する。TypeScriptのschedulerやprovider型にcodexが存在しても、Rust側の実行機能は完成していない。
+    </li>
+    <li>
+      <strong>targetごとのモデル固定。</strong
+      >現在のRuntimeProviderPoolTargetのcodexにはtargetIdしかなく、専用modelを持たない。applyProviderLeaseRouteContextもcodex選択時はproviderを変えるだけで、元routeのmodelを残す。Spark
+      targetのmodelを明示的に引き継ぎ、SDK送信値と利用ログを一致させる必要がある。
+    </li>
+    <li>
+      <strong>実際に並行実行するdispatcher。</strong
+      >run_split_provider_executor_tick_for_pathはclaim後に同期実行し、完了してから次をclaimする。Finding・Episode・CurationはmaxConcurrentを上げるだけでは同時に走らない。max_claimsも1tickの処理件数である。Coveringには別途thread
+      spawn/joinの並列実装がある。
+    </li>
+    <li>
+      <strong>Spark枠切れの扱い。</strong>provider_lease.rsの一時障害cooldownは60秒。Agent
+      Sessionのturn.failedは文字列化され、Findingのretry判定はHTTP
+      429等の文字列に依存する。各接続のquotaエラーを分類し、利用枠が尽きた接続を候補から除外する仕組みが必要。Sparkは別bucketを確認し、Museも提供側の利用枠情報または明示的な枠切れ応答を扱う。
+    </li>
+  </ol>
+  <p>
+    既存leaseには使用中targetの除外とQueue間のfairnessがある。モデルtargetは既存の最終使用時刻に基づく選択を行い、poolのtarget列はBTreeSetで集約される。設定の並び順を担当比率として扱わず、並列workerと必要なtarget公平性で配分する。
+  </p>
+  <h2>5. 改訂案：既存SDKをキュー実行基盤へ接続する</h2>
+  <p>
+    <strong>確定方針：Qwen・Muse・Sparkは同じ優先度の実行候補とする。</strong>
+    モデル別の優先順位や固定の担当比率を設けず、利用可能な空き接続へjobを配分する。利用枠が尽きた接続だけを候補から外し、残る接続で処理を続ける。MuseとSparkの両方が枠切れになった場合はQwenへ処理を集める。同列とは優先度が同じという意味であり、処理件数を3等分する制約ではない。
+  </p>
+  <p>
+    <strong
+      >Codex SDKを継続使用し、Spark専用targetとRustからの薄いSDK呼び出しadapterを追加する。</strong
+    >Muse・Qwenは現在のHTTP経路を継続する。「同じ扱い」は接続プロトコルの統一ではなく、共通のpool・claim・leaseで別jobを分担できることとする。
+  </p>
+  <ol>
+    <li>
+      既存SDKの実行CLIを、Spark
+      catalog確認済みのバージョンへ揃える。SDK／依存CLIの更新かcodexPathOverrideの明示指定を選び、JSONイベント互換性を確認する。現在のSDK同梱CLIとPATH上CLIの差を解消する。
+    </li>
+    <li>
+      codex-sparkという専用targetを設け、model=gpt-5.3-codex-sparkを必須にする。共通codexモデルの変更だけで済ませず、route
+      → target → request → startThreadまでモデルを保持する。通常Codexモデルへ自動fallbackしない。
+    </li>
+    <li>
+      Rustの実行targetをlocal-llm専用構造からprovider別の構造へ拡張する。Codex
+      targetはJSONの入出力だけを扱うBun/Node
+      adapter経由で既存createCodexProviderを呼ぶ。QueueのclaimやDB保存はRust側に残し、TypeScript
+      Queue worker全体を二重起動しない。これは提案する追加実装であり現状機能ではない。
+    </li>
+    <li>
+      Qwen worker・Muse・Sparkを共通background
+      poolへ同じ優先度で参加させる。初期案は各target同時1、pool上限3。実行候補からcoding-defaultを除く。同じQueueの別jobを利用可能な空きtargetへ配分する。候補が減っても残る接続を待たせず、各targetの同時実行上限の範囲で処理を集める。
+    </li>
+    <li>
+      Rust dispatcherに上限付きの並列LLM実行を追加する。DBのclaimと結果保存は既存single
+      writerで行い、LLM待機はwriter外、job所有権確認・heartbeat・lease解放を維持する。既存Queue
+      fairnessも維持する。
+    </li>
+    <li>
+      各接続の利用枠を確認し、枠切れの接続だけを候補から除外する。Sparkのみ枠切れならQwen・Muse、Museのみ枠切れならQwen・Spark、両方ならQwenで続行する。provider共通エラー契約にquota・retry時刻を含め、枠の回復を確認できた接続は同じ優先度で候補へ戻す。残量不明を枠切れとみなさず、明示的な枠切れ情報を使う。全接続が利用不能ならjobを待機させ、通常Codexモデルへfallbackしない。
+    </li>
+  </ol>
+  <p>
+    既存のagenticCompileにはcodex
+    fallbackが残る。今回のQueue範囲ではfallback=[]だが、ContextStill全体で通常Codex枠を使わない方針にする段階では、この別経路もSparkへ固定または無効化する必要がある。
+  </p>
+  <h2>6. 確認済み事項と次の検証</h2>
+  <p>
+    分業の受入確認では、3接続が同じ優先度で選択対象になること、Muse・Sparkそれぞれの枠切れで当該接続だけが除外されること、両方の枠切れでQwenが処理を継続すること、枠回復後に同列へ戻ることを確認する。この方針更新は文書のみであり、実設定へはまだ反映していない。
+  </p>
+  <p>
+    別利用枠、既存SDK有効化、SDKとPATHのCLI差、Muse・Qwenの公開状態、実Queue設定、モデル受け渡しと並列化の不足は確認済み。Sparkの実推論、JSON品質、複数target同時実行、quota切れ復旧は今回実行していない。これらは実装後の検証項目である。
+  </p>
+  <p>
+    受入確認では、SDKへ渡った実モデルがSparkであること、通常モデルへのfallbackがないこと、利用枠のbefore/after、JSON出力、job保存結果、3target同時実行、quota・timeout・停止時のlease回復を確認する。アカウントを他タスクも使用しているため、通常枠の差分だけを単独の因果証明にはしない。
+  </p>
+  <p>
+    公式app-serverにはmodel/rerouted通知が存在する。SDKのイベントで実行モデルをどこまで確認できるかも検証する。サービス側で行われた処理を通知後の停止で取り消せるとは保証しない。Sparkでrerouteを観測したわけではなく、アプリ側モデル固定と上流サービス動作の境界を示す。
+  </p>
+  <p>
+    公式SDK：https://learn.chatgpt.com/docs/codex-sdk。公式app-server：https://learn.chatgpt.com/docs/app-server。model/list、account/rateLimits/readとイベント仕様を本文で確認した。
+  </p>
+  <p>
+    調査開始前から存在するAgent
+    SessionのRust・TypeScript実装とlocal-llmテストの未コミット変更は編集していない。本書は現在の作業ツリーと実環境の読み取りに基づく。文書以外の変更は行っていない。
+  </p>
+  <p><a href="queue-larm-recovery-2026-09-11.html">前日のQwen Queue復旧記録</a></p>
+  <h2>7. 実装と検証結果</h2>
+  <p>
+    既存SDKへRust
+    Queueから接続するadapterを追加した。Spark専用targetにはgpt-5.3-codex-sparkを明示し、通常Codexモデルへのfallbackを行わない。ChatGPT認証、Sparkのcatalog掲載、専用利用枠を推論前に確認する。CLIはCONTEXT_STILL_CODEX_CLI_PATH、外部PATH、同梱CLIの順に解決する。SDKの依存更新は行っていない。
+  </p>
+  <p>
+    プールの対象数・並列数に応じてQueue
+    workerを同時実行し、既存の最終使用時刻による選択を維持する。明示的なquotaエラーを設定DBへ保存し、回復時刻までは当該targetだけを除外する。通常の通信エラーを利用枠切れと誤判定しない。設定画面から既存のQwen・Museと同じプールへCodex
+    Sparkを追加できる。3候補を同時使用する場合はプール並列数も3にする。
+  </p>
+  <p>
+    Rust
+    Queueテスト149件成功、3件は既存のignore。2つのHTTPリクエストが双方の応答前に到着する結合テスト、SparkとMuseの個別除外・Qwen継続・復帰テストを含む。TypeScriptの対象テスト10件と型検査が成功。既存SDKと外部CLI
+    0.149.1でSparkを呼び出し、要求したJSON出力を確認した。利用量は入力10704、出力57
+    tokens。SDK出力のmodel表示は送信指定値であり、上流の実モデルを独立に証明するものではない。
+  </p>
+  <p>
+    稼働DBへのプール登録、daemonの更新・再起動は行っていない。実際の3接続を使うQueue全体の継続運転と、実アカウントを枯渇させる試験は未実施。quotaと並列動作は隔離したDBおよび模擬応答で検証した。
+  </p>
+  <h2>8. 稼働Queue検証</h2>
+  <p>
+    2026-09-12にdaemonを更新し、既存larm-qwen-backgroundプールをQwen・Muse・Sparkの3候補、maxConcurrent=3へ変更した。LaunchAgentにはNode
+    wrapperを介さないCodex
+    0.149.1のネイティブCLI絶対パスを指定した。設定とLaunchAgentの変更前バックアップをローカルの一時ディレクトリへ保存した。
+  </p>
+  <p>
+    実運転でCoveringからFinalizeへのINSERT引数順が不一致であることが判明した。protocol_version、requested_revision_id、provider_policyを列順に修正し、保存されたprotocol_versionを検査する回帰テストを追加した。Rust
+    Queueテスト149件成功、既存ignore3件。
+  </p>
+  <p>
+    SparkのCoveringジョブcover-evidence-9b13acbf35fbaa65ebd0bfa9b4451dad7988792aeは2026-09-12
+    14:09:46 UTCにcompleted、last_errorなし、provider
+    leaseはworker_finishedで解放された。後続Finalizeも14:10:16
+    UTCにcompletedとなった。MuseとSparkのFindingジョブが14:10:47
+    UTCに同時claimされた記録も確認した。
+  </p>
+  <p>
+    Museは実サービスがSubscription quota
+    exhaustedを返したため、この明示的な通知とISO形式のリセット時刻も認識するよう修正した。runtime.provider-quotaにretryAt=1789344000が保存され、2026-09-14
+    09:00
+    JSTまで候補から除外される。通常の429を枠切れと扱わない。Sparkの別Findingジョブ1件はcanonical
+    contractに合わない出力でfailedとなった。成功扱いにはしていない。
+  </p>
+  <p>
+    QwenのCoveringジョブcover-evidence-daa2336ab418a34f5a1b9d0cc9459fa4463137b4dも14:14:24
+    UTCにcompleted、last_errorなしとなり、leaseはworker_finishedで解放された。途中で接続失敗があったが再試行で復帰した。Museの除外中も残る2候補で処理が進むことを実ジョブで確認した。
+  </p>
+  <p>
+    Findingのprocedure検査は、Workflow見出しの後に最低2つの箇条書き手順を要求していたが、従来プロンプトにこの条件がなかった。positive限定、各見出しの独立行、最低2つの手順を明記し、拒否時には本文を露出せずに違反の分類を記録するよう修正した。
+  </p>
+  <p>
+    形式指定修正後、SparkのFindingジョブrust-finding-job-unix-ms:1788883921622-1230は14:19:51
+    UTCにcompletedとなり、metadata.findingCandidate.candidateCount=5、last_errorなしを確認した。Qwenの別Findingが同じ14:19:38
+    UTCにclaimされており、Muse除外中も両候補が並列に割り当てられている。更新daemonは稼働を継続している。
+  </p>
+  <h2>9. Provider Poolへのタスク割り当て統一</h2>
+  <p>
+    Poolの利用可能な候補はFinding・Covering・Episode Distiller・Landscape
+    Curationのどれでも担当できる。モデル名によるcoding-defaultの除外を撤廃した。Codex
+    targetは引き続き別利用枠のSparkを明示指定する。通常Codexモデルへのfallbackは追加していない。
+  </p>
+  <p>
+    Coveringの独立した先行実行ループを廃止し、他のLLM Queueと同じ並列Pool
+    workerからclaim・推論・保存する。Coveringの応答待ちが、同じtickの空きworkerによるFinding等の開始を妨げない。Pool容量、使用中lease、quota除外、Queueの優先度・pause・入力条件を維持する。LLMを使わないFinalizeは従来のローカル処理で継続する。
+  </p>
+  <p>
+    Pool参照を固定providerより先に解決するようRustとTypeScriptを統一した。設定画面でPoolを選ぶとprovider=auto、providerPoolId、fallback=[]となり、以前のmodel・localLlmModelを持ち越さない。稼働設定の11ルートも同じ共有Poolへ統一した。構成を解決できないtargetはclaim前に候補から外し、残る候補を使用する。
+  </p>
+  <p>
+    検証はRust Queue151件成功、既存ignore3件、関連TypeScript60件成功。3候補×4つのLLM
+    Queueの割り当て検査と、Covering・Findingが両応答前にリクエストを送る結合テストを含む。2026-09-12
+    14:32 UTCにdaemonと設定を反映し、14:33:03 UTCに共有PoolのSpark
+    Findingジョブがcompleted、leaseがworker_finishedで解放されたことを確認した。Qwenには一時的な接続失敗と再試行が引き続き見られる。Museのquota除外は継続している。
+  </p>
+  <p>
+    全体型検査は今回変更していないtest/sqlite-test-suite.test.tsからのmjs型宣言不足で失敗した。maintainability検査には既存finalize_executor.rsの行数超過が残る。今回の対象テストは成功している。文書全体検査は別変更のvalidated-improvements-implementation-plan-2026-09-12.htmlにある未解決リンクで失敗したが、本書の指摘はない。
+  </p>
+  <h2>10. コードレビューと回帰検証</h2>
+  <p>
+    停止中のFinalizeが他のQueueを妨げる分岐を修正した。Coveringのheartbeatを保存完了まで維持し、保存失敗時は所有権を確認してジョブをpendingへ戻し、leaseを解放する。並列workerはtickの残り処理枠を共有し、速いモデルが次のジョブを取得できる。
+  </p>
+  <p>
+    無効なlocal
+    providerは候補から除外する。Codexだけが有効な場合もPoolを作成でき、無効化したCodexを既存Poolから外せる。Sparkのquotaリセットを整数秒で保存し、不明な利用率は利用可能と見なさない。
+  </p>
+  <p>
+    Spark確認RPCの終了直後に次の要求を送って待ち続ける問題を修正した。SDKアダプターはtimeout・出力上限超過で子プロセスを回収する。LaunchAgentのインストールもnpmラッパーからnative
+    CLIを解決し、NodeがPATHにない環境へ対応した。
+  </p>
+  <p>
+    回帰テストには停止中Finalize、保存失敗からの回収、速いworkerの次要求、無効provider、quota境界、プロセス終了、入力詰まり、出力上限、設定UIを含む。Rust全体489件成功、3件ignore。関連TypeScript75件成功。型検査・Clippy・maintainability検査・差分空白検査は成功した。Sparkの実CLIによるアカウント・モデル・quota確認もavailable=trueで完了した。第9節の型検査と行数制限の問題は現在解消している。
+  </p>
+  <p>
+    レビュー修正をdaemonへ反映した後、2026-09-12 14:53:08
+    UTCにSparkのCovering（cover-evidence-f2ab13829108aa4f5d50c3565cc5d766b9c17aef9）、14:53:18
+    UTCにFinding（rust-finding-job-unix-ms:1788883921938-1350）がcompletedとなった。両方last_errorなし、leaseの解放理由はworker_finished。Spec全体検査も成功し、第9節に記載した別文書の未解決リンクは解消している。Museはquota除外中のため、この再検証でMuseの実推論成功は確認していない。
+  </p>
+</article>

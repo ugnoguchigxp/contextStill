@@ -15,6 +15,17 @@ vi.mock("../src/db/index.js", () => ({
   },
 }));
 
+vi.mock("../src/db/sqlite/runtime.js", () => ({
+  getRuntimeSqliteCoreDatabase: vi.fn(async () => ({
+    db: {
+      query: () => ({
+        all: () => [],
+        get: () => ({ count: 0 }),
+      }),
+    },
+  })),
+}));
+
 vi.mock("../src/modules/queue/core/index.js", () => ({
   appendQueueEvent: vi.fn(),
   pauseQueueJob: vi.fn(),

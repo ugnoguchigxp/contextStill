@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "bun:test";
 import { parseRepositoryIdentityBackfillArgs } from "../src/cli/backfill-repository-identity.js";
 
 describe("repository identity backfill CLI", () => {

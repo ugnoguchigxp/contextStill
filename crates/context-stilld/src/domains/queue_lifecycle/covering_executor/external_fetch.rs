@@ -159,7 +159,10 @@ pub(super) fn search_brave(
         .get("https://api.search.brave.com/res/v1/web/search")
         .query(&[("q", query), ("count", count.as_str())])
         .header("accept", "application/json")
-        .header("x-subscription-token", api_key)
+        .header(
+            "x-subscription-token",
+            crate::domains::secret_store::header(api_key, false)?,
+        )
         .send()
         .map_err(|error| format!("Brave request failed: {error}"))?;
     if !response.status().is_success() {
@@ -200,7 +203,10 @@ pub(super) fn search_exa(
     let response = client
         .post("https://api.exa.ai/search")
         .header("accept", "application/json")
-        .header("x-api-key", api_key)
+        .header(
+            "x-api-key",
+            crate::domains::secret_store::header(api_key, false)?,
+        )
         .json(&json!({"query": query, "numResults": result_count}))
         .send()
         .map_err(|error| format!("Exa request failed: {error}"))?;

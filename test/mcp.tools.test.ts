@@ -24,7 +24,7 @@ vi.mock("../src/modules/doctor/doctor.service.js");
 vi.mock("../src/modules/episodic-memory/episode-card.service.js");
 vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
 vi.mock("../src/modules/settings/settings.service.js");
-vi.mock("../api/modules/knowledge/knowledge.repository.js");
+vi.mock("../src/modules/knowledge/knowledge-admin.repository.js");
 vi.mock("../src/modules/context-decision/context-decision.service.js");
 vi.mock("../src/modules/context-decision/context-decision.feedback.service.js");
 vi.mock("../src/modules/readFile/domain.js");
@@ -35,7 +35,7 @@ vi.mock("../src/db/client.js", () => ({
 import {
   listKnowledgeItems,
   updateKnowledgeItem,
-} from "../api/modules/knowledge/knowledge.repository.js";
+} from "../src/modules/knowledge/knowledge-admin.repository.js";
 import type { ToolHandlerContext } from "../src/mcp/registry.js";
 import { compileEvalTool } from "../src/mcp/tools/compile-eval.tool.js";
 import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";

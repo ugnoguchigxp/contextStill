@@ -14,6 +14,8 @@ export type SqliteWriterResponse = {
 };
 
 type WriterEndpoint = {
+  effectiveDatabaseFingerprint?: string;
+  compileContractVersion?: number;
   url: string;
   token: string;
 };
@@ -96,7 +98,7 @@ export async function probeSqliteWriter(signal: AbortSignal, expectedPath: strin
   }
 }
 
-function resolveWriterEndpoint(): WriterEndpoint {
+export function resolveWriterEndpoint(): WriterEndpoint {
   const explicitUrl = process.env.CONTEXT_STILL_WRITER_URL?.trim();
   const explicitToken = process.env.CONTEXT_STILL_WRITER_TOKEN?.trim();
   if (explicitUrl && explicitToken) {
@@ -107,7 +109,12 @@ function resolveWriterEndpoint(): WriterEndpoint {
   const metadataPath =
     process.env.CONTEXT_STILL_MCP_ENDPOINT_PATH ??
     path.join(appDataDir, "run", "mcp-endpoint.json");
-  let metadata: { writerUrl?: string; writerTokenPath?: string };
+  let metadata: {
+    writerUrl?: string;
+    writerTokenPath?: string;
+    effectiveDatabaseFingerprint?: string;
+    compileContractVersion?: number;
+  };
   try {
     metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as typeof metadata;
   } catch (error) {
@@ -123,7 +130,12 @@ function resolveWriterEndpoint(): WriterEndpoint {
   if (!url) throw new Error(`SQLite writer URL is missing from ${metadataPath}`);
   const token = explicitToken ?? readFileSync(tokenPath, "utf8").trim();
   if (!token) throw new Error(`SQLite writer token is empty at ${tokenPath}`);
-  return { url, token };
+  return {
+    url,
+    token,
+    effectiveDatabaseFingerprint: metadata.effectiveDatabaseFingerprint,
+    compileContractVersion: metadata.compileContractVersion,
+  };
 }
 
 function resolveAppDataDir(): string {

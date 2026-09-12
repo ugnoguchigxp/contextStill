@@ -1,0 +1,18 @@
+{
+  "goal": "understand this repository's development workflow",
+  "changeTypes": [
+    "docs",
+    "plan"
+  ],
+  "domains": [
+    "onboarding",
+    "workflow"
+  ],
+  "requiredCommands": [
+    "bun install --frozen-lockfile",
+    "cargo build --locked -p context-stilld",
+    "./target/debug/context-stilld bootstrap init --json",
+    "./target/debug/context-stilld bootstrap preflight --json",
+    "bun run verify:onboarding"
+  ]
+}

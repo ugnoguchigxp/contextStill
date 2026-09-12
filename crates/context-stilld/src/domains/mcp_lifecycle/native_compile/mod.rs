@@ -38,6 +38,7 @@ use types::{
 };
 
 mod call_metrics;
+pub(crate) mod client;
 mod composition;
 mod evidence;
 pub(super) mod experiment;
@@ -45,6 +46,9 @@ mod persistence;
 mod prompts;
 mod providers;
 mod retrieval;
+#[cfg(test)]
+mod retrieval_benchmark_reference;
+mod retrieval_tests;
 pub(crate) mod selector;
 mod telemetry;
 mod test_support;
@@ -112,10 +116,14 @@ fn optional_string_array_arg(
 }
 
 pub(crate) fn context_compile(params: &Value, context: &NativeToolContext) -> Value {
-    match context.compile_runtime.mode {
+    let mut result = match context.compile_runtime.mode {
         CompileFoundationMode::Legacy => context_compile_legacy(params, context),
         mode => context_compile_split(params, context, mode),
+    };
+    if let Some(object) = result.as_object_mut() {
+        object.remove("structuredContent");
     }
+    result
 }
 
 fn context_compile_legacy(params: &Value, context: &NativeToolContext) -> Value {
@@ -197,14 +205,17 @@ fn context_compile_on_connection(
         change_types: change_types.clone(),
         domains: domains.clone(),
     };
-    let knowledge = search_knowledge_items(
+    let knowledge = match search_knowledge_items(
         connection,
         &search_text,
         8,
         &project_identity,
         &request_facets,
         false,
-    );
+    ) {
+        Ok(items) => items,
+        Err(error) => return tool_error(&error),
+    };
     let episodes = search_episode_cards(
         connection,
         &search_text,
@@ -334,6 +345,7 @@ fn context_compile_on_connection(
 }
 
 struct SplitPrepared {
+    client_options: Option<client::CompileOptions>,
     started: Instant,
     retrieval_duration: Duration,
     compose_duration: Duration,
@@ -360,10 +372,20 @@ fn context_compile_split(
     context: &NativeToolContext,
     mode: CompileFoundationMode,
 ) -> Value {
+    context_compile_split_internal(params, context, mode, None)
+}
+
+fn context_compile_split_internal(
+    params: &Value,
+    context: &NativeToolContext,
+    mode: CompileFoundationMode,
+    options: Option<client::CompileOptions>,
+) -> Value {
     let mut prepared = match prepare_split_compile(params, context) {
         Ok(prepared) => prepared,
         Err(error) => return tool_error(&error),
     };
+    prepared.client_options = options;
     if matches!(
         mode,
         CompileFoundationMode::SplitShadowRank | CompileFoundationMode::Foundation
@@ -375,12 +397,25 @@ fn context_compile_split(
         prepared.episodes = prepared.foundation_episodes.clone();
     }
     let compose_started = Instant::now();
-    let composed = compose_context_response_with_settings(
+    if let Some(budget) = prepared
+        .client_options
+        .as_ref()
+        .and_then(|o| o.token_budget)
+    {
+        if let Some(settings) = prepared.settings.as_mut() {
+            settings.max_tokens = settings.max_tokens.min(budget as i64);
+            if let Some(options) = prepared.client_options.as_mut() {
+                options.token_budget = Some(settings.max_tokens.max(128) as usize);
+            }
+        }
+    }
+    let mut composed = compose_context_response_with_settings(
         prepared.settings.clone(),
         &prepared.goal,
         &prepared.knowledge,
         &prepared.episodes,
     );
+    client::apply_budget(&mut prepared, &mut composed);
     prepared.compose_duration = compose_started.elapsed();
     persist_split_compile(prepared, composed, context, mode)
 }
@@ -438,7 +473,7 @@ fn prepare_split_compile(
             &project_identity,
             &request_facets,
             true,
-        );
+        )?;
         let episodes = search_episode_cards(
             &connection,
             &search_text,
@@ -468,6 +503,7 @@ fn prepare_split_compile(
     });
     episodes.truncate(3);
     Ok(SplitPrepared {
+        client_options: None,
         started,
         retrieval_duration: retrieval_started.elapsed(),
         compose_duration: Duration::ZERO,
@@ -575,6 +611,7 @@ fn persist_split_compile(
         "episodes": prepared.episodes.iter().map(PackEpisode::to_json).collect::<Vec<_>>(),
         "diagnostics": {
             "engine": "rust-native",
+            "effectiveTokenBudget": prepared.client_options.as_ref().and_then(|o|o.token_budget),
             "degradedReasons": prepared.degraded_reasons,
             "selectedKnowledge": prepared.knowledge.len(),
             "selectedEpisodes": prepared.episodes.len(),
@@ -709,13 +746,16 @@ fn persist_split_compile(
                     (pack.to_string(), &run_id_for_write),
                 )
                 .map_err(|error| format!("failed to finalize compile pack snapshot: {error}"))?;
+            if let Some(options) = &prepared.client_options {
+                transaction.execute("UPDATE context_compile_runs SET source=?1,retrieval_mode=?2,token_budget=?3,intent=COALESCE(?4,intent) WHERE id=?5", rusqlite::params![options.source,options.retrieval_mode,options.token_budget.unwrap_or(0),options.intent,run_id_for_write]).map_err(|error|format!("failed to persist client compile metadata: {error}"))?;
+            }
             transaction
                 .commit()
                 .map_err(|error| format!("failed to commit compile transaction: {error}"))?;
-            Ok(())
+            Ok(pack)
         },
     );
-    match result {
+    let snapshot = match result {
         Ok(execution) => {
             append_foundation_telemetry(
                 context,
@@ -729,8 +769,9 @@ fn persist_split_compile(
                     pre_ledger_total: started.elapsed(),
                 },
             );
-            if let Err(error) = execution.result {
-                return tool_error(&error);
+            match execution.result {
+                Ok(pack) => pack,
+                Err(error) => return tool_error(&error),
             }
         }
         Err(error) => {
@@ -748,12 +789,8 @@ fn persist_split_compile(
             );
             return tool_error(&error);
         }
-    }
-    if markdown == "No Content" {
-        json!({"content":[{"type":"text","text":"No Content"}]})
-    } else {
-        json!({"content":[{"type":"text","text":markdown}]})
-    }
+    };
+    json!({"content":[{"type":"text","text":markdown}],"structuredContent":snapshot})
 }
 
 fn json_array_string(input: &Value, key: &str) -> String {

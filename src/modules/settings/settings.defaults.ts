@@ -93,7 +93,8 @@ function normalizeProviderPoolTarget(
       : null;
   }
   const targetId = typeof record.targetId === "string" ? record.targetId.trim() : "";
-  return targetId ? { provider, targetId } : null;
+  const model = typeof record.model === "string" ? record.model.trim() : undefined;
+  return targetId ? { provider, targetId, ...(model ? { model } : {}) } : null;
 }
 
 function normalizeProviderPools(

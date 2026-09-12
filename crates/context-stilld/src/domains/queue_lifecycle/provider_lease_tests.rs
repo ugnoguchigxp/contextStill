@@ -914,3 +914,75 @@ fn rust_provider_lease_manager_heartbeats_and_releases_active_lease() {
 
     std::fs::remove_dir_all(&app_dir).unwrap();
 }
+
+#[test]
+fn equal_pool_excludes_only_exhausted_targets_and_recovers() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    create_provider_claim_queue_table(&connection, "finding_candidate_queue");
+    create_provider_lease_table(&connection);
+    connection.execute_batch("create table settings (id text primary key, namespace text, key text, value text, updated_at text, unique(namespace,key));
+      with recursive jobs(n) as (select 1 union all select n+1 from jobs where n<10)
+      insert into finding_candidate_queue(id,status,priority,created_at,updated_at) select 'job-'||n,'pending',10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP from jobs;").unwrap();
+    let mut pool = provider_pool();
+    pool.targets = vec!["qwen".into(), "muse".into(), "spark".into()];
+    pool.max_concurrent = 3;
+    let claim = |c: &mut Connection, n: usize| {
+        claim_next_job_with_provider_lease_for_connection(
+            c,
+            &pool,
+            &[finding_candidate_spec()],
+            &format!("worker-{n}"),
+            &format!("lease-{n}"),
+            90,
+        )
+        .unwrap()
+    };
+    let mut targets = std::collections::BTreeSet::new();
+    for n in 0..3 {
+        targets.insert(claim(&mut connection, n).unwrap().provider_lease.target_id);
+    }
+    assert_eq!(
+        targets,
+        ["qwen".into(), "muse".into(), "spark".into()]
+            .into_iter()
+            .collect()
+    );
+    assert!(claim(&mut connection, 3).is_none());
+    connection
+        .execute(
+            "update llm_provider_leases set status='released',release_reason='worker_finished'",
+            [],
+        )
+        .unwrap();
+    let reset: i64 = connection
+        .query_row(
+            "select cast(strftime('%s','now') as integer)+3600",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    super::target_chat::save_quota(&connection, "spark", reset).unwrap();
+    let a = claim(&mut connection, 4).unwrap();
+    let b = claim(&mut connection, 5).unwrap();
+    assert_ne!(a.provider_lease.target_id, "spark");
+    assert_ne!(b.provider_lease.target_id, "spark");
+    assert_ne!(a.provider_lease.target_id, b.provider_lease.target_id);
+    connection
+        .execute(
+            "update llm_provider_leases set status='released',release_reason='worker_finished'",
+            [],
+        )
+        .unwrap();
+    super::target_chat::save_quota(&connection, "muse", reset).unwrap();
+    assert_eq!(
+        claim(&mut connection, 6).unwrap().provider_lease.target_id,
+        "qwen"
+    );
+    assert!(claim(&mut connection, 7).is_none());
+    // A provider whose reset has elapsed may be probed again, at equal priority.
+    super::target_chat::save_quota(&connection, "spark", 0).unwrap();
+    assert_eq!(
+        claim(&mut connection, 8).unwrap().provider_lease.target_id,
+        "spark"
+    );
+}

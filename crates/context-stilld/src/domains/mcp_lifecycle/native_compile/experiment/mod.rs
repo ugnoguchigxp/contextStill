@@ -183,7 +183,7 @@ fn observe(
             &task_identity(task)?,
             &RepositoryRequestFacets::default(),
             foundation,
-        );
+        )?;
         if foundation {
             candidates = rank_foundation_knowledge(&candidates);
         }

@@ -461,19 +461,7 @@ export function routeWithPrimaryTarget(
     };
   }
   if (option.kind === "pool") {
-    if (isLarmAgentConnectionRoute(route)) {
-      const firstTarget = option.pool.targets[0];
-      const provider = firstTarget?.provider === "local-llm" ? "local-llm" : "auto";
-      return {
-        provider,
-        model: resolveConfiguredRouteModel(settings, provider),
-        localLlmModel:
-          provider === "local-llm" ? resolveConfiguredLocalLlmModel(settings) : undefined,
-        providerPoolId: option.pool.id,
-        fallback: [],
-      };
-    }
-    return routeWithProviderPool(route, option.pool.id);
+    return { provider: "auto", providerPoolId: option.pool.id, fallback: [] };
   }
   return routeWithProviderPool(
     routeWithPrimaryEndpoint(settings, route, option.endpoint),
@@ -565,8 +553,6 @@ export function routeWithProviderPool(
 ): RuntimeSettingsRoute {
   if (isLarmAgentConnectionRoute(route)) return route;
   const normalized = providerPoolId?.trim();
-  return {
-    ...route,
-    providerPoolId: normalized || undefined,
-  };
+  if (normalized) return { provider: "auto", providerPoolId: normalized, fallback: [] };
+  return { ...route, providerPoolId: undefined };
 }

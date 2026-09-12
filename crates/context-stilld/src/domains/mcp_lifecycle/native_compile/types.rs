@@ -25,6 +25,7 @@ impl PackKnowledge {
             "body": self.body,
             "polarity": self.polarity,
             "score": self.score,
+            "scopeSnapshot": self.scope_snapshot,
             "sourceRefs": self.source_refs
         })
     }

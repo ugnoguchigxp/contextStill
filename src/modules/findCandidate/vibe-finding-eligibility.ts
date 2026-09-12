@@ -40,8 +40,7 @@ const boilerplateTerms =
   /AGENTS\.md instructions|<INSTRUCTIONS>|<\/INSTRUCTIONS>|<environment_context>|<\/environment_context>|<filesystem>|<\/filesystem>|initial_instructions|project-doc|workspace_roots/iu;
 const progressOnlyTerms =
   /^(?:ASSISTANT:\s*)?(?:確認します|調べます|読みます|実行します|進めます|次に|最後に|了解しました)[。.!！\s]*$/u;
-const durablePreferenceTerms =
-  /今後|以後|毎回|常に|必ず|禁止|always|never|must|do not/iu;
+const durablePreferenceTerms = /今後|以後|毎回|常に|必ず|禁止|always|never|must|do not/iu;
 const operationTerms =
   /実行|確認|検証|修正|復旧|再開|停止|保存|enqueue|requeue|retry|run|test|build|lint|verify|cargo|bunx?|npm|pnpm|sqlite3/iu;
 const causeTerms = /原因|理由|root cause|because|due to/iu;
@@ -232,8 +231,7 @@ function evaluateFindingSelectorV2(
   const hasVerification = verificationTerms.test(content);
   const hasPersistentPreference =
     roles.has("user") && durablePreferenceTerms.test(content) && operationTerms.test(content);
-  const hasCausalResolution =
-    causeTerms.test(content) && fixTerms.test(content) && hasVerification;
+  const hasCausalResolution = causeTerms.test(content) && fixTerms.test(content) && hasVerification;
   const hasSubstantiveDiff = agentDiffCount > 0;
   const hasRepeatableOperation = operationTerms.test(content) && hasVerification;
 

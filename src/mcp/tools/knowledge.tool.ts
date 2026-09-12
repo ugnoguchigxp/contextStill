@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import {
   listKnowledgeItems,
   updateKnowledgeItem,
-} from "../../../api/modules/knowledge/knowledge.repository.js";
+} from "../../modules/knowledge/knowledge-admin.repository.js";
 import { db } from "../../db/index.js";
 import { knowledgeItems } from "../../db/schema.js";
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";

@@ -67,10 +67,15 @@ pub fn claim_next_job_with_provider_lease_for_connection(
     let active_targets = active_provider_targets(&tx)?;
     let cooling_targets =
         cooling_provider_targets(&tx, PROVIDER_UNAVAILABLE_TARGET_COOLDOWN_SECONDS)?;
+    let exhausted_targets = quota_exhausted_targets(&tx)?;
     let free_targets = pool
         .targets
         .iter()
-        .filter(|target| !active_targets.contains(*target) && !cooling_targets.contains(*target))
+        .filter(|target| {
+            !active_targets.contains(*target)
+                && !cooling_targets.contains(*target)
+                && !exhausted_targets.contains(*target)
+        })
         .cloned()
         .collect::<Vec<_>>();
     let free_targets = least_recently_used_targets(&tx, free_targets)?;
@@ -645,4 +650,26 @@ fn select_target_for_candidate(
         .iter()
         .find(|target| free_targets.contains(*target))
         .cloned()
+}
+
+fn quota_exhausted_targets(connection: &Connection) -> Result<BTreeSet<String>, CliError> {
+    let exists: bool = connection
+        .query_row(
+            "select exists(select 1 from sqlite_master where type='table' and name='settings')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| CliError::io(e.to_string()))?;
+    if !exists {
+        return Ok(BTreeSet::new());
+    }
+    let mut statement = connection.prepare("select key from settings where namespace=?1 and json_valid(value) and cast(json_extract(value,'$.retryAt') as integer)>cast(strftime('%s','now') as integer)")
+        .map_err(|e| CliError::io(e.to_string()))?;
+    let rows = statement
+        .query_map([super::target_chat::QUOTA_NAMESPACE], |r| {
+            r.get::<_, String>(0)
+        })
+        .map_err(|e| CliError::io(e.to_string()))?;
+    rows.collect::<Result<BTreeSet<_>, _>>()
+        .map_err(|e| CliError::io(e.to_string()))
 }

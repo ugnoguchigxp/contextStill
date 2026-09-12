@@ -274,12 +274,20 @@ export function prepareSettingsForSave(settings: RuntimeSettingsEditable): Runti
 
 export function buildSecretPayload(
   secretDrafts: SecretDraftState,
-): Partial<Record<RuntimeSecretKey, { value?: string; clear?: boolean }>> | undefined {
-  const result: Partial<Record<RuntimeSecretKey, { value?: string; clear?: boolean }>> = {};
+):
+  | Partial<Record<RuntimeSecretKey, { value?: string; clear?: boolean; useEnvironment?: boolean }>>
+  | undefined {
+  const result: Partial<
+    Record<RuntimeSecretKey, { value?: string; clear?: boolean; useEnvironment?: boolean }>
+  > = {};
   for (const key of Object.keys(secretDrafts) as RuntimeSecretKey[]) {
     const item = secretDrafts[key];
     if (!item) continue;
     const value = item.value.trim();
+    if (item.useEnvironment) {
+      result[key] = { useEnvironment: true };
+      continue;
+    }
     if (item.clear) {
       result[key] = { clear: true };
       continue;

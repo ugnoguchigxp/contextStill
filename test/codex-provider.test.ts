@@ -122,3 +122,34 @@ describe("codex provider", () => {
     expect(codexSdkMocks.run).not.toHaveBeenCalled();
   });
 });
+
+describe("Spark model selection", () => {
+  it("passes the resolved request model instead of the provider default", async () => {
+    codexSdkMocks.startThread.mockReturnValue({ run: codexSdkMocks.run });
+    codexSdkMocks.run.mockResolvedValue({ finalResponse: "ok" });
+    codexSdkMocks.Codex.mockImplementation(
+      class {
+        startThread = codexSdkMocks.startThread;
+      } as never,
+    );
+    await createCodexProvider({ model: "gpt-5.4-mini" }).chat({
+      model: "gpt-5.3-codex-spark",
+      messages: [{ role: "user", content: "test" }],
+      maxTokens: 16,
+    });
+    expect(codexSdkMocks.startThread).toHaveBeenLastCalledWith(
+      expect.objectContaining({ model: "gpt-5.3-codex-spark" }),
+    );
+  });
+  it("rejects another model on a Spark-only target before invoking the SDK", async () => {
+    const calls = codexSdkMocks.startThread.mock.calls.length;
+    await expect(
+      createCodexProvider({ sparkOnly: true, model: "gpt-5.3-codex-spark" }).chat({
+        model: "gpt-5.4-mini",
+        messages: [],
+        maxTokens: 16,
+      }),
+    ).rejects.toThrow("requires gpt-5.3-codex-spark");
+    expect(codexSdkMocks.startThread.mock.calls).toHaveLength(calls);
+  });
+});

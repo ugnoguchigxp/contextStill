@@ -1,0 +1,401 @@
+<article lang="ja">
+  <h1>検証済み改善事項の実装計画</h1>
+  <p>
+    作成日：2026-09-12。状態：A〜Iのコード実装とローカル受入を実施。公開判定は保留。基準：HEAD
+    <code>ff77032</code
+    >と評価時の作業ツリー。本書は改善実装の範囲・順序・受入条件を定めるもので、実装完了や性能改善を示す文書ではない。
+  </p>
+  <p>
+    2026-09-13更新：AのKeychain・移行、B全9ファイル、C週次監査、Dのsource/eval導線、Fの依存移動とgate、Gの計測と閾値、Iの配布dry-runを実装した。E1はquery削減と旧版との12条件の結果一致・対比較を検証済み。Iは旧版からの更新と候補版でのbackup復旧まで確認した。Hは現在のresident検索方式へのSQLite
+    caller統一を実装し、比較fixtureと導入動線を検証した。FTSや新rankerの昇格は別のgateに従う。外部CI履歴と配布受入は未完了。状態と制約は<a
+      href="improvements-completion-evidence-2026-09-13.html"
+      >追加実装の証拠</a
+    >を参照。
+  </p>
+  <h2>1. 目的と採用判断</h2>
+  <p>
+    秘密値の平文保存、PR
+    CIの検証漏れ、依存更新の監視不足、検索の不要なDBアクセス、ドメインの逆依存、compileの意味の二重管理を解消する。カバレッジは実際に測っている範囲を明示して継続計測する。元の総合点やファイル行数の削減を成功指標にしない。
+  </p>
+  <p>
+    根拠は<a href="improvement-backlog-validity-review-2026-09-12.html">20件の妥当性評価</a
+    >。本書は同評価の実行計画であり、既存のidentity・Writer・compile契約を置換しない。以下の優先区分は本書内の着手順を示し、元資料のP0とは別に扱う。
+  </p>
+  <table>
+    <caption>
+      採用項目と実装単位
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">単位</th>
+        <th scope="col">元番号</th>
+        <th scope="col">成果</th>
+        <th scope="col">順序</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A 秘密値保護</td>
+        <td>#1</td>
+        <td>DBとbackupに秘密の実値を保存しない</td>
+        <td>最優先</td>
+      </tr>
+      <tr>
+        <td>B SQLite CI</td>
+        <td>#12</td>
+        <td>Bun専用テストの実行漏れを解消</td>
+        <td>先行可能</td>
+      </tr>
+      <tr>
+        <td>C 依存監視</td>
+        <td>#15・#16、#17の監視部分</td>
+        <td>更新・脆弱性・監査失敗を継続把握</td>
+        <td>先行可能</td>
+      </tr>
+      <tr>
+        <td>D 導入検証の補完</td>
+        <td>#13・#18を統合</td>
+        <td>source登録・compile・eval・再起動を公開経路で検証</td>
+        <td>Bの後</td>
+      </tr>
+      <tr>
+        <td>E 検索性能</td>
+        <td>#3</td>
+        <td>source refsの後段一括取得と候補検索の改善</td>
+        <td>計測を先行</td>
+      </tr>
+      <tr>
+        <td>F 依存境界</td>
+        <td>#6・#7</td>
+        <td>srcからapiへの逆依存を除去・再発防止</td>
+        <td>独立して着手可能</td>
+      </tr>
+      <tr>
+        <td>G カバレッジ</td>
+        <td>#10・#11</td>
+        <td>TS・Bun・Rustの計測範囲と閾値をCIに固定</td>
+        <td>Bと並行して設計</td>
+      </tr>
+      <tr>
+        <td>H compile統一</td>
+        <td>#8</td>
+        <td>既存v2計画に従いTSをRust clientへ縮小</td>
+        <td>契約比較の後</td>
+      </tr>
+      <tr>
+        <td>I 配布準備</td>
+        <td>#19の運用部分</td>
+        <td>版・schema・更新復旧手順とrelease検証</td>
+        <td>対応する安全・互換性gateの後</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>2. 既存計画との関係と変更境界</h2>
+  <ul>
+    <li>
+      <a href="context-compile-repository-isolation-improvement-plan.html"
+        >Repository isolation計画</a
+      >のscope分離を全工程で維持する。高速化や共通化を理由に候補を他repositoryから補わない。
+    </li>
+    <li>
+      <a href="sqlite-single-writer-external-io-isolation-implementation-plan.html"
+        >Writer分離計画</a
+      >と<a href="rust-runtime-closeout-implementation-plan.html">Rust runtime計画</a
+      >を優先する。OS秘密ストアへのアクセスや外部provider待機をWriter transaction内へ入れない。
+    </li>
+    <li>
+      <a href="context-compile-v2-implementation-plan.html">Compile v2計画</a
+      >をEの候補検索とHの意味統一の実装正本とする。日本語FTS・検索projectionを別方式で重複導入せず、検索時embedding呼出しも追加しない。
+    </li>
+    <li>
+      <a href="contextstill-utility-rag-foundation-implementation-plan.html">Foundation計画</a
+      >の互換経路では順位を維持する。既定<code>split_legacy_rank</code>の再実装やランキング昇格を本書の独立タスクにしない。
+    </li>
+    <li>
+      <a href="repository-isolation-first-product-hardening-plan.html">製品強化の上位計画</a
+      >の残存gateを実装開始時に確認し、H・Iの着手条件へ引き継ぐ。
+    </li>
+  </ul>
+  <p>
+    現時点のqueue・provider・settings型には進行中の変更がある。各実装単位の開始時に最新差分と既存gateを確認し、作業中の変更を削除・巻き戻し・一括コミットしない。Aはsettings型とRust
+    provider読出しで競合しやすいため、最新契約に追従する。今回の成果物は本書のみであり、liveデータ移行、鍵の変更、CI設定変更、配布はまだ実施しない。
+  </p>
+  <h2>3. 実装単位A：秘密値の保存と移行</h2>
+  <p>
+    対象：<code>src/modules/settings/settings.service.ts</code>、両DBのsettings repository、runtime
+    cache、Rustの<code>native_compile/providers.rs</code>とqueue等の秘密読出し、settings
+    API、backup/restore。現行の<code>valueKind: encrypted</code>は暗号化の証拠として扱わない。Postgres経路でも平文を書いているため、SQLiteだけ直して完了としない。
+  </p>
+  <h3>A1 保存契約と全consumerの棚卸し</h3>
+  <p>
+    採用方針はOS秘密ストアに実値を置き、DBには<code>secretRef</code>と状態だけを保存する方式。参照はapp
+    dataのidentity・namespace・key・世代を区別し、別profileの秘密を誤使用しない。Rustに解決処理を集約し、TSは既存の認証済みローカル管理経路を利用する。画面向けAPIは実値を返さず、設定済み・利用不能等の状態のみ返す。
+  </p>
+  <p>
+    最初の成果物は全read/write/cache/export/log経路の一覧、OSごとのadapterとdaemon実行identityの対応、ローカルIPCの操作契約である。macOSではKeychainを第一候補として常駐起動時の利用可否を確認する。Linux/Windowsは対応を確認できたadapterだけをサポート対象とする。OSストアが利用できない環境では明示した環境変数による供給を利用できるが、DB平文保存へのfallbackは禁止する。環境変数値もDB・backupへ複製しない。
+  </p>
+  <h3>A2 実装と故障時の挙動</h3>
+  <ol>
+    <li>
+      SecretStoreのget/set/deleteとエラー分類を実装し、全consumerを移す。秘密をコマンド引数、ログ、例外本文に含めない。OSストアがlocked・missing・deniedならprovider
+      unavailableとして明示し、暗黙の別credentialへの切替を行わない。
+    </li>
+    <li>
+      更新は新世代の秘密を保存・読出し検証した後、Writerで参照を切り替える。切替に失敗した新世代は再試行可能な回収対象にする。DBとOSストアの間に原子的transactionがあるとは仮定しない。
+    </li>
+    <li>
+      削除はDB参照の無効化とcache失効を先に行い、OSストア削除を再試行可能にする。古い世代が残ってもruntimeから参照しない。進行中requestの扱いと再起動後の失効を契約に含める。
+    </li>
+    <li>
+      既存平文は専用移行処理でOSストアへ保存・検証し、参照へ置換する。中断位置を記録し、同じ入力で再実行できるようにする。読出し検証前に唯一の旧値を削除しない。
+    </li>
+  </ol>
+  <h3>A3 移行・backup・受入条件</h3>
+  <p>
+    既存backup、SQLiteのWAL・freelist、OS
+    snapshotは現行rowの更新だけでは消えない。保守停止とWriter所有権を守るDB再生成・checkpoint等の手順を合成データで検証し、旧ファイルを残す期間と場所を明記する。SSDや利用者が複製したbackupの完全消去は保証しない。旧backupには平文が残り得ること、必要なcredential
+    rotation、旧形式を復元した場合の再移行を公開運用手順へ記載する。
+  </p>
+  <p>
+    新しいbackupは参照のみを含み、別端末への復元では秘密の再入力を要求する。同一端末でも参照先が一致・利用可能であることを検証する。秘密ストアをbackupへ暗黙に同梱しない。移行後のrollbackは旧平文形式への再保存ではなく、秘密参照を読める版への復旧か環境変数での運用とする。
+  </p>
+  <p>
+    完了条件：合成秘密でTS保存→Rust
+    compile/queue読出し、更新・削除・再起動、鍵ストア拒否、移行各段の中断と再実行、backup復元を検証する。新DB・WAL・backup・ログ・API応答に実値がないことを構造検査とバイト検査で確認する。DBとbackupだけを別の隔離環境へコピーしても秘密を復元できないことを確認する。OSストア実機テストとmockの単体テストを区別し、対応OSでの証拠が揃うまでそのOSをサポート済みにしない。
+  </p>
+  <h2>4. 実装単位B・C：CIの漏れと依存監視</h2>
+  <h3>B SQLite専用テストのPR実行</h3>
+  <p>
+    対象：<code>package.json</code>、<code>.github/workflows/verify.yml</code>、<code>test/*.bun.ts</code>、隔離runtime
+    helper。現在の8ファイルを初期一覧とし、core、knowledge、migration、runtime、repository
+    isolation、identity backfill、backfill CLI、security intelligence ingressを全て分類する。
+  </p>
+  <p>
+    新しい<code>test:sqlite-all</code>と実行スクリプトを設け、対象を一覧化して各ファイルを別Bunプロセスで実行する。環境変数とDBの混線を避けるため、初期版は逐次実行とする。新規Bunテストが一覧から漏れた場合はgateを落とす。外部依存が必要なものは理由と専用CI
+    jobを明示し、無言で除外しない。既存<code>verify:sqlite</code>も同じ一覧を利用し、PR用jobへ接続する。
+  </p>
+  <p>
+    完了条件：PR CIの結果から全対象の実行が分かり、各testの失敗がjobへ伝播する。空のapp
+    dataと除染した環境で実行し、通常の利用者DB・daemonへ接続しない。Rust
+    SQLite検証とonboardingは維持し、同じtypecheckやsmokeの重複実行は整理する。
+  </p>
+  <h3>C 更新と脆弱性の監視</h3>
+  <p>
+    対象：<code>.github/dependabot.yml</code>、新しいsecurity
+    workflow、<code>bun.lock</code>、<code>Cargo.lock</code>。Bun/Cargoの更新設定をworkspace・lockfile位置に合わせて追加し、Bun
+    lockの更新がCIのfrozen
+    installで検証できることを確認する。対応できない更新は成功扱いにせず、別の更新手順を記録する。
+  </p>
+  <p>
+    週次と手動実行で<code>bun audit</code>と<code>cargo audit</code>を実行する。ツール版・timeoutを固定し、検出された脆弱性、検出なし、監査不能を区別する。新しいHigh/Criticalと監査不能はjob
+    failureとして通知対象にし、全severityの結果をartifactに残す。例外にはadvisory
+    ID・理由・責任者・期限を持たせ、期限切れで失敗させる。
+  </p>
+  <p>
+    SheetJS等のURL依存は配布元、version、integrity、更新確認経路、監査ツールで評価できない範囲を台帳化する。npm版への一律置換はしない。secret
+    scanningやSASTはGitHub設定と既存検出結果を確認してから追加範囲を決め、workflowがないことを無効化の証拠にしない。
+  </p>
+  <p>
+    完了条件：更新PR相当のlock差分でfrozen
+    installが通り、監査fixtureで重大脆弱性とtimeoutが成功に化けない。定期jobの実行履歴と通知先を確認できる。外部サービスの設定確認が未実施なら、その部分は完了扱いにしない。
+  </p>
+  <h2>5. 実装単位D：既存onboardingの不足を補う</h2>
+  <p>
+    対象：<code>scripts/verify-onboarding.mjs</code>、<code>scripts/testing/isolated-runtime.mjs</code>、公開手順、既存browser-and-onboarding
+    job。現在の空compile・知識登録・採用確認・Writer再起動・backup検証を再利用する。
+  </p>
+  <ol>
+    <li>
+      READMEと<code>spec/docs/pub/</code>の導入手順を、対応する実行コマンド・assertionへ対応付ける。共通の実行例fixtureを文書検査とCIから参照し、手順変更だけで検証との対応が消えないようにする。
+    </li>
+    <li>
+      公開経路で合成sourceを登録し、知識のsource参照がそのsourceへ到達するところまで検証する。処理にproviderが必要なら固定応答のローカルstubを使用し、DB直接insertで主動線を省略しない。
+    </li>
+    <li>
+      compileで期待知識とrunIdを取得し、そのrunへevalを保存する。再起動後もsource、採用履歴、evalが公開読出し経路で確認できることをassertする。
+    </li>
+    <li>
+      provider停止、No Content、Writer停止を区別して検証する。No
+      Contentにevalを強制せず、失敗を空の正常結果へ変換しない。
+    </li>
+  </ol>
+  <p>
+    完了条件：credentials・既存DBなしで一連の検証がPR
+    CIを通り、文書の引数を壊す変更を検出できる。A完了後に秘密の参照・backup復元ケースを追加し、H切替後も同じユーザー動線が通ることを再確認する。
+  </p>
+  <h2>6. 実装単位E：検索コスト削減</h2>
+  <p>
+    対象：Rust <code>native_compile/retrieval.rs</code>とsource
+    refs取得、既存v2検索projection・性能fixture。
+  </p>
+  <h3>E1 ベースラインとsource refs一括取得</h3>
+  <p>
+    1千・1万件の合成knowledge、source
+    linkが疎な条件と密な条件、日本語・短語・長goal、scope/facetを固定し、候補取得・採点・source
+    refs・compose・Writer待ちを別々に記録する。全体時間に加えDBクエリ数、取得row数、p50/p95、peak
+    memoryを記録する。固定seed・mode・revision・toolchain・測定環境を添付する。
+  </p>
+  <p>
+    順位と採用IDを決めてから、そのID集合のsource
+    refsを一括取得する。SQLiteのbind上限に合わせたchunk化を許し、クエリ数は採用件数Nに対するN回ではなくchunk数で説明できるようにする。snapshotと参照順を維持し、検索順位と出力を変更しない。
+  </p>
+  <p>
+    完了条件：固定fixtureの採用ID・順序・source refs・No Contentが一致し、source
+    refsクエリ数がchunk数以内となる。limitの大小、参照なし、重複、多数参照を含める。レイテンシは同環境で前後比較し、悪化が測定ばらつきを超える場合はmerge前に原因を解消する。
+  </p>
+  <h3>E2 候補削減</h3>
+  <p>
+    E1の後も全件採点が支配的なら、v2計画のFTS/projection工程として実施する。既存実装済み範囲を先に確認し、二つ目の索引維持経路を追加しない。scope/facetの適格性を保持し、索引更新・削除・再構築の整合性を検証する。
+  </p>
+  <p>
+    候補削減の昇格条件はv2のrecall・isolation
+    gateを優先し、実装前にbaselineと目標を固定する。必須証拠の欠落、repository越境、索引更新漏れがあれば停止する。速度改善だけで昇格させず、shadow比較から段階切替する。索引は再構築可能なprojectionとし、rollback時も既存knowledgeを破壊しない。
+  </p>
+  <h2>7. 実装単位F：依存境界を回復する</h2>
+  <p>
+    対象：<code>src/modules/landscape/</code>、<code>src/mcp/tools/knowledge.tool.ts</code>、<code>api/modules/graph/</code>、<code>api/modules/knowledge/</code>、verifyスクリプト。
+  </p>
+  <p>
+    まずTypeScriptのmodule resolverに沿うimport
+    graphを取得する。相対パス、alias、re-export、静的に解決できるdynamic
+    importを対象とし、type-only依存とruntime依存を分ける。module単位の双方向依存だけでruntime循環と断定しない。
+  </p>
+  <p>
+    共有repositoryとDTOを<code>src/modules/graph</code>・<code>src/modules/knowledge</code>または責務に沿う共有層へ移す。HTTP
+    routing、認証、HTTP
+    response変換はapiに残す。移動先が旧apiファイルをimportし直す形は禁止する。移動と検索・更新挙動の変更を同じ差分へ混ぜない。
+  </p>
+  <p>
+    新しい<code>boundary:check</code>をverify:fastへ入れ、src→apiの新規依存と新規runtime循環を検出する。既存例外はedge単位で理由・解消対象を記録し、増加をCIで拒否する。例外基準の編集自体を通常レビュー対象とし、単に設定ファイルを増やせば通る構造にしない。
+  </p>
+  <p>
+    完了条件：対象移動後にsrc→apiの依存がゼロとなり、API・MCPの既存contractテストが通る。違反fixtureを加えるとgateが失敗し、type-only依存をruntime循環として誤検出しない。例外件数やファイル行数の削減だけを完了条件にしない。
+  </p>
+  <h2>8. 実装単位G：測定範囲とcoverage gate</h2>
+  <p>
+    対象：<code>vitest.config.ts</code>、package scripts、verify CI、Rust
+    coverage。現在の除外を一度棚卸しし、<code>src</code>・<code>api</code>・<code>web</code>の実装を対象へ含める。型のみ・生成物等の合理的除外には理由を付ける。Bun
+    native依存をVitestで無理に実行せず、ランタイムごとの計測面を定義する。
+  </p>
+  <ol>
+    <li>
+      TS/Vitest、Bun
+      native、Rust/llvm-covごとに対象、未計測範囲、行・分岐等の対応指標を出す。形式が違う数値を単純平均して製品全体coverageと呼ばない。
+    </li>
+    <li>
+      PR CIでreportをartifact保存し、欠落・空report・計測失敗をjob
+      failureにする。Bunの計測互換性を確認し、計測不能範囲は明示した解消タスクとして残す。
+    </li>
+    <li>
+      安定した同条件のbaselineを取得後、領域別の最低値を固定する。初回値は実測から決め、根拠のない目標率を作らない。重要変更の差分coverageも利用可能性を確認して導入する。
+    </li>
+    <li>
+      対象ファイル追加・生成物化等で分母が変わった場合は理由と前後を残す。毎PRの厳密な単調増加を強制せず、閾値の無断引下げと除外追加による見かけの改善を防ぐ。
+    </li>
+  </ol>
+  <p>
+    完了条件：PRごとにTS/Bun/Rustの計測面と結果が確認でき、閾値未達とreport欠落が失敗する。coverage未整備を理由にA・B・D等の意味のある回帰テストを止めない。
+  </p>
+  <h2>9. 実装単位H：compileの意味をRustへ集約</h2>
+  <p>
+    独立した移植計画を作らず、既存v2計画のTS
+    adapter工程として実施する。対象はCLI、API/UI、MCPに加え<code>init-project</code>等の保守対象caller。入口ごとの引数・DTO・結果・persist所有者を棚卸しする。
+  </p>
+  <p>
+    H1では固定DB
+    snapshot、固定provider応答、同一mode・budget・identityを用意し、scope、採用ID、source refs、No
+    Content、失敗、token
+    budget、run/eval参照を比較する。時刻やUUIDは正規化するが意味の違いは隠さない。既存TSとRustの差は差分表に残し、正本のv2契約に沿って解消する。
+  </p>
+  <p>
+    H2ではTSを認証済みローカルRust
+    engineのclientとDTO変換へ縮小する。Rustがrunを一度だけpersistし、TS側の二重persistを除く。daemon未起動・timeout・互換性不一致を明示し、無言でTS
+    engineへ戻さない。公開引数・出力を変える必要がある場合は互換adapterと移行手順を同じ実装単位に含める。
+  </p>
+  <p>
+    完了条件：保守対象callerが同じ意味の結果を返し、Dの主動線とMCP contract、repository
+    isolationのgateが通る。v2の切替条件を満たしてから旧TS
+    semanticsを削除する。rollbackは互換版へ入口を戻す段階までを準備し、移行後に旧形式を再保存しない。Aの秘密参照を利用できない旧版を復旧候補にしない。
+  </p>
+  <h2>10. 実装単位I：最初のサポート対象配布</h2>
+  <p>
+    対象：release
+    workflow、CHANGELOG、公開運用手順。まずOS・起動方式・秘密ストアadapterの検証表を作り、証拠のある構成だけを対応表へ掲載する。tag、package/Cargoの版、DB
+    schema revision、必要な移行、戻せる版を対応付ける。
+  </p>
+  <p>
+    tag検証→build/test→release
+    note・checksum生成までをdry-runで通す。公開手順には更新前確認、backup、更新、readiness確認、復旧、秘密再入力の条件をまとめる。公開は配布gateを通過した後の工程とし、実装計画作成時点で特定版番号やrelease公開を確約しない。
+  </p>
+  <p>
+    完了条件：隔離環境で指定旧版→候補版の移行と、許可された復旧手順を再現できる。上位計画のrelease
+    gate、Aの秘密保護、Dの公開導線、Hの意味統一が揃う。Gの数値向上や全巨大ファイル分割を配布の一律条件にしない。Tauri試作自体を本書の全工程完了まで停止する理由にはしない。
+  </p>
+  <h2>11. 着地単位・順序・証拠</h2>
+  <table>
+    <caption>
+      推奨する変更の着地順と依存
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">段階</th>
+        <th scope="col">変更単位</th>
+        <th scope="col">依存と出口</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>A1契約調査、Bテスト一覧、C監視、E1 baseline、F graph、G測定面</td>
+        <td>互いに独立。開始時に既存差分とCI baselineを記録</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>A2 adapter/consumer、B CI接続、D導線補完、E1 batch化、F移動/gate、G report</td>
+        <td>A2はA1、DはB、E/Fは各baselineの後</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>A3移行/復元、E2候補削減、G閾値、H1比較</td>
+        <td>移行はA2成功後。E2はv2 gateと性能証拠、Gは安定測定が前提</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>H2 caller切替、D再検証、I配布dry-run</td>
+        <td>H1差分解消と上位gateを満たす。Iは対応範囲の安全・互換性条件を継承</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    これは依存関係の順序であり、複数agentや別タスクへの委譲指示ではない。所要日数はOS秘密ストアとTS/Rust差分の調査前には確約しない。A1・H1・E1で残作業とリスクが分かった時点で見積りを更新する。
+  </p>
+  <p>
+    各単位は変更前baseline、対象テスト、変更後結果、残存制約、rollback条件を一緒に記録する。証拠JSON等は<code>spec/docs/assets/validated-improvements-2026-09-12/</code>へ、解釈・結論はSpec
+    HTML本文へ残す。秘密値・利用者DB・生のprovider応答は証拠として保存しない。全体の検証は変更範囲に応じたtargeted
+    testsの後、<code>bun run verify:fast</code>、SQLite変更時は更新後の<code>bun run verify:sqlite</code>、Rust変更時は<code>bun run verify:rust-daemon</code>、導線変更時は<code>bun run verify:onboarding</code>と<code>bun run test:e2e</code>を実行する。
+  </p>
+  <h2>12. 今回の必須工程に含めない事項</h2>
+  <ul>
+    <li>#2：既定split化は実装済み。既存並行書込テストに実際の不足があった場合のみ補完する。</li>
+    <li>
+      #4・#5：unwrap/空catchの一律ゼロ化と全体strict追加は保留。A〜Hで触る入力処理に到達可能なpanicや失敗の隠蔽を見つけた場合、その経路と回帰試験に限定して修正する。
+    </li>
+    <li>
+      #9：例外を15件以下へ減らす数値目標は採用しない。対象変更で責務分割が必要な場合は既存maintainability
+      budgetに従う。
+    </li>
+    <li>
+      #14：実タスク比較は別の検証工程とする。既存no_memory
+      harnessと保存済み証拠を棚卸ししてからタスク集合・評価者・費用を定義する。今回のコード改善の前提にせず、製品価値を数値で主張する際の条件にする。
+    </li>
+    <li>
+      #17：SheetJSのnpm版への機械的移行は行わない。SAST設定はCの現状確認後、重複を避けた追加タスクとして扱う。
+    </li>
+    <li>
+      #20：月次コミット数、未コミット数、全成果物の削除を品質gateにしない。変更単位ごとの意図と検証が追える履歴を残す。
+    </li>
+  </ul>
+  <p>
+    本書の完了はA〜Iの受入証拠と残存制約が揃った時点で判定する。個別工程が実装済みになったら状態を更新し、全体が完了または後続計画へ置換された後に文書をArchiveへ移す。
+  </p>
+</article>

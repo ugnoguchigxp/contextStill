@@ -20,6 +20,7 @@ pub mod routing;
 pub mod service;
 mod state;
 mod structured_output;
+mod target_chat;
 #[cfg(test)]
 mod test_support;
 mod types;

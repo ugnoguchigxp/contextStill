@@ -849,6 +849,8 @@ fn runs_claimed_curation_through_http_provider_and_durable_completion() {
         }
     });
     let target = LocalLlmTargetConfig {
+        codex: false,
+        quota_db: None,
         target_id: "target".into(),
         api_base_url: format!("http://{address}/v1"),
         api_path: "/v1/chat/completions".into(),

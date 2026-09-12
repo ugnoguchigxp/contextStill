@@ -92,7 +92,7 @@ vi.mock("../src/modules/landscape/deadzone-merge-review-llm.js", () => ({
 
 // knowledge repository モック
 const mockUpdateKnowledgeItem = vi.fn();
-vi.mock("../api/modules/knowledge/knowledge.repository.js", () => ({
+vi.mock("../src/modules/knowledge/knowledge-admin.repository.js", () => ({
   updateKnowledgeItem: (...args: any[]) => mockUpdateKnowledgeItem(...args),
 }));
 

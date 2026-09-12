@@ -27,6 +27,19 @@ jobs:
       - name: Fast verify
         run: bun run verify:fast
 
+  sqlite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.14"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: All isolated Bun SQLite tests
+        run: bun run test:sqlite-all
+
   rust-daemon:
     runs-on: ubuntu-latest
     steps:
@@ -55,6 +68,8 @@ jobs:
         run: bunx playwright install --with-deps chromium
       - name: Isolated onboarding and backup restore
         run: bun run verify:onboarding
+      - name: Native compile client and MCP parity
+        run: bun run verify:compile-parity
       - name: Browser workflows against isolated SQLite and writer
         run: bun run test:e2e
       - name: Preserve browser failure evidence
@@ -133,3 +148,34 @@ jobs:
         run: bun run verify:mcp
       - name: Queue smoke
         run: bun run verify:queue:smoke
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.14"
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          components: llvm-tools-preview
+      - run: bun install --frozen-lockfile
+      - run: cargo install cargo-llvm-cov --version 0.8.5 --locked
+      - run: bun run coverage:vitest --maxWorkers=2
+      - run: bun run coverage:bun
+      - run: bun run coverage:rust:lcov
+      - name: Require all runtime reports and measured thresholds
+        env:
+          CONTEXT_STILL_COVERAGE_DIFF_BASE: ${{ github.event.pull_request.base.sha }}
+        run: bun run coverage:check
+      - name: Preserve distinct coverage surfaces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: artifacts/coverage/
+          if-no-files-found: error
+          retention-days: 14

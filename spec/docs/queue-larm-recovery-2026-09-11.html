@@ -1,0 +1,47 @@
+<article lang="ja">
+  <h1>LARM QwenへのQueue接続修正と稼働復旧</h1>
+  <p>
+    2026-09-11。ユーザーからQueueの正常稼働への修正依頼を受け、実行設定を修正し、全7
+    Queueを再開した。実Episodeジョブの完了と次Findingジョブの自動開始を確認した。アプリケーションコードやDBスキーマの変更は行わない。
+  </p>
+  <h2>停止原因と修正方針</h2>
+  <p>
+    調査開始時は全7 Queue
+    laneがpaused=trueであり、実行可能時刻に達した待機ジョブ13,044件に対して実行中0件だった。停止理由はconsumer-canary-2026-09-11による単一ジョブ検証後の全面再開保留。resident
+    daemonは稼働していたが、停止laneはclaim対象から除外される。
+  </p>
+  <p>
+    Finding、Episode、Curationはlarm-qwen-backgroundに設定済みだった。一方、Covering、Merge
+    Review、Finalizeは旧local-llm-defaultへ向いていた。後段で別接続先へ戻らないよう、これらQueue関連routeを既存のlarm-qwen-backgroundへ統一する。webSourceResearch、agenticCompile、その他のprovider設定は維持する。
+  </p>
+  <p>
+    接続先はhttp://192.168.0.130:9810/v1、通常OpenAI互換HTTP、model=qwen-agent-worker。同poolのmaxConcurrentを1に設定する。coding-defaultの実行候補除外は既存仕様のまま維持する。停止設定の解除だけで接続成功と見なさず、実ジョブの完了を検証する。
+  </p>
+  <h2>接続検証</h2>
+  <p>
+    LARM
+    /healthはstatus=ok、releaseCommit=82c6150a3437e5b3d7498e0931d61a5fd55eb179。保存済み認証情報による/v1/models取得でqwen-agent-workerを確認した。response_format=json_schema、strict=trueを指定した推論はHTTP
+    200、finish_reason=stop、要求したJSONを返した。認証情報は出力・本書に保存しない。
+  </p>
+  <h2>変更と復旧手段</h2>
+  <p>
+    settings.v1とqueue.controls.v1を非公開の一時ディレクトリへ保存してから、resident Rust
+    writerの認証済みAPIで更新する。更新前のvalue一致を条件にし、変更件数1を検証した。同時更新があれば上書きせず停止する。復旧時はlaneを停止し、保存した設定を同writer経由で戻す。処理済みデータを巻き戻すためのDB置換は行わない。
+  </p>
+  <h2>実ジョブ検証</h2>
+  <p>
+    Episode
+    laneを先行再開した。ジョブ0158847c-1b31-489e-ab6a-568e3757f709の初回送信は通信エラーとなり、既存の60秒バックオフで再試行された。再試行ではresident
+    daemonからLARMの9810/tcpへのESTABLISHED接続を確認した。最初のsegmentが完了し、Episode
+    00000000-0000-0000-18d4-46cf2a3c50a1を保存した。status=active、classification_status=classified、title/action/outcome/lesson非空、episode_refsとepisode_cards_ftsが各1件であることを確認した。続いて全7
+    laneを再開した。ジョブは2026-09-11 13:27:52 UTC（22:27:52
+    JST）にcompleted、last_outcome_kind=episodes_distilled、last_errorなしで完了した。5分割のうち3件を保存し、2件はlow_value_skipped、failedSegments=0だった。保存3件すべてについて本文、分類、出典リンク、全文検索行を照合した。続いてFindingジョブrust-finding-job-unix-ms:1788106061046-798が自動開始された。Findingの完了や全バックログの解消まで検証済みとは扱わない。
+  </p>
+  <h2>回帰確認</h2>
+  <p>
+    cargo test -p context-stilld provider_pool --libは2件成功。Queue関連10経路のpoolとmodel、全7
+    laneの再開状態、変更対象外のwebSourceResearch・agenticCompile・providers設定の保持を確認した。bun
+    run spec:fixとbun run spec:checkで文書を検証する。
+  </p>
+  <p><a href="larm-consumer-canary-2026-09-11.html">以前の単一ジョブ検証記録</a></p>
+</article>

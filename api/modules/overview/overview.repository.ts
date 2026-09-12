@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { groupedConfig } from "../../../src/config.js";
 import { resolveDatabaseBackendConfig } from "../../../src/db/backend.js";
 import { getDb } from "../../../src/db/index.js";
+import { getRuntimeSqliteCoreDatabase } from "../../../src/db/sqlite/runtime.js";
 import { inspectCompileRuns } from "../../../src/modules/doctor/inspectors/compile.inspector.js";
 import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
 import { resolveCostRate } from "../../../src/modules/llm/llm-cost-config.js";
@@ -52,7 +53,6 @@ type OverviewDomainPayload =
 export { normalizeSearchApiStatus } from "./overview.repository.helpers.js";
 
 async function getSqliteCoreDatabase() {
-  const { getRuntimeSqliteCoreDatabase } = await import("../../../src/db/sqlite/runtime.js");
   return getRuntimeSqliteCoreDatabase();
 }
 

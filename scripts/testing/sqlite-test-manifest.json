@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "tests": [
+    "test/backfill-repository-identity.cli.bun.ts",
+    "test/repository-identity-backfill.sqlite.bun.ts",
+    "test/security-intelligence-ingress.bun.ts",
+    "test/settings-secret-store.bun.ts",
+    "test/sqlite-core.repository.bun.ts",
+    "test/sqlite-knowledge-backend.bun.ts",
+    "test/sqlite-migration.bun.ts",
+    "test/sqlite-repository-isolation-report.bun.ts",
+    "test/sqlite-runtime-support.bun.ts"
+  ]
+}

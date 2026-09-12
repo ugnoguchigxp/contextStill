@@ -11,3 +11,16 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+
+  # Bun's text lockfile has its own ecosystem; npm would not cover bun.lock correctly.
+  - package-ecosystem: bun
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

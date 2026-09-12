@@ -2,6 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/client.js";
 import { settings } from "../../db/schema.js";
+import { assertSecretReferenceWrite } from "./settings-secret-write.js";
 
 export const SETTINGS_DOCUMENT_NAMESPACE = "runtime";
 export const SETTINGS_DOCUMENT_KEY = "settings.v1";
@@ -119,8 +120,10 @@ export async function upsertSettingsRow(input: {
   isSecret?: boolean;
   description?: string | null;
   schemaVersion: number;
+  expectedVersion?: number;
   updatedBy?: string | null;
 }): Promise<SettingsRow> {
+  assertSecretReferenceWrite(input);
   if (resolveDatabaseBackendConfig().kind === "sqlite") {
     const sqlite = await import("./settings.repository.sqlite.js");
     return sqlite.upsertSettingsRowSqlite(input);
@@ -142,6 +145,10 @@ export async function upsertSettingsRow(input: {
     })
     .onConflictDoUpdate({
       target: [settings.namespace, settings.key],
+      setWhere:
+        input.expectedVersion === undefined
+          ? undefined
+          : eq(settings.schemaVersion, input.expectedVersion),
       set: {
         value: input.value,
         valueKind: input.valueKind ?? "json",

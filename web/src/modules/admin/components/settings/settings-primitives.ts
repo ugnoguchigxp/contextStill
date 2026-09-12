@@ -23,7 +23,9 @@ export type SettingsTabPath =
   | "embedding"
   | "advanced";
 
-export type SecretDraftState = Partial<Record<RuntimeSecretKey, { value: string; clear: boolean }>>;
+export type SecretDraftState = Partial<
+  Record<RuntimeSecretKey, { value: string; clear: boolean; useEnvironment?: boolean }>
+>;
 
 export type ProviderEndpointKind = "openai" | "azure-openai" | "bedrock" | "local-llm";
 

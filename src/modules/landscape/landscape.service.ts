@@ -1,4 +1,4 @@
-import { buildGraphSnapshot } from "../../../api/modules/graph/graph.repository.js";
+import { buildGraphSnapshot } from "../graph/graph.repository.js";
 import { computeDecayFactor } from "../knowledge/knowledge-value.service.js";
 import { runWithLandscapeSnapshotCache } from "./landscape-snapshot-cache.service.js";
 import {

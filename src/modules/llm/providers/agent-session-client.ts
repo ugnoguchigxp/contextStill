@@ -56,7 +56,7 @@ function responseError(response: Response, body: string): LlmProviderHttpError {
     status: response.status,
     retryAfterSeconds: parseRetryAfterSeconds(response.headers),
     requestId: response.headers.get("x-request-id") || undefined,
-    message: `local-llm agent session HTTP ${response.status}: ${body.slice(0, 500)}`,
+    message: `local-llm agent session HTTP ${response.status}: ${body}`,
   });
 }
 
@@ -154,7 +154,10 @@ async function readAgentSessionEvents(response: Response): Promise<string> {
           parsed.event.includes("approval") ||
           parsed.event.includes("user_input")
         ) {
-          throw new Error(`local-llm agent session stopped at ${parsed.event}`);
+          const details = Object.keys(data).length > 0 ? `: ${JSON.stringify(data)}` : "";
+          throw new Error(`local-llm agent session stopped at ${parsed.event}${details}`, {
+            cause: parsed.data,
+          });
         }
       }
       if (done) break;

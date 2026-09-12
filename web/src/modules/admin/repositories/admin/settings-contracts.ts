@@ -98,6 +98,7 @@ export type RuntimeProviderPoolTarget =
   | {
       provider: "openai" | "bedrock" | "codex";
       targetId: string;
+      model?: string;
     }
   | {
       provider: "larm-agent-connection";
@@ -340,7 +341,9 @@ export type RuntimeSettingsSnapshotResponse = {
 
 export type RuntimeSettingsUpdateRequest = {
   settings: RuntimeSettingsEditable;
-  secrets?: Partial<Record<RuntimeSecretKey, { value?: string; clear?: boolean }>>;
+  secrets?: Partial<
+    Record<RuntimeSecretKey, { value?: string; clear?: boolean; useEnvironment?: boolean }>
+  >;
   updatedBy?: string;
 };
 

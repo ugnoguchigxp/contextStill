@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { updateKnowledgeItem } from "../../../api/modules/knowledge/knowledge.repository.js";
+import { updateKnowledgeItem } from "../knowledge/knowledge-admin.repository.js";
 import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { knowledgeItems, mergeActivationFinalizeQueue } from "../../db/schema.js";

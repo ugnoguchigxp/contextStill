@@ -272,7 +272,8 @@ fn native_retrieval_applies_scope_and_facets_before_any_candidate_limit() {
         &project_identity,
         &rust_facets,
         false,
-    );
+    )
+    .unwrap();
     assert!(scoped.iter().any(|item| item.id == "knowledge-anchor"));
     assert!(!scoped
         .iter()
@@ -285,7 +286,8 @@ fn native_retrieval_applies_scope_and_facets_before_any_candidate_limit() {
         &project_identity,
         &rust_facets,
         false,
-    );
+    )
+    .unwrap();
     assert!(faceted
         .iter()
         .any(|item| item.id == "knowledge-facet-anchor"));
@@ -319,7 +321,8 @@ fn native_retrieval_applies_scope_and_facets_before_any_candidate_limit() {
         &global_identity,
         &RepositoryRequestFacets::default(),
         false,
-    );
+    )
+    .unwrap();
     assert_eq!(
         global
             .iter()

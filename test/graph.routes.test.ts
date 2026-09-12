@@ -142,7 +142,7 @@ vi.mock("../src/modules/landscape/landscape-curation.service.js", () => ({
   listLandscapeCurationJobs: listLandscapeCurationJobsMock,
 }));
 
-vi.mock("../api/modules/graph/graph.repository.js", () => ({
+vi.mock("../src/modules/graph/graph.repository.js", () => ({
   buildGraphSnapshot: vi.fn(),
   fetchGraphNodeDetail: vi.fn(),
   listGraphCommunityLabels: vi.fn(),
