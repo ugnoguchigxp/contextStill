@@ -1,0 +1,30 @@
+warning: sqlite-vec@0.1.10-alpha.4: In file included from sqlite-vec.c:3772:
+warning: sqlite-vec@0.1.10-alpha.4: ./sqlite-vec-diskann.c:917:30: warning: unused parameter 'p_vector' [-Wunused-parameter]
+warning: sqlite-vec@0.1.10-alpha.4:   917 |     i64 p_rowid, const void *p_vector,
+warning: sqlite-vec@0.1.10-alpha.4:       |                              ^
+warning: sqlite-vec@0.1.10-alpha.4: sqlite-vec.c:10633:65: warning: unused parameter 'pApi' [-Wunused-parameter]
+warning: sqlite-vec@0.1.10-alpha.4:  10633 |                                     const sqlite3_api_routines *pApi) {
+warning: sqlite-vec@0.1.10-alpha.4:        |                                                                 ^
+warning: sqlite-vec@0.1.10-alpha.4: 2 warnings generated.
+   Compiling context-stilld v0.1.0 (/Users/y.noguchi/Code/contextStill/crates/context-stilld)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.65s
+     Running unittests src/lib.rs (target/debug/deps/context_stilld-ab64202dd68fe9a1)
+
+running 4 tests
+test domains::mcp_lifecycle::native_compile::tests::review_probe_fallback_drops_constraints ... REVIEW fallback retains_30_days=false, retains_restore_check=false, error=None, used_ids=["rule-1"]
+ok
+test domains::mcp_lifecycle::native_compile::tests::review_probe_history_crowds_out_relevant_knowledge ... REVIEW history legacy=["noise-0", "noise-1", "noise-2", "noise-3", "noise-4", "noise-5", "noise-6", "noise-7"], foundation=["correct"]
+ok
+test domains::mcp_lifecycle::native_compile::tests::review_probe_japanese_query_and_alignment ... REVIEW japanese tokens=["バックアップの保存期間を変更する"], related_score=0, unrelated_output_aligned=true
+ok
+test domains::mcp_lifecycle::native_compile::tests::review_probe_sql_error_is_successful_no_content ... REVIEW schema_error text="No Content", status=ok, reasons=[]
+ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 433 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (target/debug/deps/context_stilld-bf0791a302b9de65)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

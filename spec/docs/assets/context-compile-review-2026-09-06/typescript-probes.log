@@ -1,0 +1,2 @@
+{"case":"budget","budget":32,"actualEstimated":54,"dropped":false,"ratiosTotal":1.3}
+{"case":"opposite-polarity","inputIds":["allow","deny"],"outputIds":["allow"],"suppressed":[["deny",{"representativeId":"allow","reason":"same_normalized_title","confidence":1}]]}

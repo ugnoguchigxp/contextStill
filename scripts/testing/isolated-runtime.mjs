@@ -55,6 +55,12 @@ export async function createIsolatedRuntime() {
   );
   Object.assign(env, {
     NODE_ENV: "production",
+    GIT_CONFIG_GLOBAL: emptyEnv,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Context Still Test",
+    GIT_AUTHOR_EMAIL: "test@example.invalid",
+    GIT_COMMITTER_NAME: "Context Still Test",
+    GIT_COMMITTER_EMAIL: "test@example.invalid",
     DOTENV_CONFIG_PATH: emptyEnv,
     CONTEXT_STILL_APP_DATA_DIR: directory,
     CONTEXT_STILL_PROJECT_ROOT: projectRoot,

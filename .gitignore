@@ -25,3 +25,7 @@ artifacts/coverage/
 artifacts/dependency-audit/
 artifacts/release/
 artifacts/improvements-coverage/
+
+# Reviewed, immutable probe evidence referenced by Spec documents.
+!spec/docs/assets/context-compile-review-2026-09-06/rust-probes.log
+!spec/docs/assets/context-compile-review-2026-09-06/typescript-probes.log

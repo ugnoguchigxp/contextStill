@@ -1,3 +1,4 @@
+import { groupedConfig } from "../src/config.js";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -23,6 +24,7 @@ describe("sqlite core repository", () => {
     const sqlite = await openSqliteCoreDatabase({
       path: path.join(tempDir, "context-still-core.sqlite"),
       vectorDimension: 3,
+      loadVectorExtension: false,
     });
     const repo = new SqliteCoreRepository(sqlite);
     try {
@@ -208,7 +210,6 @@ describe("sqlite core repository", () => {
     const sourcePath = path.join(tempDir, "context-still-core.sqlite");
     const sqlite = await openSqliteCoreDatabase({
       path: sourcePath,
-      vectorDimension: 3,
       loadVectorExtension: false,
     });
     const repo = new SqliteCoreRepository(sqlite);
@@ -219,7 +220,9 @@ describe("sqlite core repository", () => {
         status: "active",
         title: "Rebuild row",
         body: "This row has a vector.",
-        embedding: [1, 0, 0],
+        embedding: Array.from({ length: groupedConfig.embedding.dimension }, (_, i) =>
+          i === 0 ? 1 : 0,
+        ),
       });
       repo.upsertSource({
         id: "rebuild-s1",
@@ -232,7 +235,9 @@ describe("sqlite core repository", () => {
         sourceId: "rebuild-s1",
         locator: "L1",
         content: "This fragment has a vector.",
-        embedding: [0, 1, 0],
+        embedding: Array.from({ length: groupedConfig.embedding.dimension }, (_, i) =>
+          i === 1 ? 1 : 0,
+        ),
       });
     } finally {
       repo.close();

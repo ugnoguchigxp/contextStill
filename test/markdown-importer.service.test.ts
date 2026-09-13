@@ -1,6 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   collectMarkdownFiles,
   importMarkdownDirectory,
@@ -11,13 +11,20 @@ import {
 } from "../src/modules/sources/source.repository.js";
 import { enqueueFindingJob, findFindingJob } from "../src/modules/queue/core/index.js";
 
+import { groupedConfig } from "../src/config.js";
+
 vi.mock("node:fs/promises");
 vi.mock("../src/modules/sources/source.repository.js");
 vi.mock("../src/modules/queue/core/index.js");
 
 describe("Markdown Importer Service", () => {
+  const originalReadRoot = groupedConfig.readFile.root;
+  afterEach(() => {
+    groupedConfig.readFile.root = originalReadRoot;
+  });
   beforeEach(() => {
     vi.clearAllMocks();
+    groupedConfig.readFile.root = "/repo/wiki/pages";
     vi.mocked(deleteStaleSourcesForRoot).mockResolvedValue(0);
     vi.mocked(findFindingJob).mockResolvedValue(null);
     vi.mocked(enqueueFindingJob).mockResolvedValue({ id: "job-1" } as any);
@@ -55,7 +62,7 @@ describe("Markdown Importer Service", () => {
   });
 
   test("enqueues wiki markdown files using read root relative target keys", async () => {
-    const filePath = "/Users/y.noguchi/Code/contextStill/wiki/pages/skill/test.md";
+    const filePath = "/repo/wiki/pages/skill/test.md";
     vi.mocked(readdir).mockResolvedValue([
       { isFile: () => true, name: "test.md", parentPath: path.dirname(filePath) },
     ] as any);
@@ -64,7 +71,7 @@ describe("Markdown Importer Service", () => {
 
     const result = await importMarkdownDirectory(path.dirname(filePath), {
       scope: "repo",
-      projectRoot: "/Users/y.noguchi/Code/contextStill",
+      projectRoot: "/repo",
     });
 
     expect(result.enqueuedFindingJobs).toBe(1);
@@ -79,7 +86,7 @@ describe("Markdown Importer Service", () => {
   });
 
   test("does not reset existing finding jobs on re-import", async () => {
-    const filePath = "/Users/y.noguchi/Code/contextStill/wiki/pages/skill/test.md";
+    const filePath = "/repo/wiki/pages/skill/test.md";
     vi.mocked(readdir).mockResolvedValue([
       { isFile: () => true, name: "test.md", parentPath: path.dirname(filePath) },
     ] as any);
@@ -89,7 +96,7 @@ describe("Markdown Importer Service", () => {
 
     const result = await importMarkdownDirectory(path.dirname(filePath), {
       scope: "repo",
-      projectRoot: "/Users/y.noguchi/Code/contextStill",
+      projectRoot: "/repo",
     });
 
     expect(result.enqueuedFindingJobs).toBe(0);

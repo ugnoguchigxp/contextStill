@@ -34,7 +34,7 @@ try {
   const preflight = JSON.parse(await runtime.cli("bootstrap", "preflight", "--json"));
   assert.equal(preflight.overallStatus, "ready");
   const port = await freePort();
-  await runtime.startApi(port);
+  const apiProcess = await runtime.startApi(port);
   const origin = `http://127.0.0.1:${port}`;
   const api = (route, options = {}) =>
     fetch(`${origin}/api${route}`, {
@@ -72,7 +72,11 @@ try {
       body: "For onboarding workflow changes, run the isolated onboarding smoke and confirm backup verification before declaring the workflow ready.",
     }),
   });
-  assert.equal(sourceResponse.status, 200, await sourceResponse.clone().text());
+  assert.equal(
+    sourceResponse.status,
+    200,
+    `${await sourceResponse.clone().text()}\n${apiProcess.output()}`,
+  );
   const sourcePage = await (await api("/sources/pages/onboarding-proof")).json();
   assert.ok(sourcePage.path);
   const created = await api("/knowledge", {

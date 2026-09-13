@@ -222,7 +222,9 @@ describe("sqlite knowledge backend", () => {
       body: "SQLite vector fallback should find this row.",
       confidence: 80,
       importance: 80,
-      embedding: [1, 0, 0],
+      embedding: Array.from({ length: groupedConfig.embedding.dimension }, (_, i) =>
+        i === 0 ? 1 : 0,
+      ),
     });
     await upsertKnowledgeFromSource({
       sourceUri: "agent://candidate/vector-other",
@@ -234,12 +236,19 @@ describe("sqlite knowledge backend", () => {
       body: "Different vector.",
       confidence: 80,
       importance: 80,
-      embedding: [0, 1, 0],
+      embedding: Array.from({ length: groupedConfig.embedding.dimension }, (_, i) =>
+        i === 1 ? 1 : 0,
+      ),
     });
 
-    const hits = await vectorSearchKnowledge([1, 0, 0], 1, ["active"], {
-      repoPath: "/repo/contextStill",
-    });
+    const hits = await vectorSearchKnowledge(
+      Array.from({ length: groupedConfig.embedding.dimension }, (_, i) => (i === 0 ? 1 : 0)),
+      1,
+      ["active"],
+      {
+        repoPath: "/repo/contextStill",
+      },
+    );
     expect(hits).toEqual([]);
   });
 
