@@ -1,0 +1,50 @@
+<article lang="ja">
+  <h1>CI・テストを除く残項目の修正（2026-09-13）</h1>
+  <p>
+    ユーザーの指示により、CIとテストの失敗対応は保留した。今回の対象はClippy
+    6件、Dependabotの監視対象、Bun依存監査の通信、および公開前の事前確認である。CI
+    workflow、テストの期待値、coverage下限は変更していない。
+  </p>
+  <h2>Clippyと監視設定</h2>
+  <p>
+    scoreの降順sortをReverseによるsort_by_keyへ3か所、JSON
+    keyのsortをsort_by_keyへ1か所変更した。extendの不要なinto_iterを除き、stream読出しloopをwhile
+    letに置換した。並び順と読出しの終了条件は維持する。6件のうち1件はtest
+    helper内のlint指摘だが、テストの期待値やCI失敗対応は対象外とした。Rust 1.98.0のcargo clippy
+    --workspace --all-targets -- -D warningsが成功した。
+  </p>
+  <p>
+    ルートにはDockerfileがなくdocker-compose.ymlがあるため、Dependabotのdocker
+    ecosystemをdocker-composeへ変更した。監視自体を削除して失敗を隠す変更ではない。GitHub上の実行確認は保留した。
+  </p>
+  <h2>Bun依存監査</h2>
+  <p>
+    同じnpm advisory endpointへcurlとNodeは到達し、BunのHTTPS
+    fetchとauditはtimeoutすることを確認した。IP順序やHTTP/2の変更では解消しなかった。Bun側での根本原因は未特定だが、監査処理を継続できる通信経路を実装した。
+  </p>
+  <p>
+    直接通信を30秒で打ち切り、process失敗・timeoutの場合だけ、Bunのlockfile解析結果を一時loopback
+    registry経由でcurlへ渡す。curlの送信先はnpm公式HTTPSに固定し、TLS検証を維持する。Bunのgzip
+    requestとnpmのJSON
+    responseを保ち、依存一覧を独自に再構築しない。registry設定は隔離directoryのbunfig.tomlだけへ書き、終了時に削除する。再試行は45秒、curlの通信は30秒で打ち切る。
+  </p>
+  <p>
+    実際のlockfileに対する監査は完了した。Bunは15件（High 7件・Moderate
+    8件）を検出し、既存policyどおり終了コード1となった。Cargoは検出なし。直接通信の失敗をreportに残し、脆弱性検出と監査不能を区別する。例外追加・依存更新は実施していない。<a
+      href="assets/validated-improvements-2026-09-12/audit-transport-fix.json"
+      >検出一覧</a
+    >を保存した。<a href="pub/dependency-monitoring.md">運用手順</a>を更新した。
+  </p>
+  <h2>公開前の確認</h2>
+  <p>
+    release:preflightを追加し、実ファイルのDeveloper ID署名、Team ID、hardened
+    runtime、timestamp、Gatekeeper、およびLaunchAgentの実行パス・利用者を読取専用で検査できるようにした。KeychainやLaunchAgentを書き換えず、署名情報の出力やplist内の環境変数をreportへ転載しない。
+  </p>
+  <p>
+    実環境にはローカル用署名証明書のみがあり、公開用Developer
+    ID証明書は未確認だった。現在の配布候補を検査すると署名関連の不足を検出し、配布不可のまま終了コード1となった。署名済み起動identityからのKeychain利用の実機受入は未実施であり、この事前確認を代替証拠にしない。<a
+      href="pub/release-update.md"
+      >公開前の手順</a
+    >を参照。
+  </p>
+</article>

@@ -1,0 +1,114 @@
+{
+  "auditCompleted": true,
+  "transport": "curl-https-relay",
+  "directAttempt": "timeout",
+  "advisories": [
+    {
+      "package": "@tiptap/core",
+      "id": "1158508",
+      "severity": "moderate",
+      "title": "Tiptap: mergeAttributes() turns an own __proto__ key into inherited executable DOM attributes",
+      "url": "https://github.com/advisories/GHSA-cp6q-959q-f8rh"
+    },
+    {
+      "package": "@tiptap/core",
+      "id": "1193728",
+      "severity": "high",
+      "title": "Tiptap: Quadratic ReDoS in block and inline Markdown attribute parsing",
+      "url": "https://github.com/advisories/GHSA-j95f-988m-3j2f"
+    },
+    {
+      "package": "@vitest/mocker",
+      "id": "1193684",
+      "severity": "moderate",
+      "title": "Vitest: Path Traversal / Arbitrary File Read via @vitest/mocker Redirect Mock",
+      "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9"
+    },
+    {
+      "package": "fast-uri",
+      "id": "1158521",
+      "severity": "high",
+      "title": "fast-uri vulnerable to host confusion via skipped IDN canonicalization on scheme-relative references",
+      "url": "https://github.com/advisories/GHSA-5jgf-p345-68v8"
+    },
+    {
+      "package": "fast-uri",
+      "id": "1158524",
+      "severity": "high",
+      "title": "fast-uri vulnerable to server-side request forgery via malformed IPv6 normalization",
+      "url": "https://github.com/advisories/GHSA-f65p-4m7j-42xc"
+    },
+    {
+      "package": "fast-uri",
+      "id": "1158527",
+      "severity": "high",
+      "title": "fast-uri vulnerable to server-side request forgery via repeated hostname percent-decoding",
+      "url": "https://github.com/advisories/GHSA-fph4-wmhf-6fwf"
+    },
+    {
+      "package": "fast-uri",
+      "id": "1158530",
+      "severity": "high",
+      "title": "fast-uri vulnerable to host confusion via percent-encoded scheme normalization",
+      "url": "https://github.com/advisories/GHSA-jqff-g426-hqxp"
+    },
+    {
+      "package": "hono",
+      "id": "1193729",
+      "severity": "moderate",
+      "title": "Hono: Incomplete fix for CVE-2026-39408: `toSSG()` still writes files outside the output directory",
+      "url": "https://github.com/advisories/GHSA-gqvv-2mrq-wpjv"
+    },
+    {
+      "package": "hono",
+      "id": "1193730",
+      "severity": "moderate",
+      "title": "Hono: Unbounded dot-notation nesting in `parseBody()` can cause memory exhaustion",
+      "url": "https://github.com/advisories/GHSA-g6gw-c38x-mqfc"
+    },
+    {
+      "package": "hono",
+      "id": "1193731",
+      "severity": "moderate",
+      "title": "Hono: Query parser reads parameters after the URL fragment, causing cache-key and proxy interpretation differentials",
+      "url": "https://github.com/advisories/GHSA-crvj-82cr-hjcx"
+    },
+    {
+      "package": "js-yaml",
+      "id": "1193726",
+      "severity": "high",
+      "title": "js-yaml: maxTotalMergeKeys does not limit CPU use for empty merge sources",
+      "url": "https://github.com/advisories/GHSA-2883-xcg3-v3hh"
+    },
+    {
+      "package": "qs",
+      "id": "1158506",
+      "severity": "moderate",
+      "title": "qs array-limit bypass via bracket-key comma parsing",
+      "url": "https://github.com/advisories/GHSA-x5fp-wj9c-mxmx"
+    },
+    {
+      "package": "qs",
+      "id": "1158507",
+      "severity": "moderate",
+      "title": "qs: Denial of Service via Attacker Controlled isBuffer",
+      "url": "https://github.com/advisories/GHSA-4mjr-xmp4-gh2g"
+    },
+    {
+      "package": "smol-toml",
+      "id": "1193945",
+      "severity": "high",
+      "title": "smol-toml: Denial of Service via malformed TOML documents",
+      "url": "https://github.com/advisories/GHSA-7w5x-hrqm-74c2"
+    },
+    {
+      "package": "vitest",
+      "id": "1193683",
+      "severity": "moderate",
+      "title": "Vitest: Path Traversal / Arbitrary File Read via @vitest/mocker Redirect Mock",
+      "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9"
+    }
+  ],
+  "cargo": "clean",
+  "dependencyVersionsChanged": false
+}

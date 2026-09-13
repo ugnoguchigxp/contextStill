@@ -180,7 +180,7 @@ pub(crate) fn search_knowledge(params: &Value, context: &NativeToolContext) -> V
             }),
         ));
     }
-    items.sort_by(|left, right| right.0.cmp(&left.0));
+    items.sort_by_key(|item| std::cmp::Reverse(item.0));
     let values = items
         .into_iter()
         .take(limit)

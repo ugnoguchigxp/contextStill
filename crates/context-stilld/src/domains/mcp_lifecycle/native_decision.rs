@@ -232,7 +232,7 @@ fn search_decision_knowledge(
             })
         })
         .collect::<Vec<_>>();
-    items.sort_by(|left, right| right.score.cmp(&left.score));
+    items.sort_by_key(|item| std::cmp::Reverse(item.score));
     items.truncate(limit);
     items
 }

@@ -136,7 +136,7 @@ pub(super) fn select_prompt_knowledge_candidates<'a>(
     _plan: &ComposePlan,
 ) -> Vec<&'a PackKnowledge> {
     let mut items = knowledge.iter().collect::<Vec<_>>();
-    items.sort_by(|left, right| right.score.cmp(&left.score));
+    items.sort_by_key(|item| std::cmp::Reverse(item.score));
     items.truncate(8);
     items
 }

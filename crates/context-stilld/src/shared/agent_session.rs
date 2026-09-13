@@ -491,10 +491,7 @@ mod tests {
             .unwrap();
         let mut request = Vec::new();
         let mut buffer = [0_u8; 4096];
-        loop {
-            let Ok(count) = stream.read(&mut buffer) else {
-                break;
-            };
+        while let Ok(count) = stream.read(&mut buffer) {
             if count == 0 {
                 break;
             }

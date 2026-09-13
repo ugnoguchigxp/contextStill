@@ -155,6 +155,7 @@
     "verify:secrets": "bun scripts/verify-secrets.mjs",
     "audit:dependencies": "bun scripts/audit-dependencies.mjs",
     "release:dry-run": "bun scripts/release-dry-run.mjs",
+    "release:preflight": "bun scripts/release-preflight.mjs",
     "coverage:vitest": "bun run test:unit --coverage",
     "coverage:bun": "bun scripts/testing/sqlite-test-suite.mjs --coverage",
     "coverage:check": "bun scripts/verify-coverage.mjs",

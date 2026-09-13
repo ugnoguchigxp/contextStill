@@ -1909,10 +1909,7 @@ pub(super) fn provider_pools(settings: &Value) -> Vec<ProviderPoolClaimConfig> {
         if targets.is_empty() {
             continue;
         }
-        route_targets
-            .entry(group_id)
-            .or_default()
-            .extend(targets.into_iter());
+        route_targets.entry(group_id).or_default().extend(targets);
     }
 
     route_targets
