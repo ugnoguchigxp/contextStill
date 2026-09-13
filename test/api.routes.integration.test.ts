@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import app from "../api/app.js";
+import { groupedConfig } from "../src/config.js";
 import { db } from "../src/db/client.js";
 import { vibeMemories } from "../src/db/schema.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
@@ -18,8 +19,17 @@ import {
 
 const describeDb = isDbIntegrationEnabled() ? describe : describe.skip;
 
+const testAdminKey = "context-still-integration-test-key-0123456789";
+function authenticatedRequest(route: string, options: RequestInit = {}) {
+  const headers = new Headers(options.headers);
+  headers.set("x-admin-api-key", testAdminKey);
+  return app.request(route, { ...options, headers });
+}
+
 describeDb("api route integration", () => {
+  const originalAdminKey = groupedConfig.admin.apiKey;
   beforeAll(async () => {
+    groupedConfig.admin.apiKey = testAdminKey;
     await ensureDbIntegrationReady();
     const settings = getRuntimeSettingsSnapshot();
     settings.taskRouting.agenticCompile.enabled = false;
@@ -34,11 +44,12 @@ describeDb("api route integration", () => {
   });
 
   afterAll(async () => {
+    groupedConfig.admin.apiKey = originalAdminKey;
     await closeIntegrationDb();
   });
 
   test("POST /api/context/compile returns context-pack and markdown", async () => {
-    const response = await app.request("/api/context/compile", {
+    const response = await authenticatedRequest("/api/context/compile", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -67,7 +78,7 @@ describeDb("api route integration", () => {
       body: "feedback compile token",
     });
 
-    const compileResponse = await app.request("/api/context/compile", {
+    const compileResponse = await authenticatedRequest("/api/context/compile", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -79,16 +90,19 @@ describeDb("api route integration", () => {
     const compileJson = (await compileResponse.json()) as { pack: { runId: string } };
     const runId = compileJson.pack.runId;
 
-    const feedbackResponse = await app.request(`/api/context/runs/${runId}/knowledge-feedback`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        items: [{ knowledgeId: ruleId, verdict: "used" }],
-      }),
-    });
+    const feedbackResponse = await authenticatedRequest(
+      `/api/context/runs/${runId}/knowledge-feedback`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          items: [{ knowledgeId: ruleId, verdict: "used" }],
+        }),
+      },
+    );
     expect(feedbackResponse.status).toBe(200);
 
-    const detailResponse = await app.request(`/api/context/runs/${runId}`);
+    const detailResponse = await authenticatedRequest(`/api/context/runs/${runId}`);
     expect(detailResponse.status).toBe(200);
     const detailJson = (await detailResponse.json()) as { detail: unknown };
     const parsedDetail = compileRunDetailSchema.parse(detailJson.detail);
@@ -109,7 +123,9 @@ describeDb("api route integration", () => {
       },
     });
 
-    const response = await app.request("/api/knowledge?limit=20&query=Integration%20Knowledge");
+    const response = await authenticatedRequest(
+      "/api/knowledge?limit=20&query=Integration%20Knowledge",
+    );
     expect(response.status).toBe(200);
     const json = (await response.json()) as {
       items: Array<{ title: string }>;
@@ -138,7 +154,7 @@ describeDb("api route integration", () => {
     });
 
     for (const query of ["typescript", "schema", "knowledge-ui"]) {
-      const response = await app.request(`/api/knowledge?limit=20&query=${query}`);
+      const response = await authenticatedRequest(`/api/knowledge?limit=20&query=${query}`);
       expect(response.status).toBe(200);
       const json = (await response.json()) as {
         items: Array<{ title: string }>;
@@ -159,7 +175,7 @@ describeDb("api route integration", () => {
       body: "context decision integration token should continue autonomously before asking user",
     });
 
-    const createResponse = await app.request("/api/context-decisions", {
+    const createResponse = await authenticatedRequest("/api/context-decisions", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -175,7 +191,9 @@ describeDb("api route integration", () => {
     expect(createJson.decisionId).toBeTruthy();
     expect(createJson.confidence).toBeGreaterThan(0);
 
-    const detailResponse = await app.request(`/api/context-decisions/${createJson.decisionId}`);
+    const detailResponse = await authenticatedRequest(
+      `/api/context-decisions/${createJson.decisionId}`,
+    );
     expect(detailResponse.status).toBe(200);
     const detailJson = (await detailResponse.json()) as {
       detail: {
@@ -200,7 +218,7 @@ describeDb("api route integration", () => {
     expect(detailJson.detail.run.confidenceTrace.mlSignal).toBeTruthy();
     expect(detailJson.detail.run.confidenceTrace.llmJudgmentStatus).toBeTruthy();
 
-    const feedbackResponse = await app.request(
+    const feedbackResponse = await authenticatedRequest(
       `/api/context-decisions/${createJson.decisionId}/human-feedback`,
       {
         method: "POST",
@@ -217,7 +235,7 @@ describeDb("api route integration", () => {
   }, 15000);
 
   test("POST /api/vibe-memory persists memory and GET /api/vibe-memory lists it", async () => {
-    const createResponse = await app.request("/api/vibe-memory", {
+    const createResponse = await authenticatedRequest("/api/vibe-memory", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -233,7 +251,7 @@ describeDb("api route integration", () => {
     });
     expect(createResponse.status).toBe(201);
 
-    const createOlderResponse = await app.request("/api/vibe-memory", {
+    const createOlderResponse = await authenticatedRequest("/api/vibe-memory", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -255,7 +273,7 @@ describeDb("api route integration", () => {
       memoryType: "capsule",
     });
 
-    const listResponse = await app.request("/api/vibe-memory?limit=10");
+    const listResponse = await authenticatedRequest("/api/vibe-memory?limit=10");
     expect(listResponse.status).toBe(200);
     const json = (await listResponse.json()) as {
       memories: Array<{ sessionId: string; content: string; memoryType: string }>;

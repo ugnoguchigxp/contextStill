@@ -184,18 +184,16 @@ export async function createIsolatedRuntime() {
       );
     },
     async startApi(port, browser = false) {
+      const apiPort = browser ? await freePort() : port;
+      if (browser) {
+        env.CONTEXT_STILL_ALLOWED_ORIGINS = `http://127.0.0.1:${port}`;
+        await this.startApi(apiPort);
+      }
       const api = browser
         ? start(
-            "bun",
-            [
-              "--no-env-file",
-              "./node_modules/vite/bin/vite.js",
-              "--host",
-              "127.0.0.1",
-              "--port",
-              String(port),
-            ],
-            { NODE_ENV: "development" },
+            "node",
+            ["./node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(port)],
+            { NODE_ENV: "development", CONTEXT_STILL_TEST_API_PORT: String(apiPort) },
           )
         : start("bun", ["--no-env-file", "api/index.ts"], { PORT: String(port) });
       try {

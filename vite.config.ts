@@ -5,6 +5,8 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { adminDevServerPort } from "./src/dev-server.config.js";
 
+const isolatedApiPort = process.env.CONTEXT_STILL_TEST_API_PORT;
+
 export default defineConfig({
   // Isolated runtimes supply an explicit dotenv file and must not load the checkout's .env.
   envDir: process.env.DOTENV_CONFIG_PATH ? false : undefined,
@@ -12,12 +14,13 @@ export default defineConfig({
   plugins: [
     tailwindcss(),
     react(),
-    devServer({
-      entry: "api/app.ts",
-      // Only /api requests are handled by Hono; everything else is Vite/React.
-      exclude: [/^\/(?!api(?:\/|$)).*/],
-      injectClientScript: false,
-    }),
+    !isolatedApiPort &&
+      devServer({
+        entry: "api/app.ts",
+        // Only /api requests are handled by Hono; everything else is Vite/React.
+        exclude: [/^\/(?!api(?:\/|$)).*/],
+        injectClientScript: false,
+      }),
   ],
   resolve: {
     alias: {
@@ -29,6 +32,7 @@ export default defineConfig({
   server: {
     port: adminDevServerPort,
     strictPort: true,
+    proxy: isolatedApiPort ? { "/api": `http://127.0.0.1:${Number(isolatedApiPort)}` } : undefined,
   },
   optimizeDeps: {
     include: ["dayjs", "@braintree/sanitize-url"],

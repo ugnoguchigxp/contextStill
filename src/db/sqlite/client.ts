@@ -1,7 +1,6 @@
 import type { Database as NativeBunSqliteDatabase } from "bun:sqlite";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { drizzle } from "drizzle-orm/bun-sqlite";
 import { groupedConfig } from "../../config.js";
 import { createSqliteCoreSchemaSql } from "./core-schema.js";
 import { RemoteWriterSqliteClient } from "./remote-client.js";
@@ -36,12 +35,13 @@ export type SqliteVectorCapability = {
 
 export type SqliteCoreDatabase = {
   db: BunSqliteDatabase;
-  orm: ReturnType<typeof createSqliteDrizzle>;
+  orm: Awaited<ReturnType<typeof createSqliteDrizzle>>;
   path: string;
   vector: SqliteVectorCapability;
 };
 
-function createSqliteDrizzle(db: BunSqliteDatabase) {
+async function createSqliteDrizzle(db: BunSqliteDatabase) {
+  const { drizzle } = await import("drizzle-orm/bun-sqlite");
   return drizzle(db as unknown as NativeBunSqliteDatabase, { schema });
 }
 
@@ -60,7 +60,7 @@ export async function openSqliteCoreDatabase(input: {
     const db = new RemoteWriterSqliteClient(readOnly, input.path) as unknown as BunSqliteDatabase;
     return {
       db,
-      orm: createSqliteDrizzle(db),
+      orm: await createSqliteDrizzle(db),
       path: input.path,
       vector: {
         available: false,
@@ -93,7 +93,7 @@ export async function openSqliteCoreDatabase(input: {
     createVecVirtualTables(db, input.vectorDimension ?? groupedConfig.embedding.dimension);
   }
 
-  return { db, orm: createSqliteDrizzle(db), path: input.path, vector };
+  return { db, orm: await createSqliteDrizzle(db), path: input.path, vector };
 }
 
 function isDirectWriteTestRuntime(): boolean {
