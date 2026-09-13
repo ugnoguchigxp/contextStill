@@ -174,7 +174,7 @@
     "@tanstack/react-table": "8.21.3",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "dotenv": "17.2.3",
+    "dotenv": "17.4.2",
     "drizzle-orm": "0.45.2",
     "gray-matter": "4.0.3",
     "hono": "4.13.2",
