@@ -1,0 +1,822 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contextstill.local/contracts/research-plugin-v1.schema.json",
+  "title": "ContextStill Research Plugin Protocol 1.0",
+  "description": "Transport-independent structural contract. x-contextstill-integrity rules are enforced by the host runtime and compatibility fixtures.",
+  "anyOf": [
+    { "$ref": "#/$defs/researchEngineCapabilities" },
+    { "$ref": "#/$defs/researchSubmitRequest" },
+    { "$ref": "#/$defs/researchJobRef" },
+    { "$ref": "#/$defs/researchJobStatus" },
+    { "$ref": "#/$defs/researchAcknowledgeRequest" },
+    { "$ref": "#/$defs/researchAcknowledgeResponse" },
+    { "$ref": "#/$defs/researchResult" },
+    { "$ref": "#/$defs/sourceConnectorCapabilities" },
+    { "$ref": "#/$defs/sourceSearchRequest" },
+    { "$ref": "#/$defs/sourceFetchRequest" },
+    { "$ref": "#/$defs/sourceSearchResponse" },
+    { "$ref": "#/$defs/sourceSnapshot" }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "bareDigest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$"
+    },
+    "resourceIdentity": {
+      "type": "object",
+      "required": [
+        "connectorKind",
+        "connectorInstanceId",
+        "resourceId",
+        "visibility",
+        "visibilityRef"
+      ],
+      "properties": {
+        "connectorKind": { "$ref": "#/$defs/identifier" },
+        "connectorInstanceId": { "$ref": "#/$defs/identifier" },
+        "resourceId": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "revision": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "scopeRefs": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "displayUrl": { "type": "string", "format": "uri", "maxLength": 4096 },
+        "visibility": {
+          "enum": ["public", "tenant", "container", "restricted", "private", "unknown"]
+        },
+        "visibilityRef": { "$ref": "#/$defs/identifier" },
+        "accessPolicyVersion": { "$ref": "#/$defs/version" }
+      },
+      "additionalProperties": true,
+      "x-contextstill-integrity": ["canonical-web-http-url"]
+    },
+    "fragmentLocator": {
+      "type": "object",
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/identifier" },
+        "value": {
+          "type": "object",
+          "additionalProperties": { "type": ["string", "number", "boolean"] }
+        }
+      },
+      "additionalProperties": true,
+      "x-contextstill-integrity": ["utf8-byte-range"]
+    },
+    "evidenceLocator": {
+      "type": "object",
+      "required": ["resource", "fragment", "snapshotHash", "quoteHash"],
+      "properties": {
+        "resource": { "$ref": "#/$defs/resourceIdentity" },
+        "fragment": { "$ref": "#/$defs/fragmentLocator" },
+        "snapshotHash": { "$ref": "#/$defs/bareDigest" },
+        "quoteHash": { "$ref": "#/$defs/bareDigest" }
+      },
+      "additionalProperties": true
+    },
+    "principal": {
+      "type": "object",
+      "required": ["principalRef", "principalClass", "authorizationScopeRefs"],
+      "properties": {
+        "principalRef": { "$ref": "#/$defs/identifier" },
+        "principalClass": { "enum": ["service", "user", "automation"] },
+        "authorizationScopeRefs": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "budget": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "inputTokens": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "outputTokens": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "wallMs": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "searchRequests": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "fetchRequests": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      },
+      "additionalProperties": false
+    },
+    "researchEngineCapabilities": {
+      "type": "object",
+      "required": [
+        "protocol",
+        "plugin",
+        "engine",
+        "operations",
+        "sourceKinds",
+        "outputKinds",
+        "locatorKinds",
+        "optionalHostCapabilities",
+        "limits",
+        "lifecycle",
+        "capabilityHash"
+      ],
+      "properties": {
+        "protocol": {
+          "type": "object",
+          "required": ["name", "versions"],
+          "properties": {
+            "name": { "const": "contextstill-research-plugin" },
+            "versions": {
+              "type": "object",
+              "required": ["min", "max"],
+              "properties": { "min": { "const": "1.0" }, "max": { "const": "1.0" } },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "plugin": {
+          "type": "object",
+          "required": ["id", "version"],
+          "properties": {
+            "id": { "$ref": "#/$defs/identifier" },
+            "version": { "$ref": "#/$defs/version" }
+          },
+          "additionalProperties": false
+        },
+        "engine": {
+          "type": "object",
+          "required": ["id", "version"],
+          "properties": {
+            "id": { "$ref": "#/$defs/identifier" },
+            "version": { "$ref": "#/$defs/version" }
+          },
+          "additionalProperties": false
+        },
+        "operations": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": { "enum": ["submit", "status", "result", "cancel", "acknowledge"] }
+        },
+        "sourceKinds": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "outputKinds": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["report", "claims", "evidence", "knowledge_candidates", "episode_source"]
+          }
+        },
+        "locatorKinds": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+/-]{0,255}$" }
+        },
+        "optionalHostCapabilities": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["llm_gateway", "knowledge_read", "source_connector", "usage_audit_sink"]
+          }
+        },
+        "limits": {
+          "type": "object",
+          "required": ["requestBytes", "resultBytes"],
+          "properties": {
+            "requestBytes": { "type": "integer", "minimum": 1, "maximum": 65536 },
+            "resultBytes": { "type": "integer", "minimum": 1, "maximum": 8388608 }
+          },
+          "additionalProperties": false
+        },
+        "lifecycle": {
+          "type": "object",
+          "required": ["retentionMode", "resultRetentionMinSeconds", "ackGraceMinSeconds"],
+          "properties": {
+            "retentionMode": { "enum": ["manual_delete", "retained_until_ack", "time_bound"] },
+            "resultRetentionMinSeconds": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "ackGraceMinSeconds": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        "capabilityHash": { "$ref": "#/$defs/digest" }
+      },
+      "additionalProperties": true,
+      "x-contextstill-integrity": ["capabilityHash", "lifecycle-operation-consistency"]
+    },
+    "researchSubmitRequest": {
+      "type": "object",
+      "required": [
+        "protocolVersion",
+        "idempotencyKey",
+        "requestHash",
+        "question",
+        "purpose",
+        "knownClaims",
+        "requiredEvidence",
+        "forbiddenScopes",
+        "hardSafetyCeiling",
+        "expectedOutputs",
+        "principal",
+        "sourceConstraints"
+      ],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "idempotencyKey": { "$ref": "#/$defs/identifier" },
+        "requestHash": { "$ref": "#/$defs/digest" },
+        "question": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "purpose": { "$ref": "#/$defs/identifier" },
+        "knownClaims": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": ["id", "text"],
+            "properties": {
+              "id": { "$ref": "#/$defs/identifier" },
+              "text": { "type": "string", "minLength": 1, "maxLength": 8192 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "requiredEvidence": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+        },
+        "forbiddenScopes": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
+        },
+        "strategy": { "enum": ["balanced", "diverse"] },
+        "targetBudget": { "$ref": "#/$defs/budget" },
+        "hardSafetyCeiling": { "$ref": "#/$defs/budget" },
+        "expectedOutputs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["report", "claims", "evidence", "knowledge_candidates", "episode_source"]
+          }
+        },
+        "parentRef": {
+          "type": "object",
+          "required": ["kind", "id"],
+          "properties": {
+            "kind": { "$ref": "#/$defs/identifier" },
+            "id": { "$ref": "#/$defs/identifier" }
+          },
+          "additionalProperties": false
+        },
+        "repositoryIdentity": {
+          "type": "object",
+          "required": ["scope"],
+          "properties": {
+            "scope": { "enum": ["global", "repository"] },
+            "projectRef": { "$ref": "#/$defs/identifier" },
+            "repoKey": { "type": "string", "minLength": 1, "maxLength": 512 },
+            "repoPath": { "type": "string", "minLength": 1, "maxLength": 4096 }
+          },
+          "additionalProperties": false
+        },
+        "principal": { "$ref": "#/$defs/principal" },
+        "sourceConstraints": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": ["connectorKind", "scopeRefs"],
+            "properties": {
+              "connectorKind": { "$ref": "#/$defs/identifier" },
+              "connectorInstanceId": { "$ref": "#/$defs/identifier" },
+              "scopeRefs": {
+                "type": "array",
+                "maxItems": 20,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/identifier" }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": true,
+      "x-contextstill-integrity": [
+        "requestHash",
+        "request-byte-limit",
+        "unique-known-claim-ids",
+        "unique-source-constraints",
+        "target-budget-within-hard-ceiling",
+        "repository-project-ref"
+      ]
+    },
+    "researchJobRef": {
+      "type": "object",
+      "required": ["protocolVersion", "pluginJobId", "requestHash", "created"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "pluginJobId": { "$ref": "#/$defs/identifier" },
+        "requestHash": { "$ref": "#/$defs/digest" },
+        "created": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "researchJobStatus": {
+      "type": "object",
+      "required": [
+        "protocolVersion",
+        "pluginJobId",
+        "status",
+        "reason",
+        "resultAvailable",
+        "annotations"
+      ],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "pluginJobId": { "$ref": "#/$defs/identifier" },
+        "status": { "enum": ["queued", "running", "completed", "partial", "failed", "cancelled"] },
+        "reason": { "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+        "resultAvailable": { "type": "boolean" },
+        "annotations": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": ["kind", "detail"],
+            "properties": {
+              "kind": { "$ref": "#/$defs/identifier" },
+              "detail": { "type": "string", "minLength": 1, "maxLength": 2048 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": true,
+      "x-contextstill-integrity": ["status-reason-consistency", "terminal-result-availability"]
+    },
+    "researchAcknowledgeRequest": {
+      "type": "object",
+      "required": ["protocolVersion", "pluginJobId", "resultHash"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "pluginJobId": { "$ref": "#/$defs/identifier" },
+        "resultHash": { "$ref": "#/$defs/digest" }
+      },
+      "additionalProperties": true
+    },
+    "researchAcknowledgeResponse": {
+      "type": "object",
+      "required": ["protocolVersion", "pluginJobId", "resultHash", "acknowledged"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "pluginJobId": { "$ref": "#/$defs/identifier" },
+        "resultHash": { "$ref": "#/$defs/digest" },
+        "acknowledged": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "researchResult": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "protocolVersion",
+        "requestHash",
+        "resultHash",
+        "execution",
+        "report",
+        "claims",
+        "evidencePackages",
+        "knowledgeCandidates",
+        "episodeSource",
+        "omissions"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "contextstill-research-result-v1" },
+        "protocolVersion": { "const": "1.0" },
+        "requestHash": { "$ref": "#/$defs/digest" },
+        "resultHash": { "$ref": "#/$defs/digest" },
+        "execution": {
+          "type": "object",
+          "required": [
+            "pluginJobId",
+            "status",
+            "reason",
+            "resultAvailable",
+            "engine",
+            "usage",
+            "targetBudgetExceeded"
+          ],
+          "properties": {
+            "pluginJobId": { "$ref": "#/$defs/identifier" },
+            "status": { "enum": ["completed", "partial", "failed", "cancelled"] },
+            "reason": { "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+            "resultAvailable": { "type": "boolean" },
+            "engine": {
+              "type": "object",
+              "required": ["id", "version", "recipeVersion"],
+              "properties": {
+                "id": { "$ref": "#/$defs/identifier" },
+                "version": { "$ref": "#/$defs/version" },
+                "recipeVersion": { "type": "string", "minLength": 1, "maxLength": 256 }
+              },
+              "additionalProperties": false
+            },
+            "usage": {
+              "type": "object",
+              "required": ["totalTokens", "llmRequests"],
+              "properties": {
+                "totalTokens": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "inputTokens": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "outputTokens": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "llmRequests": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "searchRequests": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "fetchRequests": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "wallMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+              },
+              "additionalProperties": false
+            },
+            "targetBudgetExceeded": { "type": "boolean" }
+          },
+          "additionalProperties": true
+        },
+        "report": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": [
+                "artifactId",
+                "version",
+                "title",
+                "body",
+                "claimIds",
+                "limitations",
+                "openQuestions"
+              ],
+              "properties": {
+                "artifactId": { "$ref": "#/$defs/identifier" },
+                "version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                "title": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                "body": { "type": "string", "maxLength": 2097152 },
+                "claimIds": {
+                  "type": "array",
+                  "maxItems": 200,
+                  "uniqueItems": true,
+                  "items": { "$ref": "#/$defs/identifier" }
+                },
+                "limitations": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": { "type": "string", "minLength": 1, "maxLength": 8192 }
+                },
+                "openQuestions": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": { "type": "string", "minLength": 1, "maxLength": 8192 }
+                }
+              },
+              "additionalProperties": true
+            }
+          ]
+        },
+        "claims": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "required": ["id", "text", "kind", "confidence", "evidenceIds", "relatedClaimIds"],
+            "properties": {
+              "id": { "$ref": "#/$defs/identifier" },
+              "text": { "type": "string", "minLength": 1, "maxLength": 16384 },
+              "kind": { "$ref": "#/$defs/identifier" },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "evidenceIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 200,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/identifier" }
+              },
+              "relatedClaimIds": {
+                "type": "array",
+                "maxItems": 200,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/identifier" }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "evidencePackages": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "required": ["id", "claimIds", "quote", "context", "locator"],
+            "properties": {
+              "id": { "$ref": "#/$defs/identifier" },
+              "claimIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 200,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/identifier" }
+              },
+              "quote": { "type": "string", "minLength": 1, "maxLength": 4000 },
+              "context": { "type": "string", "maxLength": 12000 },
+              "locator": { "$ref": "#/$defs/evidenceLocator" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "knowledgeCandidates": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "required": ["id", "type", "polarity", "title", "body", "claimIds", "verification"],
+            "properties": {
+              "id": { "$ref": "#/$defs/identifier" },
+              "type": { "enum": ["rule", "procedure"] },
+              "polarity": { "enum": ["positive", "negative"] },
+              "title": { "type": "string", "minLength": 1, "maxLength": 1024 },
+              "body": { "type": "string", "minLength": 1, "maxLength": 32768 },
+              "claimIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 200,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/identifier" }
+              },
+              "appliesTo": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+                }
+              },
+              "verification": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 50,
+                "uniqueItems": true,
+                "items": { "type": "string", "minLength": 1, "maxLength": 4096 }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "episodeSource": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": [
+                "sourceId",
+                "title",
+                "situation",
+                "actions",
+                "outcome",
+                "lessons",
+                "openLoops",
+                "claimIds",
+                "eventRefs"
+              ],
+              "properties": {
+                "sourceId": { "$ref": "#/$defs/identifier" },
+                "title": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                "situation": { "type": "string", "minLength": 1, "maxLength": 16384 },
+                "actions": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "items": { "type": "string", "minLength": 1, "maxLength": 8192 }
+                },
+                "outcome": { "type": "string", "minLength": 1, "maxLength": 16384 },
+                "lessons": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": { "type": "string", "minLength": 1, "maxLength": 8192 }
+                },
+                "openLoops": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": { "type": "string", "minLength": 1, "maxLength": 8192 }
+                },
+                "claimIds": {
+                  "type": "array",
+                  "maxItems": 200,
+                  "uniqueItems": true,
+                  "items": { "$ref": "#/$defs/identifier" }
+                },
+                "eventRefs": {
+                  "type": "array",
+                  "maxItems": 500,
+                  "uniqueItems": true,
+                  "items": { "$ref": "#/$defs/identifier" }
+                }
+              },
+              "additionalProperties": true
+            }
+          ]
+        },
+        "omissions": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": ["kind", "count", "reason"],
+            "properties": {
+              "kind": { "$ref": "#/$defs/identifier" },
+              "count": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+              "reason": { "$ref": "#/$defs/identifier" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": true,
+      "x-contextstill-integrity": [
+        "resultHash",
+        "result-byte-limit",
+        "unique-identifiers",
+        "reference-integrity",
+        "claim-evidence-symmetry",
+        "quoteHash",
+        "quote-contained-in-context",
+        "utf8-range-quote-length",
+        "status-reason-consistency",
+        "terminal-result-availability",
+        "usage-token-total"
+      ]
+    },
+    "sourceConnectorCapabilities": {
+      "type": "object",
+      "required": [
+        "protocolVersion",
+        "connectorKind",
+        "connectorInstanceId",
+        "operations",
+        "locatorKinds",
+        "maxSearchResults",
+        "maxFetchBytes",
+        "capabilityHash"
+      ],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "connectorKind": { "$ref": "#/$defs/identifier" },
+        "connectorInstanceId": { "$ref": "#/$defs/identifier" },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["search", "fetch"] }
+        },
+        "locatorKinds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+/-]{0,255}$" }
+        },
+        "maxSearchResults": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "maxFetchBytes": { "type": "integer", "minimum": 1, "maximum": 8388608 },
+        "capabilityHash": { "$ref": "#/$defs/digest" }
+      },
+      "additionalProperties": true,
+      "x-contextstill-integrity": ["capabilityHash"]
+    },
+    "sourceSearchRequest": {
+      "type": "object",
+      "required": ["protocolVersion", "query", "limit", "principal", "scopeRefs"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "query": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "principal": { "$ref": "#/$defs/principal" },
+        "scopeRefs": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "sourceFetchRequest": {
+      "type": "object",
+      "required": ["protocolVersion", "resource", "principal"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "resource": { "$ref": "#/$defs/resourceIdentity" },
+        "fragment": { "$ref": "#/$defs/fragmentLocator" },
+        "principal": { "$ref": "#/$defs/principal" }
+      },
+      "additionalProperties": true
+    },
+    "sourceSearchResponse": {
+      "type": "object",
+      "required": ["protocolVersion", "connectorInstanceId", "hits"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "connectorInstanceId": { "$ref": "#/$defs/identifier" },
+        "hits": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "required": ["resource", "title", "snippet", "rank"],
+            "properties": {
+              "resource": { "$ref": "#/$defs/resourceIdentity" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 1024 },
+              "snippet": { "type": "string", "maxLength": 16384 },
+              "rank": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true,
+      "x-contextstill-integrity": ["unique-resources", "connector-instance-consistency"]
+    },
+    "sourceSnapshot": {
+      "type": "object",
+      "required": [
+        "protocolVersion",
+        "resource",
+        "title",
+        "text",
+        "snapshotHash",
+        "fetchedAt",
+        "truncated"
+      ],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "resource": { "$ref": "#/$defs/resourceIdentity" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "text": { "type": "string" },
+        "snapshotHash": { "$ref": "#/$defs/bareDigest" },
+        "fetchedAt": { "type": "string", "format": "date-time" },
+        "truncated": { "type": "boolean" },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": true,
+      "x-contextstill-integrity": ["snapshotHash", "snapshot-byte-limit"]
+    }
+  }
+}

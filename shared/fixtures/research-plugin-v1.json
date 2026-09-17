@@ -1,0 +1,275 @@
+{
+  "host": {
+    "capabilities": {
+      "protocol": {
+        "name": "contextstill-research-plugin",
+        "versions": { "min": "1.0", "max": "1.0" }
+      },
+      "plugin": { "id": "deepstill", "version": "0.1.0" },
+      "engine": { "id": "deepstill-round", "version": "2" },
+      "operations": [],
+      "sourceKinds": ["web"],
+      "outputKinds": ["report", "claims", "evidence"],
+      "locatorKinds": ["web-url+snapshot-sha256+utf8-bytes"],
+      "optionalHostCapabilities": ["knowledge_read"],
+      "limits": { "requestBytes": 65536, "resultBytes": 8388608 },
+      "lifecycle": {
+        "retentionMode": "manual_delete",
+        "resultRetentionMinSeconds": null,
+        "ackGraceMinSeconds": null
+      },
+      "capabilityHash": "sha256:6275450e02b6344231be1c5d6debf4fc3e19810d6656940766724b8035b79c4c"
+    },
+    "request": {
+      "protocolVersion": "1.0",
+      "idempotencyKey": "coveringEvidence:fixture:gap-1",
+      "requestHash": "sha256:78cb9add394773f96c32159fa92bcfff00a87a91330dd3e666cea3b636b1415d",
+      "question": "Which independent source supports the candidate claim?",
+      "purpose": "independent_evidence",
+      "knownClaims": [{ "id": "candidate", "text": "The candidate claim." }],
+      "requiredEvidence": ["At least one independent source."],
+      "forbiddenScopes": [],
+      "strategy": "balanced",
+      "targetBudget": { "inputTokens": 1000, "outputTokens": 200, "wallMs": 60000 },
+      "hardSafetyCeiling": { "inputTokens": 1500, "outputTokens": 300, "wallMs": 90000 },
+      "expectedOutputs": ["report", "claims", "evidence"],
+      "parentRef": { "kind": "coveringEvidence", "id": "fixture-job" },
+      "repositoryIdentity": { "scope": "repository", "projectRef": "project:fixture" },
+      "principal": {
+        "principalRef": "contextstill:research-broker",
+        "principalClass": "service",
+        "authorizationScopeRefs": ["scope:fixture"]
+      },
+      "sourceConstraints": [{ "connectorKind": "web", "scopeRefs": [] }]
+    },
+    "results": {
+      "completed": {
+        "schemaVersion": "contextstill-research-result-v1",
+        "protocolVersion": "1.0",
+        "requestHash": "sha256:78cb9add394773f96c32159fa92bcfff00a87a91330dd3e666cea3b636b1415d",
+        "resultHash": "sha256:2c39c3a3adce251a3a24278a1e28e684dfc1cfa9b5bfcc119d31eb5bf05e018c",
+        "execution": {
+          "pluginJobId": "deepstill-job-fixture",
+          "status": "completed",
+          "reason": null,
+          "resultAvailable": true,
+          "engine": {
+            "id": "deepstill-round",
+            "version": "2",
+            "recipeVersion": "rounds-v2/prompt-5/memory-1"
+          },
+          "usage": {
+            "totalTokens": 100,
+            "llmRequests": 2,
+            "searchRequests": 1,
+            "fetchRequests": 1
+          },
+          "targetBudgetExceeded": false
+        },
+        "report": {
+          "artifactId": "art-1",
+          "version": 1,
+          "title": "Research fixture",
+          "body": "Evidence quote.",
+          "claimIds": ["claim-1"],
+          "limitations": [],
+          "openQuestions": []
+        },
+        "claims": [
+          {
+            "id": "claim-1",
+            "text": "The fixture supports the candidate claim.",
+            "kind": "new",
+            "confidence": 0.9,
+            "evidenceIds": ["evidence-1"],
+            "relatedClaimIds": []
+          }
+        ],
+        "evidencePackages": [
+          {
+            "id": "evidence-1",
+            "claimIds": ["claim-1"],
+            "quote": "Evidence quote.",
+            "context": "Evidence quote. Context.",
+            "locator": {
+              "resource": {
+                "connectorKind": "web",
+                "connectorInstanceId": "deepstill-web",
+                "resourceId": "https://fixture.example/research",
+                "revision": "sha256:765854c79f329b8f93fc14ff750cc4c771c4cd813b45d979c2096a1dc2887d7a",
+                "displayUrl": "https://fixture.example/research",
+                "visibility": "unknown",
+                "visibilityRef": "unknown"
+              },
+              "fragment": { "kind": "utf8_bytes", "value": { "start": 0, "end": 15 } },
+              "snapshotHash": "765854c79f329b8f93fc14ff750cc4c771c4cd813b45d979c2096a1dc2887d7a",
+              "quoteHash": "bdb491916508642879375cc616eb0397ec5bbf5900361c2cc785def2493f1805"
+            }
+          }
+        ],
+        "knowledgeCandidates": [],
+        "episodeSource": null,
+        "omissions": []
+      },
+      "partial": {
+        "schemaVersion": "contextstill-research-result-v1",
+        "protocolVersion": "1.0",
+        "requestHash": "sha256:78cb9add394773f96c32159fa92bcfff00a87a91330dd3e666cea3b636b1415d",
+        "resultHash": "sha256:05c54f3fddb6d05df5f302da5d6138f09873cfe14f8251e6b38f69e0b0eb62f5",
+        "execution": {
+          "pluginJobId": "deepstill-job-partial",
+          "status": "partial",
+          "reason": "unresolved_questions",
+          "resultAvailable": true,
+          "engine": {
+            "id": "deepstill-round",
+            "version": "2",
+            "recipeVersion": "rounds-v2/prompt-5/memory-1"
+          },
+          "usage": { "totalTokens": 100, "llmRequests": 2 },
+          "targetBudgetExceeded": true
+        },
+        "report": {
+          "artifactId": "art-partial",
+          "version": 1,
+          "title": "Partial fixture",
+          "body": "Some verified material remains.",
+          "claimIds": [],
+          "limitations": ["Independent evidence was incomplete."],
+          "openQuestions": ["Which source resolves the remaining question?"]
+        },
+        "claims": [],
+        "evidencePackages": [],
+        "knowledgeCandidates": [],
+        "episodeSource": null,
+        "omissions": [{ "kind": "evidence", "count": 1, "reason": "budget_exhausted" }]
+      },
+      "failed": {
+        "schemaVersion": "contextstill-research-result-v1",
+        "protocolVersion": "1.0",
+        "requestHash": "sha256:78cb9add394773f96c32159fa92bcfff00a87a91330dd3e666cea3b636b1415d",
+        "resultHash": "sha256:5574c4180912ba0506bb3f7f6b37cd4bc14aabe40108844d9140822ae7655731",
+        "execution": {
+          "pluginJobId": "deepstill-job-failed",
+          "status": "failed",
+          "reason": "provider_error",
+          "resultAvailable": false,
+          "engine": {
+            "id": "deepstill-round",
+            "version": "2",
+            "recipeVersion": "rounds-v2/prompt-5/memory-1"
+          },
+          "usage": { "totalTokens": 0, "llmRequests": 0 },
+          "targetBudgetExceeded": false
+        },
+        "report": null,
+        "claims": [],
+        "evidencePackages": [],
+        "knowledgeCandidates": [],
+        "episodeSource": null,
+        "omissions": []
+      },
+      "cancelled": {
+        "schemaVersion": "contextstill-research-result-v1",
+        "protocolVersion": "1.0",
+        "requestHash": "sha256:78cb9add394773f96c32159fa92bcfff00a87a91330dd3e666cea3b636b1415d",
+        "resultHash": "sha256:9da3d6a5e5e33a3ac4780eb1f8f02f3d0a54be40682f6b0a453d0d9bb75844be",
+        "execution": {
+          "pluginJobId": "deepstill-job-cancelled",
+          "status": "cancelled",
+          "reason": "cancelled_by_parent",
+          "resultAvailable": false,
+          "engine": {
+            "id": "deepstill-round",
+            "version": "2",
+            "recipeVersion": "rounds-v2/prompt-5/memory-1"
+          },
+          "usage": { "totalTokens": 10, "llmRequests": 1 },
+          "targetBudgetExceeded": false
+        },
+        "report": null,
+        "claims": [],
+        "evidencePackages": [],
+        "knowledgeCandidates": [],
+        "episodeSource": null,
+        "omissions": []
+      }
+    }
+  },
+  "deepStill": {
+    "commit": "c970f64170ee5254726bb9a9ac0fb083386c1a13",
+    "capabilities": {
+      "pluginId": "deepstill",
+      "pluginVersion": "0.1.0",
+      "engine": { "id": "deepstill-round", "version": "2" },
+      "operations": [],
+      "sourceKinds": ["web"],
+      "outputKinds": ["report", "claims", "evidence", "knowledge_candidates", "episode_source"],
+      "locatorKinds": ["web-url+snapshot-sha256+utf8-bytes"],
+      "optionalHostCapabilities": ["knowledge_read"]
+    },
+    "projection": {
+      "projectionVersion": "deepstill-result-projection-v1",
+      "resultHash": "7c140e7b5c9ea26b4a958066933bed2e23ff5a344e02c18eb89a74ab83eddc1b",
+      "execution": {
+        "jobId": "deepstill-job-fixture",
+        "status": "completed",
+        "reason": null,
+        "resultAvailable": true,
+        "engineVersion": 2,
+        "recipeVersion": "rounds-v2/prompt-5/memory-1",
+        "usage": {
+          "queries": 1,
+          "urls": 1,
+          "documents": 1,
+          "tokens": 100,
+          "requests": 2,
+          "costUsd": 0.01
+        }
+      },
+      "report": {
+        "id": "art-1",
+        "version": 1,
+        "title": "Research fixture",
+        "body": "Evidence quote.",
+        "claimIds": ["claim-1"],
+        "generatedAt": "2026-09-12T00:00:00.000Z",
+        "limitations": [],
+        "openQuestions": []
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "text": "The fixture supports the candidate claim.",
+          "kind": "NEW",
+          "confidence": 0.9,
+          "evidenceIds": ["evidence-1"],
+          "relatedClaimIds": []
+        }
+      ],
+      "evidence": [
+        {
+          "id": "evidence-1",
+          "claimIds": ["claim-1"],
+          "quote": "Evidence quote.",
+          "context": "Evidence quote. Context.",
+          "locator": {
+            "resource": {
+              "connectorKind": "web",
+              "connectorInstanceId": "deepstill-web",
+              "resourceId": "https://fixture.example/research",
+              "revision": "sha256:765854c79f329b8f93fc14ff750cc4c771c4cd813b45d979c2096a1dc2887d7a",
+              "displayUrl": "https://fixture.example/research",
+              "visibilityRef": "unknown"
+            },
+            "fragment": { "kind": "utf8_bytes", "value": { "start": 0, "end": 15 } },
+            "snapshotHash": "765854c79f329b8f93fc14ff750cc4c771c4cd813b45d979c2096a1dc2887d7a",
+            "quoteHash": "bdb491916508642879375cc616eb0397ec5bbf5900361c2cc785def2493f1805"
+          }
+        }
+      ],
+      "knowledgeCandidates": [],
+      "episodeSource": null
+    }
+  }
+}

@@ -1,0 +1,1151 @@
+<article lang="ja">
+  <h1>DeepStillを汎用ResearchEngine pluginとして接続するContextStill側実装依頼</h1>
+  <p>
+    <strong>状態: ContextStill所有contractの最初の実装単位が完了し、手動Broker設計待ち。</strong>
+    DeepStill側の先行境界実装は2026-09-17のcommit
+    <code>c970f64170ee5254726bb9a9ac0fb083386c1a13</code>
+    で完了した。この文書は、従来の具体案をそのまま確定仕様とせず、ContextStill側が次に所有・決定・実装する事項を示す依頼書として更新した。
+  </p>
+  <p>
+    2026-09-17。DeepStillの現行API、LLM
+    provider、ContextStill連携、Report・Knowledge・Episode出力と、ContextStillのLLM
+    routing、7つのQueue、Knowledge候補pipeline、Episode
+    APIを照合した。目的は、DeepStillを独立したリポジトリ・単体アプリとして開発可能なまま、ContextStillのLLM
+    providerを利用し、Queueから必要な外部調査を非同期委託し、その結果を元処理、Knowledge候補、Episodeへ反映できるようにすることである。以下に記載するendpoint、version、上限値は、明示的に「確定」としたもの以外は候補であり、ContextStill側の汎用contract検討を経ずに実装へ固定してはならない。
+  </p>
+
+  <h2>0. 今回の依頼と完了条件</h2>
+  <p>
+    次の担当はContextStill側である。DeepStill固有integrationを先に増築するのではなく、複数のResearchEngineとSourceConnectorに適用できるhost-owned
+    contractを定義し、DeepStillを最初の適合実装として検証すること。
+  </p>
+  <h3>0.1 今回行うこと</h3>
+  <ol>
+    <li>
+      ResearchEngineとSourceConnectorのhost-facing contract、version policy、capability
+      negotiationを確定する。
+    </li>
+    <li>
+      submit、status、result、cancel、ACKのtransport非依存schemaとcanonical hash規則を定義する。
+    </li>
+    <li>repository identity、visibility reference、principal、認証境界を定義する。</li>
+    <li>
+      idempotency、result retention、ACK後grace period、再起動時reconciliationの永続化方針を決める。
+    </li>
+    <li>
+      DeepStill commit <code>c970f64170ee</code>の型・fixture・result
+      projectionと照合し、相互fixtureを作る。
+    </li>
+    <li>targeted testとfull verificationを実行し、変更前baselineとの差を記録する。</li>
+  </ol>
+  <h3>0.2 今回行わないこと</h3>
+  <ul>
+    <li>DeepStillの内部DB、migration、内部型をContextStillへ共有または複製しない。</li>
+    <li>DeepStill専用endpointを汎用contractより先に確定しない。</li>
+    <li>LLM Gateway、Queue自動委託、Knowledge/Episode自動登録を最初の変更へ同時に含めない。</li>
+    <li>
+      ContextStillのSQLiteをBun processから直接更新しない。永続化はresident writer境界を使う。
+    </li>
+    <li>SharePoint、Confluence、Slack connector本体をこの作業で実装しない。</li>
+  </ul>
+  <h3>0.3 要相談事項</h3>
+  <ul>
+    <li>公開transportをHTTP、MCP、または両対応にする判断。</li>
+    <li>protocol version、result byte上限、retentionとgrace periodの具体値。</li>
+    <li>認証principal、secret rotation、remote接続をV1へ含めるか。</li>
+    <li>DB schema変更が必要な場合のmigration、rollback、既存Queueとの互換性。</li>
+  </ul>
+  <h3>0.4 最初の実装単位で確定した事項</h3>
+  <ul>
+    <li>
+      protocol名は<code>contextstill-research-plugin</code>、V1のversionは<code>1.0</code>とする。最初の実装ではmin/maxとも<code>1.0</code>の完全一致とし、minor互換範囲を推測しない。
+    </li>
+    <li>
+      contractはtransport非依存とし、HTTP endpoint、MCP tool、status
+      code、認証方式は手動Broker実装時に決定する。
+    </li>
+    <li>
+      request上限は64 KiB、result上限は8 MiBとする。resultはclaims 200件、evidence
+      200件、Knowledge候補10件を上限とする。
+    </li>
+    <li>
+      canonical JSONは、文字列とobject keyをUnicode NFCへ正規化済みであることを要求し、object
+      keyをUTF-16 code
+      unit順に並べ、array順を維持し、有限numberと通常のJSON値だけを許す。空白を加えずECMAScript
+      <code>JSON.stringify</code
+      >と同じprimitive表現でUTF-8へ符号化する。protocol上のintegerはJavaScriptの安全整数範囲に制限する。requestは<code>idempotencyKey</code>と<code>requestHash</code>、resultは<code>resultHash</code>、capabilityは<code>capabilityHash</code>を除いた全bodyをSHA-256の対象にする。未知minor
+      fieldも改ざん防止のためhashへ含める。
+    </li>
+    <li>
+      DeepStill現行実装はACKと時間retentionを持たないため、capabilityは<code>retentionMode=manual_delete</code>、retention/graceをnull、<code
+        >acknowledge</code
+      >
+      operationを未宣言とする。ACKを実装済みとみなさない。
+    </li>
+    <li>
+      repository間で共有する構造contractは<code>shared/contracts/research-plugin-v1.schema.json</code>、ContextStillのruntime検証は<code>src/shared/schemas/research-plugin-v1.schema.ts</code>、portは<code>src/modules/research-plugin/contracts.ts</code>、相互fixtureは<code>shared/fixtures/research-plugin-v1.json</code>に置く。JSON
+      Schemaで表現できないhash、budget間比較、参照整合は<code>x-contextstill-integrity</code>とruntime検証を正本とする。
+    </li>
+  </ul>
+
+  <h2>1. 結論</h2>
+  <p>
+    <strong
+      >DeepStillをContextStillへコードとして取り込まず、localhost上の独立serviceとして接続する。</strong
+    >
+    両repo間でTypeScript
+    package、DB、migration、内部moduleを共有しない。共有するのはContextStill所有の版付きtransport非依存contractとcontract
+    fixtureだけとし、HTTPは後続の薄いtransport adapter候補とする。
+  </p>
+  <p>
+    後続統合は3つの境界に分ける。ContextStillは必要性を確認した場合だけoptional LLM
+    gatewayをDeepStillへ提供する。ContextStillのQueueはResearch
+    Brokerを介してDeepStillへ非同期jobを委託する。DeepStillの結果はResult
+    Ingressが検証し、Report参照、外部根拠、Knowledge候補、Episodeへ用途別に取り込む。
+  </p>
+  <pre><code>ContextStill Queue
+  └─ Research Broker ──HTTP──&gt; DeepStill V1 job
+                              ├─ search / crawl / report
+                              └─ HTTP──&gt; ContextStill LLM Gateway ──&gt; configured provider
+
+DeepStill result ──HTTP poll──&gt; Result Ingress
+  ├─ parent Queueの再開入力
+  ├─ Report・claim・source provenance
+  ├─ Knowledge candidate pipeline
+  └─ EpisodeCard</code></pre>
+
+  <h2>2. 現在すでに利用できるもの</h2>
+  <table>
+    <caption>
+      既存実装と不足点
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">機能</th>
+        <th scope="col">現状</th>
+        <th scope="col">不足</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>ContextStill Knowledgeの参照</td>
+        <td>
+          DeepStillの<code>ContextStillMcp</code>が<code>search_knowledge</code>をread-onlyで呼び、<code>projectRef</code>、<code>repoKey</code>、絶対<code>repoPath</code>を渡せる。scoped
+          searchを確認できない応答やglobal
+          fallbackは<code>unavailable</code>としてfail-closedにする。
+        </td>
+        <td>
+          ContextStill側はdiagnosticsの互換性とrepository
+          isolationを正式contractとして保証する必要がある。
+        </td>
+      </tr>
+      <tr>
+        <td>ContextStill向け成果物</td>
+        <td>
+          DeepStillにprotocol非依存のresult projection、capabilities、resource
+          identity、locator、ResearchEngine adapter
+          portが追加済みである。内部operation、prompt、source本文をallowlist外とし、claim/evidence/event参照とhashを検証する。
+        </td>
+        <td>
+          host-owned schema、transport、submit
+          idempotency、ACK、retentionは未確定。既存<code>contextstill-dry-run-v1</code>は正式contractではない。
+        </td>
+      </tr>
+      <tr>
+        <td>LLM provider</td>
+        <td>
+          DeepStillはCodexまたはOpenAI互換<code>/chat/completions</code>を利用する。ContextStillはOpenAI、Azure、Bedrock、local-llm、Codexとroute/fallbackを持つ。
+        </td>
+        <td>ContextStillのrouteを外部clientへ提供する安定endpointがない。</td>
+      </tr>
+      <tr>
+        <td>外部根拠の取得</td>
+        <td>
+          ContextStillのCoveringは独自のsearch/fetchを行い、web ingestも単一URLをMarkdown化する。
+        </td>
+        <td>複数query・複数sourceを横断したReportとMemoryをQueueへ戻す委託境界がない。</td>
+      </tr>
+      <tr>
+        <td>Knowledge・Episode登録</td>
+        <td>
+          <code>register_candidates</code
+          >はKnowledge候補pipelineへ投入する。<code>POST /api/episodes</code>はEpisodeCardを登録する。
+        </td>
+        <td>ContextStill側の正式ingress、transactional idempotency、visibility判定、ACKがない。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3. リポジトリと実行責務</h2>
+  <table>
+    <caption>
+      責務の所有者
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">責務</th>
+        <th scope="col">所有者</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>検索query、URL選択、crawl、Report、claim/evidence、DeepStill Memory生成</td>
+        <td>DeepStill</td>
+      </tr>
+      <tr>
+        <td>LLM credential、provider route、fallback、利用量記録、provider圧力制御</td>
+        <td>ContextStill</td>
+      </tr>
+      <tr>
+        <td>Queueで外部調査が必要かの判定、依頼scope、元jobの停止・再開</td>
+        <td>ContextStill Research Broker</td>
+      </tr>
+      <tr>
+        <td>Knowledgeのcovering、dedupe、finalize、active化</td>
+        <td>ContextStill既存pipeline</td>
+      </tr>
+      <tr>
+        <td>EpisodeCardのproject identity、検索scope、lifecycle</td>
+        <td>ContextStill</td>
+      </tr>
+      <tr>
+        <td>両者間protocolのrequest/response検証</td>
+        <td>双方。相手の内部型はimportしない。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    DeepStill単体では従来どおりCodex、任意のOpenAI互換provider、任意のContextStill
+    MCPなしで動作する。統合機能は環境変数とcapability
+    negotiationで有効化し、ContextStillが停止してもDeepStillのstandalone modeを壊さない。
+  </p>
+  <p>
+    V1ではContextStillがDeepStill processの起動・更新を所有しない。設定されたloopback
+    endpointのhealthとcapabilitiesを確認するだけとし、未起動ならintegrationをdegraded表示する。任意のsidecar
+    supervisorはprotocolが安定した後の別課題とする。
+  </p>
+  <h3>3.1 V1の対応範囲</h3>
+  <table>
+    <caption>
+      実行構成ごとの対応
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">構成</th>
+        <th scope="col">V1</th>
+        <th scope="col">理由</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>DeepStill standalone</td>
+        <td>対応</td>
+        <td>従来のCodex・OpenAI互換provider経路を維持する。</td>
+      </tr>
+      <tr>
+        <td>ContextStill managed SQLite + loopback DeepStill</td>
+        <td>対応</td>
+        <td>resident writerを通したlease・delegation更新を実装する。</td>
+      </tr>
+      <tr>
+        <td>ContextStill PostgreSQL + DeepStill</td>
+        <td>LLM Gatewayは無効</td>
+        <td>同じprovider target排他と回収規則を実装・検証するまでcapabilityを返さない。</td>
+      </tr>
+      <tr>
+        <td>remote DeepStill</td>
+        <td>非対応</td>
+        <td>V1はloopback限定。TLS、接続先allowlist、secret配布は次versionで設計する。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>4. ContextStill LLM Gateway候補（後続・optional）</h2>
+  <p>
+    この節はResearchEngine
+    contract成立後に評価する候補設計であり、最初の実装単位ではない。endpoint名、request拡張、lease方式は未確定とし、capability
+    negotiationで利用不能でもDeepStill standaloneとResearchEngine
+    lifecycleが成立しなければならない。
+  </p>
+  <p>
+    ContextStillに<code>/api/integrations/deepstill/v1/llm/chat/completions</code>を追加し、DeepStillの既存<code>CompatibleLlm</code>から利用する。wire
+    formatはDeepStillが現在使うOpenAI chat
+    completionsの必要部分に限定する。公開OpenAI互換serverを目指さず、<code>messages</code>、<code>model</code>、<code>max_tokens</code>、<code>temperature=0</code>、非streamingだけを受ける。
+  </p>
+  <ul>
+    <li>
+      ContextStill設定へ<code>taskRouting.deepStillResearch</code>を追加し、そのrouteのprovider、model、fallbackを使う。
+    </li>
+    <li>
+      DeepStill側は<code>LLM_BASE_URL</code>をこのendpointの親pathへ向け、Bearer
+      tokenを既存<code>LLM_API_KEY</code>で送る。<code>LLM_MODEL</code>にはprovider実modelではなく論理名<code>contextstill/deepstill-research</code>を指定し、任意modelへの迂回指定を許さない。
+    </li>
+    <li>
+      ContextStillは既存の<code>LlmChatRequest</code>へ変換し、usage、provider、実model、request
+      hashを既存usage/auditへ記録する。DeepStillが送ったsystem messageをContextStill自身のs11tnext
+      manifestとして偽装しない。
+    </li>
+    <li>
+      request body、入力token、出力token、timeoutに専用上限を設ける。tool callと任意URL
+      fetchは受け付けない。
+    </li>
+    <li>
+      responseには通常の<code>choices</code>と<code>usage</code>に加え、<code>X-ContextStill-Request-Id</code>を返す。route/provider/実modelは同じrequest
+      IDを持つ監査eventへ記録し、内部target情報をresponseへ露出しない。
+    </li>
+  </ul>
+  <p>
+    <strong>親Queueが確保したprovider leaseをDeepStillへ持ち越してはならない。</strong>
+    委託前に親Queueのlockとleaseを解放する。LLM Gatewayは<code
+      >deepStillResearch</code
+    >
+    route用に独立してprovider
+    capacityを取得する。これにより、親jobがprovider枠を保持したままDeepStillが同じ枠を待つデッドロックを防ぐ。
+  </p>
+  <p>
+    現在の<code>llm_provider_leases</code>は<code>DistillationQueueName</code>とqueue
+    rowを前提にclaimするため、そのままHTTP Gatewayへ流用できない。実装時は、同じactive target
+    unique制約とpool上限を使う短時間のgeneric
+    lease操作<code>acquireProviderTarget(ownerKind, ownerId, route)</code>を追加し、<code>ownerKind=deepstill_gateway</code>として確保する。外部LLM呼び出し中はheartbeatし、成功・失敗・client
+    abortで必ずreleaseする。SQLiteではresident writer経由の短いtransactionだけでclaim/releaseし、LLM
+    HTTP待ちの間にwriterを保持しない。PostgreSQLでも同じtarget排他を実装できるまでcapabilitiesでGatewayを利用不可と返す。
+  </p>
+  <p>
+    Gatewayの外向きHTTP endpointは既存Bun APIに置くが、Bun processからSQLiteを直接更新しない。Bun
+    endpointは認証、schema検証、provider呼び出しだけを担当する薄いfacadeとする。leaseのacquire、heartbeat、releaseは、ContextStill
+    residentが所有する既存loopback writer endpointへ型付きcommandとして送り、residentの短いwriter
+    jobで実行する。任意SQLをBun側で組み立てて<code>/writer/query</code>へ渡す設計にはしない。command
+    routeはMCP toolとして公開せず、既存の<code>sqlite-writer.token</code>とowner-only
+    run directoryを使って認証する。接続不能時にBunからDBへ直接書くfallbackは設けない。
+  </p>
+  <ol>
+    <li>Bun facadeがDeepStill principal、request schema、logical model、予算上限を検証する。</li>
+    <li>
+      residentへacquire
+      commandを送り、routeから選ばれた<code>targetId</code>、<code>poolId</code>、lease
+      ID、有効期限を受け取る。secretはcommand responseやDBへ含めない。
+    </li>
+    <li>
+      Bunはsettings memoryから対象targetのcredentialを解決し、そのtargetだけに固定した既存provider
+      adapterでLLMを呼ぶ。fallbackする場合も、residentで次targetを再acquireしてから切り替える。
+    </li>
+    <li>
+      provider待ちの間はresidentへheartbeatする。成功、provider失敗、timeout、client
+      abortのすべてでreleaseし、Bun crash時は既存のstale lease回収規則で回収する。
+    </li>
+  </ol>
+  <p>
+    resident
+    commandはtarget選択とlease状態だけを返し、credential、prompt、completion本文を受け取らない。これにより単一writer制約を守りながら、既存TypeScript
+    provider群を再利用できる。既存writer
+    endpointへの型付きroute追加、認証、target固定、stale回収までをGateway完成条件に含める。
+  </p>
+  <p>
+    DeepStillには汎用<code>CompatibleLlm</code>を直接流用するだけでなく、薄い<code
+      >ContextStillLlm</code
+    >
+    adapterを置く。jobごとに生成されるproviderへDeepStill job IDを渡し、各requestに一意なrequest
+    ID、prompt kind、prompt manifest hashをextension metadataとして送る。ContextStillのusage
+    logとDeepStillのoperation logをこのrequest
+    IDで照合する。prompt本文やsecretをmetadataへ複製しない。
+  </p>
+  <p>
+    ContextStillの現行<code>apiAuthenticationDispatcher</code>はSecurity
+    Intelligenceの2つの完全一致path以外をadmin
+    authへ送る。DeepStill統合ではprefix単位の専用principalを追加し、admin session・admin API
+    keyとは別のtokenをconstant-time比較する。capabilitiesを含めhealth以外は認証必須とし、token未設定時は503を返す。admin
+    API自体がnetwork bindされていても、このprefixはloopback peerだけを許可し、Host/Originもlocal
+    endpointと一致させる。
+  </p>
+  <pre><code>{
+  "model": "contextstill/deepstill-research",
+  "messages": [{ "role": "system", "content": "..." }, { "role": "user", "content": "..." }],
+  "max_tokens": 12000,
+  "temperature": 0,
+  "stream": false,
+  "metadata": {
+    "protocolVersion": "1.0",
+    "deepstillJobId": "...",
+    "requestId": "...",
+    "promptKind": "deliverable_step",
+    "promptManifestHash": "sha256:..."
+  }
+}</code></pre>
+  <p>
+    Gatewayは未知model、streaming、tool定義、metadata欠落を400で拒否する。provider枠が一時的に空かない場合は<code>Retry-After</code>付き503、quotaは429、認証失敗は401、timeoutは504とし、DeepStillが一時障害と恒久contract違反を区別できるようにする。
+  </p>
+
+  <h2>5. DeepStill Research transport候補</h2>
+  <p>
+    DeepStillの既存<code>/api/jobs</code>をhostへ直接公開せず、host-owned
+    contractを実装する薄いadapterを追加する。以下のHTTP
+    pathはtransport案を具体化するための例であり、ContextStill専用pathとして確定していない。HTTP、MCP、callback/pollingの選択はtransport非依存schemaの確定後に決める。
+  </p>
+  <table>
+    <caption>
+      DeepStill側のHTTP transport例（未確定）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Endpoint</th>
+        <th scope="col">役割</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>GET /api/integrations/contextstill/v1/capabilities</code></td>
+        <td>protocol version、engine version、利用可能なoutput、budget上限を返す。</td>
+      </tr>
+      <tr>
+        <td><code>POST /api/integrations/contextstill/v1/jobs</code></td>
+        <td>
+          idempotency key付きでResearch jobを作る。同じkeyと同じrequest hashなら同じjobを返す。
+        </td>
+      </tr>
+      <tr>
+        <td><code>GET /api/integrations/contextstill/v1/jobs/:id</code></td>
+        <td>queued/running/completed/partial/failed/cancelled、usage、終了理由を返す。</td>
+      </tr>
+      <tr>
+        <td><code>GET /api/integrations/contextstill/v1/jobs/:id/result</code></td>
+        <td>
+          版付きresult
+          bundleを返す。非terminalなら202、terminalで<code>resultAvailable=false</code>なら409。
+        </td>
+      </tr>
+      <tr>
+        <td><code>GET /api/integrations/contextstill/v1/jobs/:id/evidence/:evidenceId/source-range</code></td>
+        <td>
+          resultに属するsnapshotの指定範囲だけを返す。ContextStillがquoteとlocatorを再照合するために使う。
+        </td>
+      </tr>
+      <tr>
+        <td><code>POST /api/integrations/contextstill/v1/jobs/:id/cancel</code></td>
+        <td>親Queueの取消しを伝播する。</td>
+      </tr>
+      <tr>
+        <td><code>POST /api/integrations/contextstill/v1/jobs/:id/ack</code></td>
+        <td>ContextStillが指定result hashのimportをcommit済みであることを冪等に通知する。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    作成requestは<code>topic</code>だけでなく、<code>question</code>、<code>purpose</code>、既知の主張、必要な独立根拠、禁止scope、repository
+    identity、親Queue名/job ID、budget
+    profile、期待outputを持つ。ContextStillの内部row全体やsecretは送らない。
+  </p>
+  <p>
+    budgetはDeepStillの方針に合わせ、<code>targetBudget</code>を停止・再評価のsignal、<code>hardSafetyCeiling</code>を暴走防止の絶対上限として分ける。target超過だけでは即座に失敗させず、進行中の1
+    operationとfinalizationに必要な小幅超過を許す。ContextStill LLM Gatewayはhard
+    ceilingを越える単一requestを拒否し、DeepStill resultにはtarget超過量とhard
+    ceiling未到達を別々に記録する。
+  </p>
+  <p>
+    認証はloopback制限に加えて専用Bearer tokenを必須とする。ContextStillのadmin
+    keyをDeepStillへ流用せず、integration専用secretを使用する。
+  </p>
+  <p>
+    DeepStillの既存APIは全<code>/api/*</code> requestを16
+    KiBへ制限している。V1
+    requestはこの上限内に収め、巨大なsource本文を送らずID、短い既知主張、gapだけを送る。上限を超える情報はContextStill側に保持し、必要な範囲を明示的に要約してから委託する。Integrationだけを理由に汎用APIのbody上限を広げない。
+  </p>
+  <p>
+    ContextStillから受け取った<code>projectRef/repoKey/repoPath</code>は、DeepStillが既存Knowledgeを読む際にも使う。現在の<code>KnowledgeProvider.lookup(query,
+    signal)</code>をoptionalなscope
+    context付きへ拡張し、<code>search_knowledge</code>へrepository
+    identityを渡す。repo scope jobでidentityを欠く場合は、global
+    Knowledgeだけへ黙って広げずjob作成を拒否する。
+  </p>
+  <p>
+    ContextStill側のDeepStill
+    endpoint設定はV1では<code>127.0.0.1</code>、<code>localhost</code>、<code>::1</code>だけを許可する。redirectでloopback外へ出ることを禁止し、認証header、prompt本文、result本文を通常logへ出さない。将来remote接続を認める場合はTLSと明示allowlistを別versionで設計する。
+  </p>
+  <p>
+    source rangeは任意URLを受け取らず、jobとevidence
+    IDからDeepStill内部のsnapshotを解決する。canonical locatorはUTF-8 byte offsetとし、UTF-16
+    offsetは表示client向けのoptional値にする。range responseは64 KiBまで、redirectとnetwork
+    fetchは禁止し、指定evidenceがそのjobのresultに属さない場合は404を返す。
+  </p>
+  <pre><code>{
+  "protocolVersion": "1.0",
+  "idempotencyKey": "coveringEvidence:queue-job-id:external-evidence:gap-hash",
+  "parent": {
+    "queueName": "coveringEvidence",
+    "jobId": "queue-job-id",
+    "phase": "external_evidence",
+    "projectIdentity": { "scope": "repo", "repoKey": "...", "repoPath": "..." }
+  },
+  "research": {
+    "topic": "候補Knowledgeの外部検証",
+    "question": "検証する具体的な問い",
+    "purpose": "independent_evidence",
+    "knownClaims": [{ "id": "candidate", "text": "検証対象の主張" }],
+    "requiredEvidence": ["独立sourceを少なくとも1件"],
+    "forbiddenScopes": []
+  },
+  "budget": {
+    "targetBudget": { "inputTokens": 150000, "outputTokens": 20000, "wallMs": 900000 },
+    "hardSafetyCeiling": { "inputTokens": 190000, "outputTokens": 26000, "wallMs": 1200000 }
+  },
+  "outputs": ["report", "claims", "evidence", "knowledge_candidates", "episode_source"]
+}</code></pre>
+  <p>
+    新規作成は201、同じidempotency keyと同じrequest
+    hashは200で既存jobを返す。同じkeyでhashが異なる場合は409とし、既存jobを上書きしない。capability不一致は412、hard
+    ceilingやsize違反は422、service未準備は503とする。
+  </p>
+
+  <h2>6. Research Brokerと非同期再開</h2>
+  <p>
+    Queue
+    processorからDeepStillを同期的に最後まで待たない。新しい<code>research_delegations</code>に依頼を永続化し、親Queueを<code>paused</code>、<code>next_run_at=null</code>、<code>last_outcome_kind=waiting_deepstill</code>へ移してlockとprovider
+    leaseを解放する。既存claimは<code>next_run_at</code>のないpaused
+    jobを取得しないため、新しいQueue statusを全実装へ追加せず待機を表現できる。
+  </p>
+  <p>
+    Research Broker reconcilerがDeepStillへsubmit/pollし、terminal
+    resultを取り込んだ後だけ親jobを<code>pending</code>へ戻す。失敗時も同じ親Queueの通常attemptを無条件に消費せず、delegation側のretry
+    policyで処理する。DeepStill停止時は親jobを待機のまま保ち、通常のLLM provider
+    failureと混同しない。
+  </p>
+  <p>
+    delegation作成と親jobのpaused遷移は同じ短いDB transactionで行う。Result
+    Ingressの確定と親jobのpending復帰も同じtransactionにする。submitやpollなどのHTTP待ちはtransactionとSQLite
+    writerの外で行う。これにより、crash時に「委託記録なしで親だけ停止」「result未保存で親だけ再開」という中間状態を作らない。
+  </p>
+  <p>
+    managed SQLiteでは、この節で追加するdelegation、result、evidence、親Queue
+    metadataのmutationもすべてresident writer commandとして実装する。Bun reconcilerはread-only
+    queryと外部HTTPを担当し、取得した応答を検証してからresidentへ短いimport
+    commandを送る。各commandは期待status、parent fence、request/result
+    hashを条件にcompare-and-setし、再送を安全なno-opにする。residentが停止している場合は処理を進めず、Bunによる直接SQLite
+    writeへfallbackしない。
+  </p>
+  <pre><code>created -&gt; submitted -&gt; running -&gt; result_received -&gt; imported -&gt; consumed
+    └─────────────── unavailable / cancelled / invalid_result</code></pre>
+  <p>
+    V1はcallbackを使わず、指数backoff付きpollだけにする。親Queueをpendingへ戻せるのは<code>imported</code>だけであり、<code>result_received</code>の段階では戻さない。completed/partial/failedのいずれでも検証可能なartifactがあれば<code>resultAvailable=true</code>として取得できるが、schema、size、hash、repository
+    identity検査に失敗した結果は<code>invalid_result</code>とし親処理へ渡さない。
+  </p>
+  <p>
+    DeepStillはcapabilitiesで<code>resultRetentionMinSeconds</code>を返し、その最小保持期間はContextStillの最大delegation
+    deadlineと想定停止猶予の合計より長くする。ContextStillはresult
+    importと親job再開をcommitした後にだけ、result
+    hash付きACKを送る。ACKは削除許可であり即時削除命令ではない。DeepStillはACK後もadvertised grace
+    periodを守り、ACKが届かなければ通常retentionまで保持する。ContextStill側のraw
+    bundleと正規化evidenceは独立したretention policyで管理し、active
+    Knowledge、Episode、未完了delegationから参照されるrecordをGCしない。
+  </p>
+  <table>
+    <caption>
+      <code>research_delegations</code
+      >の主要項目
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">意味</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>id / idempotency_key / request_hash</code></td>
+        <td>重複submitと再起動後の二重反映を防ぐ。</td>
+      </tr>
+      <tr>
+        <td><code>parent_queue_name / parent_job_id / parent_phase</code></td>
+        <td>結果の戻し先を固定する。</td>
+      </tr>
+      <tr>
+        <td><code>research_question / purpose / known_claims / required_evidence</code></td>
+        <td>DeepStillへ渡す最小scope。</td>
+      </tr>
+      <tr>
+        <td><code>status / deepstill_job_id / attempt_count / next_poll_at</code></td>
+        <td>submitとpollの状態。</td>
+      </tr>
+      <tr>
+        <td><code>result_hash / result_ref / terminal_reason / usage</code></td>
+        <td>結果の同一性と監査。</td>
+      </tr>
+      <tr>
+        <td><code>project_ref / repo_key / repo_path</code></td>
+        <td>ContextStillのrepository isolationを維持する。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    同じ<code>parent job + phase + normalized gap hash</code>からの自動委託は1回までとする。partial
+    resultを見て同じ問いを再委託するloopは禁止し、新しい未解決点または明示retryの場合だけ新revisionを作る。
+  </p>
+  <p>
+    親jobまたはQueue
+    laneが利用者操作でpauseされた場合、自動reconcilerは親をpendingへ戻さない。実行中のDeepStill
+    jobへcancelを要求し、取得済みpartial
+    resultは監査用に保持するが自動反映しない。親jobがcompleted/skipped/failedになった後に遅れて届いたresultも保存だけ行い、再開させない。
+  </p>
+  <p>
+    現在の全Queue
+    rowに共通revision列はないため、存在しないrevisionを前提にしない。delegation作成transactionでrandomな<code>parent_fence</code>と<code>delegation_owned_pause=true</code>を親metadataへ書く。再開transactionは、paused状態、待機中delegation
+    ID、parent fence、Queue
+    laneがunpausedであることがすべて一致するときだけ成功させる。個別pause/retry
+    APIはdelegation-owned
+    flagを解除する。利用者操作や別workerの更新でfenceが変わった場合は、結果を保存しても親状態を上書きしない。
+  </p>
+  <p>
+    DeepStillが未起動、protocol不一致、またはdelegation
+    deadline超過になった場合、親jobを無期限に待たせない。Covering
+    canaryではdelegationを<code>unavailable</code>として確定し、親jobを再開して既存のexternal
+    evidence経路へfallbackする。DeepStillがpartial/failedのresultを返した場合は利用可能な検証済みevidenceだけを渡し、不足分を同じ問いで再委託せず既存経路または<code>insufficient</code>へ進める。
+  </p>
+
+  <h2>7. Queue別の適用範囲</h2>
+  <table>
+    <caption>
+      V1での委託policy
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Queue</th>
+        <th scope="col">DeepStill委託</th>
+        <th scope="col">判断</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>findingCandidate</td>
+        <td>初期は無効。将来、入力文書が明示する外部前提の確認に限定。</td>
+        <td>
+          このQueueの役割は既存sourceから候補を抽出すること。外部情報を混ぜるとsource由来のlessonと研究知識が混同される。
+        </td>
+      </tr>
+      <tr>
+        <td>episodeDistiller</td>
+        <td>無効。</td>
+        <td>Episodeは実際の過去行動から作る。外部調査で観測事実を補完してはいけない。</td>
+      </tr>
+      <tr>
+        <td>coveringEvidence</td>
+        <td>
+          <strong>V1の最初の有効対象。</strong
+          >独立根拠不足、複数source比較、技術的主張の検証を委託。
+        </td>
+        <td>
+          既存のexternal
+          evidence段階と目的が一致する。<code>requiresExternalEvidence</code>がtrueで、canary
+          policyがDeepStillを選んだjobだけ委託する。
+        </td>
+      </tr>
+      <tr>
+        <td>deadZoneMergeReview</td>
+        <td>第2段階。矛盾が外部事実で解ける場合だけ有効。</td>
+        <td>単なる表現差・scope差は内部比較で処理し、外部検証が必要なconflictだけ委託する。</td>
+      </tr>
+      <tr>
+        <td>landscapeCuration</td>
+        <td>第2段階。active Knowledgeの鮮度・外部整合性が判断を左右する場合だけ有効。</td>
+        <td>
+          通常のduplicate/merge判定では使わず、staleまたはevidence gapが明示された場合に限定する。
+        </td>
+      </tr>
+      <tr>
+        <td>finalizeDistille</td>
+        <td>無効。根拠不足ならCoveringへ戻す。</td>
+        <td>finalize中の新規調査は、採用判断と証拠収集を一段階に混ぜる。</td>
+      </tr>
+      <tr>
+        <td>mergeActivationFinalize</td>
+        <td>無効。</td>
+        <td>ここは決定済みmergeのactivationとpostcheckに限定する。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    全Queueへ同じ自動判定promptを追加しない。共通<code>ResearchBroker.maybeDelegate()</code>は置くが、Queueごとの明示policyが<code>not_applicable</code>を返す構造にする。V1で実際に自動委託するのはCoveringだけから始める。
+  </p>
+  <p>
+    Covering再開時は通常処理を最初から繰り返さない。processorは未消費のterminal
+    delegationを先に検索し、Result
+    Ingressが正規化した<code>ResearchEvidence</code>を<code>externalEvidenceOverride</code>としてCovering
+    domainへ渡す。これを消費済みにする更新とcoverage
+    resultの保存を同じtransactionで行い、既存のweb/MCP external
+    evidence呼び出しを重ねない。resultが要求した主張を覆わなければ<code>insufficient</code>とし、同一gapを自動再委託しない。
+  </p>
+
+  <h2>8. Result bundleと反映規則</h2>
+  <p>
+    現在の<code>contextstill-dry-run-v1</code>を置き換えるのではなく、統合用に<code>contextstill-research-result-v1</code>を追加する。standaloneのdry-run
+    exportは互換性のため残せる。
+  </p>
+  <table>
+    <caption>
+      Result bundleの構成
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">区分</th>
+        <th scope="col">必要内容</th>
+        <th scope="col">反映先</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>execution</td>
+        <td>job ID、engine/recipe version、status、reason、budget、usage、開始・終了時刻</td>
+        <td>delegation監査とQueue event</td>
+      </tr>
+      <tr>
+        <td>report</td>
+        <td>artifact ID/version、title、sections/body、limitations、open questions、claim IDs</td>
+        <td>親Queueの補助artifact。Knowledge本文へ丸ごとコピーしない。</td>
+      </tr>
+      <tr>
+        <td>claims</td>
+        <td>claim ID、text、kind、confidence、evidence IDs</td>
+        <td>Covering・Curationの再判定入力</td>
+      </tr>
+      <tr>
+        <td>sources/evidence</td>
+        <td>
+          canonical URL、title、snapshot hash、quote hash、取得時刻、quote、UTF-8/UTF-16
+          locator、選択範囲のcontext
+        </td>
+        <td>ContextStill source/source fragmentとprovenance</td>
+      </tr>
+      <tr>
+        <td>knowledgeCandidates</td>
+        <td>rule/procedure、polarity、適用条件、検証方法、claim refs</td>
+        <td>既存Knowledge候補pipeline</td>
+      </tr>
+      <tr>
+        <td>episode</td>
+        <td>調査の状況、行動、結果、失敗、lesson、open loop、event refs</td>
+        <td>Episode Distillerの入力source。価値判定後だけEpisodeCard</td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code>{
+  "schemaVersion": "contextstill-research-result-v1",
+  "requestHash": "sha256:...",
+  "resultHash": "sha256:...",
+  "execution": { "jobId": "...", "status": "partial", "reason": "unresolved_questions" },
+  "report": { "artifactId": "...", "version": 1, "title": "...", "body": "..." },
+  "claims": [],
+  "evidencePackages": [],
+  "knowledgeCandidates": [],
+  "episodeSource": null
+}</code></pre>
+  <p>
+    V1の上限はresult bundle 8 MiB、claims 200件、evidence package 200件、Knowledge候補10件、episode
+    source
+    1件とする。各quoteは4,000文字、選択範囲のcontextは12,000文字までとする。DeepStillは上限内へ収めるため、優先度の低いitemを丸ごと省略し、<code>truncated=true</code>、省略件数、理由をbundleへ記録できる。quoteやcontextの文字列途中を切るとhash・locatorが壊れるため禁止する。有効なbundleを上限内で作れない場合、jobを<code>resultAvailable=false</code>、<code>reason=output_limit_exceeded</code>でterminalにし、result
+    endpointは409を返す。ContextStillは上限超過bundleを<code>invalid_result</code>として反映しない。
+  </p>
+  <p>
+    <strong>DeepStillのKnowledgeをactive Knowledgeへ直接書かない。</strong>
+    Result
+    Ingressがsource/evidenceを先に登録し、Knowledgeは既存の<code>register_candidates</code>相当の入口からCovering、dedupe、Finalizeへ流す。DeepStill自身が作ったReportは根拠ではなく、claimと原source
+    locatorを根拠とする。
+  </p>
+  <p>
+    imported sourceはDeepStillの全snapshot本文ではなく、採用候補が参照するevidence
+    packageだけとする。ContextStillはpackage内のquote hash、offset、package
+    hashを検証し、DeepStillが検証したsnapshot
+    hashをprovenanceとして保持する。ContextStillが原snapshot全文を持たない場合に「原文全体のhashを独立検証済み」とは記録しない。必要ならDeepStillのsnapshot
+    range endpointから該当範囲を再取得してquoteを照合する。
+  </p>
+  <p>
+    Knowledge候補はすべてを登録しない。ContextStillの用途に合う再利用可能なrule/procedureで、適用条件とverificationを持つものだけを内部のcandidate
+    registration
+    serviceへ渡す。一般的な製品説明や事実はReport/sourceとして保持し、無理にKnowledgeへ変換しない。MCPを自己呼び出しせず、既存normalizationを共有する専用producer<code>deepstill_result_ingress</code>から候補pipelineへ投入する。
+  </p>
+  <p>
+    Episodeを<code>POST /api/episodes</code>で直接active登録しない。DeepStillのimmutableな実行eventとepisode候補をsource
+    documentとして保存し、<code>episode_distiller_queue</code>へ<code>sourceKind=deepstill_research</code>で投入する。Episode
+    Distillerが既存のvalue
+    review、near-duplicate判定、score補正を通した場合だけEpisodeCardを作る。そのためQueue
+    schema、TypeScript worker、Rust executor、source
+    reader、Episodeの<code>sourceKind/refKind</code>へこの値を追加し、<code>sourceKey=deepstill job ID + result hash</code>で重複を防ぐ。Episode
+    Distiller自身がDeepStillへ再委託することはない。
+  </p>
+
+  <h2>9. 親Queueへの戻し方</h2>
+  <p>
+    result取り込み後、親job
+    metadataへ巨大なbundleを埋め込まない。<code>research_delegation_id</code>と<code>result_ref</code>だけを保存し、processorが必要なclaim、evidence、limitationsをIngress
+    repositoryから読む。
+  </p>
+  <p>
+    raw bundleは<code>research_delegation_results</code>へrequest/result hash付きのimmutable
+    recordとして1件だけ保存し、利用可能なclaim・evidenceは<code>research_evidence_packages</code>と親delegationへのlinkへ正規化する。親Queueが消費するのは正規化後の行だけで、raw
+    JSONをそのままpromptやdomain resultへ流さない。再importは同じresult
+    hashならno-op、異なるhashならprotocol違反として409相当の監査eventを残す。
+  </p>
+  <ul>
+    <li>
+      Coveringは候補の各主張に対応する独立claim/evidenceを再評価し、<code>knowledge_ready</code>、<code>insufficient</code>、duplicate等を既存規則で決める。
+    </li>
+    <li>
+      DeepStillが<code>completed</code>でも、ContextStill側のcandidateを自動採用しない。
+    </li>
+    <li>
+      DeepStillが<code>partial</code>でも、必要な主張を十分に覆っていれば親Queueは利用できる。terminal
+      statusだけで採否を決めない。
+    </li>
+    <li>
+      evidence package、quote
+      hash、locator検証が失敗したclaimは利用せず、result全体を成功扱いしない。
+    </li>
+    <li>
+      親job、delegation、DeepStill job、生成Knowledge/Episode IDを双方向eventで辿れるようにする。
+    </li>
+  </ul>
+
+  <h2>10. Contract管理</h2>
+  <p>
+    npm packageやgit submoduleを共有contractにしない。<strong
+      >汎用ResearchEngine / SourceConnector protocolのownerはContextStillとする。</strong
+    >ContextStillはhost-facing JSON Schema、version policy、canonical
+    fixtureを管理する。DeepStillは対応version range、capabilities、内部jobとのmapping、adapter
+    fixtureを所有する。双方のCIで同じ成功・失敗fixture corpusを検証するが、相手の内部型やDB
+    schemaはimportしない。
+  </p>
+  <ul>
+    <li>major version不一致はsubmit前のcapabilitiesで停止する。</li>
+    <li>
+      未知fieldはminor versionでは処理判断に使わず、immutable raw
+      bundleには保持する。必須field欠落は拒否する。
+    </li>
+    <li>request/result hashはcanonical JSONから算出する。</li>
+    <li>ContextStill DB IDをDeepStillの内部主keyにしない。親参照はopaque stringとして保存する。</li>
+    <li>
+      Result
+      Ingressはtransactionalかつidempotentにし、途中でKnowledgeだけ二重登録されないようにする。
+    </li>
+    <li>
+      protocol fixtureにはcompleted、partial、failed、重複submit、stale
+      locator、改ざんquote、未知minor field、major不一致を含める。
+    </li>
+    <li>
+      各array件数、文字列長、bundle総bytesをschemaで制限する。汎用resourceはconnector kindとopaque
+      resource IDで表現し、HTTP(S)制限はDeepStill V1の<code>web</code>
+      capabilityにだけ適用する。control文字、未宣言locator kind、重複ID、dangling claim/evidence
+      refを拒否する。
+    </li>
+    <li>
+      Report、source本文、titleは外部由来の非信頼dataとして扱い、ContextStillのsystem
+      instructionやQueue制御命令として解釈しない。Result Ingressはcode、command、URLを実行しない。
+    </li>
+  </ul>
+
+  <h2>11. 実装順序</h2>
+  <ol>
+    <li>
+      <strong>ContextStill所有のcontractを確定する。</strong>
+      transport非依存のResearchEngine / SourceConnector schema、capabilities、version
+      range、canonical hash、error taxonomy、上限、retention/ACK
+      semanticsを決める。DeepStillの既存projectionとfixtureを入力資料にするが、その内部型を正本にしない。
+    </li>
+    <li>
+      <strong>contract fixtureとcapability negotiationを先に通す。</strong>
+      completed、partial、failed、cancelled、同一key再送、hash conflict、unknown optional
+      field、必須field欠落、stale locator、改変quote/event、repository scope
+      fallbackを両repoのdeterministic testで検証する。まだQueueやprovider routingへ接続しない。
+    </li>
+    <li>
+      <strong>Research Brokerを手動起動で導入する。</strong> resident writer経由のdelegation
+      state、DeepStill client、reconciler、raw
+      result、cancel/restart/idempotency、ACKを実装する。外部HTTP待ちの間はDB writer
+      transaction、Queue lock、provider leaseを保持しない。既存Queueの採否にはまだ影響させない。
+    </li>
+    <li>
+      <strong>Evidence IngressとCovering canary。</strong>
+      claim/evidenceの検証・正規化と親Queueへの参照だけを追加する。明示flag付きのCovering
+      jobだけ委託し、DeepStill結果あり/なしで同じcandidateを比較する。改善が確認できた条件だけauto
+      policyへ昇格する。
+    </li>
+    <li>
+      <strong>Ingressの反映先を拡張する。</strong>
+      canaryで検証済みのsource/evidence基盤からKnowledge候補、Episodeの順に追加する。Knowledgeは必ず既存pipelineへ流し、Episodeは新source/ref
+      kindでEpisode Distillerへidempotentに投入する。Report参照は補助artifactのまま維持する。
+    </li>
+    <li>
+      <strong>optional LLM Gatewayと外部SourceConnectorを個別評価する。</strong>
+      ResearchEngine lifecycleとResult Ingressが安定した後にだけ、ContextStillの<code
+        >deepStillResearch</code
+      >
+      routeをoptional capabilityとして追加する。provider lease、request
+      correlation、abort、timeout、quota、usageを直接provider経路と比較する。外部SourceConnectorも別feature
+      flag・別fixtureで段階導入する。
+    </li>
+    <li>
+      <strong>第2段階。</strong>
+      Coveringの実績を確認してからdeadZoneMergeReview、landscapeCurationへ個別に広げる。Finding、EpisodeDistiller、Finalize系からDeepStillへの再委託は無効を維持する。
+    </li>
+  </ol>
+
+  <h2>12. 主要な変更箇所</h2>
+  <table>
+    <caption>
+      予定するmodule単位の変更
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">repo</th>
+        <th scope="col">変更</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>DeepStill</td>
+        <td>
+          完了済み。<code>packages/integrations/contextstill</code>をread-only clientとcontract
+          shimへ分割し、vendor非依存のKnowledgeProvider、repository identity、ResearchEngine
+          port、SourceConnector/resource型、result projectionを追加した。ContextStill専用job
+          APIは未実装である。
+        </td>
+      </tr>
+      <tr>
+        <td>DeepStill</td>
+        <td>
+          host
+          contract確定後に行う。<code>createJobSchema</code>へContextStill固有fieldを直接増やさず、integration
+          requestを既存job input/configへ変換するadapter、永続idempotency、ACK/retentionを追加する。
+        </td>
+      </tr>
+      <tr>
+        <td>ContextStill</td>
+        <td>
+          汎用ResearchEngine / SourceConnector contractとcanonical
+          fixtureを所有するmoduleを先に追加する。DeepStill client、health/capabilities、将来のLLM
+          Gateway facadeはこのcontractのconsumerとし、SQLiteを直接更新しない。
+        </td>
+      </tr>
+      <tr>
+        <td>ContextStill</td>
+        <td>
+          <code>crates/context-stilld</code>のresident側へ、既存writer
+          endpointとtokenを使うgeneric provider lease・research delegation用の型付きcommand
+          routeを追加する。外部HTTPやprovider待ちはcommand内で行わない。
+        </td>
+      </tr>
+      <tr>
+        <td>ContextStill</td>
+        <td>
+          <code>src/modules/research-delegation</code>へpolicy、repository、DeepStill
+          client、reconciler、result ingressを集約する。
+        </td>
+      </tr>
+      <tr>
+        <td>ContextStill</td>
+        <td>
+          Queue workerの共通coreには待機・再開hookだけを置き、各Queueのdomain側に委託条件を置く。
+        </td>
+      </tr>
+      <tr>
+        <td>ContextStill</td>
+        <td>
+          settingsへendpoint、secret ref、budget profile、auto-enabled Queue、<code
+            >deepStillResearch</code
+          >
+          LLM routeを追加する。
+        </td>
+      </tr>
+      <tr>
+        <td>ContextStill</td>
+        <td>
+          Episode Distillerのsource readerとQueue schema、およびEpisode
+          schemaへ<code>deepstill_research</code>と<code>deepstill_job</code>を追加する。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>13. 受け入れ条件</h2>
+  <ul>
+    <li>ContextStillなしでDeepStillのstandalone開発・verify・live実行が継続できる。</li>
+    <li>DeepStillなしでもContextStillの全既存Queueが従来どおり動作する。</li>
+    <li>親QueueはDeepStill実行中にQueue lockまたはprovider leaseを保持しない。</li>
+    <li>
+      ContextStill再起動、DeepStill再起動、poll重複でもDeepStill
+      job、Knowledge候補、Episodeが二重作成されない。
+    </li>
+    <li>
+      LLM利用量がContextStillのprovider/model/routeとDeepStillのoperationの両方から追跡できる。
+    </li>
+    <li>
+      Reportの文章ではなく、検証済みevidence packageと原source
+      locatorがKnowledgeのprovenanceになる。原snapshot全文を保持しない場合は独立full-hash検証済みと表示しない。
+    </li>
+    <li>DeepStillの結果だけでactive Knowledgeへ昇格しない。</li>
+    <li>repository identityなしのrepo scope書き込みは拒否される。</li>
+    <li>
+      同一gapの自動再委託loop、親QueueとLLM Gateway間のprovider lease
+      deadlockが試験で再現不能になる。
+    </li>
+    <li>
+      Queue lane pause、個別job pause、client abort、DeepStill
+      timeoutの各場合に、親jobが勝手に再開せずprovider leaseが残留しない。
+    </li>
+    <li>
+      Covering
+      canaryで、既存処理単独より最終Knowledgeの根拠範囲または正確性が改善し、費用・待ち時間が記録される。
+    </li>
+    <li>
+      dashboardまたはdoctorでdelegationのpending/running/terminal、DeepStill job
+      ID、待ち時間、target/hard budget、fallback理由、生成candidate/Episode IDを確認できる。
+    </li>
+  </ul>
+  <h3>13.1 Covering canaryの採用判定</h3>
+  <p>
+    同じfound candidate、同じ既存source、同じContextStill provider route、同じtarget/hard
+    budgetで、既存external
+    evidence経路とDeepStill委託経路を一件ずつ比較する。評価対象は中間Reportの見栄えではなく、最終的なcoverage
+    status、独立source数、必要主張のcoverage、重複、Knowledge本文・適用条件・verification、Episodeの再利用価値、入力/出力token、要求数、待ち時間である。
+  </p>
+  <p>
+    DeepStill側の評価原則は<code>docs/handoffs/research-quality-reset/START-HERE.md</code>とそのtrial
+    historyを正本とする。統合canaryでも次の観測値を失わず、Reportだけ、Knowledgeだけの局所的な改善で採用を決めない。
+  </p>
+  <table>
+    <caption>
+      調査から最終反映までの評価軸
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">段階</th>
+        <th scope="col">確認する品質</th>
+        <th scope="col">主な記録</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>検索query</td>
+        <td>問いの分解、重要観点のcoverage、同義queryの重複、探索を進める具体性</td>
+        <td>query、意図、親query、得られた新規claim/evidence</td>
+      </tr>
+      <tr>
+        <td>探索効率</td>
+        <td>限られたrequestとtokenから、有用で独立した根拠をどれだけ得たか</td>
+        <td>検索数、fetch数、成功・棄却理由、input token、有用evidence数</td>
+      </tr>
+      <tr>
+        <td>URL選定</td>
+        <td>一件あたりの情報密度、一次・公式sourceの優先、domain・内容の重複回避、主張との対応</td>
+        <td>選定順位、canonical URL、source種別、重複group、採用claim</td>
+      </tr>
+      <tr>
+        <td>予算</td>
+        <td>
+          targetを中止命令ではなく再評価signalとして使い、価値ある進行中operationとfinalizationに必要な小幅超過を許したか
+        </td>
+        <td>target/hard ceiling、超過量、超過理由、停止理由、未解決点</td>
+      </tr>
+      <tr>
+        <td>Report</td>
+        <td>必要主張のcoverage、根拠との対応、情報密度、重複の少なさ、比較・統合、限界の明示</td>
+        <td>claim coverage、citation対応、未支持主張、重複節、open question</td>
+      </tr>
+      <tr>
+        <td>Knowledge・Episode</td>
+        <td>
+          再利用可能なrule/procedureか、適用条件とverificationがあるか、Episodeが実際の行動・結果にgroundされているか
+        </td>
+        <td>採用・棄却理由、duplicate、provenance、最終score、生成ID</td>
+      </tr>
+      <tr>
+        <td>親Queueの最終結果</td>
+        <td>
+          coverage、正確性、provenance、終了状態が既存経路より改善し、安全性を悪化させていないか
+        </td>
+        <td>paired差、費用、待ち時間、fallback、regression</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    DeepStill経路が一部caseで改善しても、別の代表caseで最終Knowledge、provenance、重複、終了状態のいずれかを明確に悪化させた場合はauto
+    delegationを採用しない。機械的なidempotencyや監査改善だけは独立して採用できるが、調査品質の改善とは数えない。不採用時もmanual
+    delegationとresult artifactは残し、既存Covering経路をdefaultに戻せるfeature flagを維持する。
+  </p>
+  <p>
+    canaryで同時に変えるのは一要因だけとする。まずcontract
+    fixture、次に直接providerを使う手動delegation、次にCoveringへの結果反映を比較し、各段階でbaselineと同一入力を再生する。LLM
+    Gatewayはその後に直接provider経路と独立比較する。改善の原因を分離できない複合変更はauto
+    policyの採用根拠にしない。採用・不採用と根拠artifactはDeepStillのtrial
+    historyへ追記し、次の変更は直前の採用版をbaselineにする。
+  </p>
+
+  <h2>14. 最初の実装単位</h2>
+  <p>
+    最初のPRは、host-owned ResearchEngine / SourceConnector contract、capability schema、canonical
+    request/result hash、成功・失敗fixture、DeepStill projectionとのcompatibility testに限定する。DB
+    migration、Queue委託、LLM Gateway、Knowledge登録、Episode登録を同時に入れない。
+  </p>
+  <p>
+    2番目のPRでresident writer境界を使うdelegation stateと手動Research
+    Brokerを追加し、同一key再送、hash
+    conflict、restart、cancel、result取得、ACKを検証する。3番目のPRでEvidence IngressとCovering
+    canaryを行う。LLM GatewayはResearchEngine lifecycleの成立条件ではないため、必要性とprovider
+    lease設計を独立評価してから追加する。
+  </p>
+
+  <h2>15. ContextStillコーディングエージェントへの実行依頼</h2>
+  <ol>
+    <li>
+      この文書とDeepStill commit
+      <code>c970f64170ee</code>を照合し、旧案を暗黙の確定仕様として扱わない。
+    </li>
+    <li>
+      最初にbaselineを取り、既存Queue、MCP、repository isolation、SQLite resident
+      writerの回帰条件を記録する。
+    </li>
+    <li>
+      protocol、capability、transport、永続化の未決事項を解消し、決定理由とnon-goalsをこの文書へ反映する。
+    </li>
+    <li>
+      最初のPR相当のcontractとdeterministic
+      fixtureを実装する。新規依存や全体リファクタは必要最小限にする。
+    </li>
+    <li>
+      <code>bun run spec:fix</code>、targeted
+      tests、<code>bun run spec:check</code>、repositoryのfull verificationを実行する。
+    </li>
+    <li>
+      DeepStill側に必要な変更は、host
+      contractとfixtureを提示したうえで別依頼にする。別repoのDBや内部型を直接変更しない。
+    </li>
+  </ol>
+  <p>
+    完了報告には、確定したcontract、保留事項、変更ファイル、migration/rollbackの有無、実行したtest、baselineとの差、DeepStill側へ返す追加依頼を含めること。
+  </p>
+
+  <h2>16. 最初の実装単位の結果</h2>
+  <p>
+    ContextStill所有のResearchEngine / SourceConnector
+    port、capability・submit・status・result・resource locator schema、canonical JSON
+    hash、deterministic fixtureを実装した。DB、migration、公開API、認証、Queue、LLM
+    Gateway、Knowledge/Episode登録は変更していない。
+  </p>
+  <p>
+    各portのoperation methodはcapability宣言と対応するoptional
+    methodとする。hostはcapabilityとmethodの両方を確認してから呼び出し、宣言だけ、またはmethodだけが存在するadapterをprotocol違反として扱う。
+  </p>
+  <p>
+    変更前baselineはTypeScript typecheck、Spec HTML check、unit test
+    2308件が成功した。追加したtargeted testは、key順に依存しないhash、NFC/finite
+    number制約、capability/request/result hash、standalone JSON
+    Schema、completed/partial/failed/cancelled、DeepStill commit
+    <code>c970f64170ee</code>のcapability mapping、未知minor field、idempotency
+    key再送、dangling reference、claim/evidenceの双方向整合、quote改変、非HTTP Web
+    resource、target/hard budget、retention/ACK宣言、SourceConnectorのsearch/fetch応答とsnapshot
+    hashを検証する。SourceConnector V1で宣言できるoperationは、request/response
+    contractを確定した<code>search</code>と<code>fetch</code>だけとし、<code>changes</code>と<code>authorize</code>を先行宣言しない。
+  </p>
+  <p>
+    DeepStillの現行projectionは、Report・claim・evidenceをhost
+    contractへ決定的にmappingできる。一方、現行<code>knowledgeCandidates</code>と<code>episodeSource</code>はhost
+    contractが要求する適用条件・verification・実行event表現を満たさないため、最初のcapability
+    mappingでは<code>report</code>、<code>claims</code>、<code>evidence</code>だけを宣言する。DeepStill側の追加変更はhost
+    fixtureを渡した別依頼で行う。
+  </p>
+</article>
