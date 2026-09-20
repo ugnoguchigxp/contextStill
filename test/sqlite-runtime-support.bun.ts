@@ -41,15 +41,6 @@ import {
   listRecentCompileRuns,
   saveRunEpisodeFeedback,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
-import {
-  getContextDecisionDetail,
-  getContextDecisionMetrics,
-  insertContextDecisionCoverageRows,
-  insertContextDecisionEvidenceRows,
-  insertContextDecisionRun,
-  listContextDecisionRuns,
-  saveHumanDecisionFeedback,
-} from "../src/modules/context-decision/context-decision.repository.js";
 import { inspectDatabase } from "../src/modules/doctor/inspectors/database.inspector.js";
 import {
   enqueueEpisodeDistillerJob,
@@ -1329,7 +1320,6 @@ describe("sqlite runtime support repositories", () => {
     expect(inspection.expectedTables).toContain("context_compile_runs");
     expect(inspection.expectedTables).toContain("finding_candidate_queue");
     expect(inspection.expectedTables).toContain("vibe_memories");
-    expect(inspection.expectedTables).toContain("context_decision_runs");
     expect(inspection.missingTables).not.toContain("finding_candidate_queue");
     expect(inspection.reasons).not.toContain("SQLITE_PENDING_MIGRATION_DOMAINS");
   });
@@ -1371,80 +1361,6 @@ describe("sqlite runtime support repositories", () => {
     });
     expect(read.content).toContain("SQLite ingest memory");
     expect(read.content).toContain("sqlite memory marker");
-  });
-
-  test("persists context decision runs, evidence, and feedback in sqlite", async () => {
-    const sqlite = await getRuntimeSqliteCoreDatabase();
-    const decisionId = await insertContextDecisionRun({
-      input: {
-        decisionPoint: "Should SQLite context decision run?",
-        sessionId: "sqlite-decision-session",
-        retrievalHints: {
-          technologies: ["sqlite"],
-          changeTypes: ["migration"],
-          domains: [],
-        },
-        metadata: { branch: "sqlite-test" },
-      },
-      decision: "execute",
-      selectedAction: "implement sqlite branch",
-      rejectedActions: ["wait"],
-      mandate: "Implement the SQLite branch.",
-      agentMessage: "Proceed with SQLite context decision.",
-      confidence: 82,
-      confidenceTrace: { evidence: 1 },
-      guardrails: { commit: false },
-      unsupportedAlternatives: [],
-      status: "completed",
-    });
-    const createdAtUnixMs = 1782175198000;
-    const expectedCreatedAt = new Date(createdAtUnixMs).toISOString();
-    sqlite.db
-      .query("update context_decision_runs set created_at = ?, updated_at = ? where id = ?")
-      .run(`unix-ms:${createdAtUnixMs}`, `unix-ms:${createdAtUnixMs}`, decisionId);
-    await insertContextDecisionEvidenceRows(decisionId, [
-      {
-        knowledgeId: null,
-        role: "selected_support",
-        weightAtDecision: 80,
-        dynamicScoreAtDecision: null,
-        applicabilityScore: 70,
-        temporalRelevance: null,
-        summary: "SQLite evidence",
-        sourceRefs: ["sqlite://evidence"],
-        metadata: { ok: true },
-      },
-    ]);
-    await insertContextDecisionCoverageRows(decisionId, [
-      {
-        query: "sqlite migration",
-        queryRole: "support",
-        scope: { repo: "contextStill" },
-        hitCount: 1,
-        maxSimilarity: null,
-        selectedKnowledgeIds: [],
-        rejectedKnowledgeIds: [],
-        reason: "covered",
-      },
-    ]);
-    await saveHumanDecisionFeedback({
-      decisionId,
-      value: "good",
-      affectedKnowledgeIds: [],
-    });
-
-    const detail = await getContextDecisionDetail(decisionId);
-    expect(detail?.run.decision).toBe("execute");
-    expect(detail?.run.createdAt).toBe(expectedCreatedAt);
-    expect(detail?.evidence[0]?.summary).toBe("SQLite evidence");
-    expect(detail?.coverage[0]?.query).toBe("sqlite migration");
-    expect(detail?.run.humanFeedback).toBe("good");
-    const runs = await listContextDecisionRuns({ limit: 10 });
-    expect(runs.find((run) => run.id === decisionId)?.createdAt).toBe(expectedCreatedAt);
-
-    const metrics = await getContextDecisionMetrics();
-    expect(metrics.totalDecisions).toBe(1);
-    expect(metrics.goodFeedbackCount).toBe(1);
   });
 
   test("returns idle queue worker result from empty sqlite queues", async () => {
@@ -4626,41 +4542,6 @@ describe("sqlite runtime support repositories", () => {
       `,
       )
       .run("overview-eval-1", runId, 80, "useful", "overview eval", 80, 82, 78, 81, 79, now, now);
-    sqlite.db
-      .query(
-        `
-        insert into context_decision_runs (
-          id, decision_point, options, retrieval_hints, decision, rejected_actions,
-          mandate, agent_message, confidence, confidence_trace, guardrails,
-          unsupported_alternatives, status, created_at, updated_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      )
-      .run(
-        "overview-decision-1",
-        "Use SQLite overview?",
-        "[]",
-        "{}",
-        "execute",
-        "[]",
-        "Use SQLite overview.",
-        "Proceed.",
-        90,
-        "{}",
-        "{}",
-        "[]",
-        "completed",
-        now,
-        now,
-      );
-    sqlite.db
-      .query(
-        `
-        insert into context_decision_human_feedback (id, decision_run_id, value, created_at)
-        values (?, ?, ?, ?)
-      `,
-      )
-      .run("overview-human-feedback-1", "overview-decision-1", "good", now);
     sqlite.db
       .query(
         `

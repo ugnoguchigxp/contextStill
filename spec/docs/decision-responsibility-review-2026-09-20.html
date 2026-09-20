@@ -1,0 +1,180 @@
+<article lang="ja">
+  <h1>Decisionの責務とSAAA連携の検討（2026-09-20）</h1>
+  <p>
+    結論案：ContextStillのDecisionを独立した実行判断サービスとして維持・拡張する優先度は低い。ContextStillは知識と根拠を提供し、SAAAおよび各実行エージェントが現在の依頼・状態・権限と合わせて判断する構成を推奨する。反証検索、検索経緯、結果の記録は残す価値がある。本書は検討結果であり、機能の廃止や運用ルールの変更を実施したものではない。
+  </p>
+  <h2>調査範囲と限界</h2>
+  <p>
+    ContextStillのHEAD 760476e、SAAAのHEAD
+    5554e72を基準に、作業ツリーの実装と設計文書を読んだ。実稼働バイナリとの一致、Decisionの利用率・正答率・遅延、SAAAの実機検索品質は測定していない。「ほぼ使えていない」は利用者の評価であり、利用件数の計測結果ではない。ソース上の責務と実装方式から以下を提案する。
+  </p>
+  <h2>確認できた実装</h2>
+  <table>
+    <caption>
+      判断と知識検索の現状
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">確認事項</th>
+        <th scope="col">設計上の意味</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">SAAAの検索経路</th>
+        <td>
+          src-tauri/src/providers/stream/agent_dispatch.rsは接続設定が有効ならtyped memory
+          toolをモデルへ提示し、ContextStillRecallClientへ実行を委譲する。typed_recall.rsの対象はrecall_experience、recall_rule、recall_skillの3種類。
+        </td>
+        <td>検索を利用する経路は実装済み。ただし毎回検索する保証や判断品質の実証とは別である。</td>
+      </tr>
+      <tr>
+        <th scope="row">SAAAのDecision依存</th>
+        <td>
+          SAAAのsrc、src-tauri/src、services、cratesをcontext_decision /
+          decideContextで検索し、呼出しは見つからなかった。
+        </td>
+        <td>
+          確認した経路ではContextStill
+          DecisionをSAAAへ移植する必要はない。既存の知識検索経路を育てる方が自然である。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">ContextStillのRust版</th>
+        <td>
+          crates/context-stilld/src/domains/mcp_lifecycle/native_tools.rsがDecisionをnative
+          handlerへ接続する。native_decision.rsはactive知識を最大500件取り、文字列一致のscoreとdynamic_scoreで最大8件を選ぶ。否定知識と特定語句の有無でexecute
+          / revise_and_execute / rejectを返す。
+        </td>
+        <td>自然文の意味や現在の権限を評価する汎用判断器にはなっていない。</td>
+      </tr>
+      <tr>
+        <th scope="row">ContextStillのTypeScript版</th>
+        <td>
+          api/modules/context-decision/context-decision.routes.tsからdecideContextを呼ぶ。serviceは6方向の検索、Episode、知識評価、ML
+          signal、LLM judgment、reliability gateを組み合わせる。
+        </td>
+        <td>
+          同名機能でもRust MCP経路とHTTP
+          API経路で判断方式が異なる。TypeScript側の高度化がそのままRust MCPに効くとはいえない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">永続的な根拠</th>
+        <td>
+          SAAAのmemory/personal_state/world/evidence_eligibility.rsはmemory-recall-v1をtransient_onlyに固定する。安定ID、版、再検証、削除契約、scope証明の不足を明記する。
+        </td>
+        <td>
+          1 turnの補助知識には使えるが、永続World sourceとして採用するには別の契約整備が必要である。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    SAAAのspec/docs/plan.htmlも、Situationなどの短命ContextをSAAA、再利用可能な知識の保存・検索・蒸留・CompilationをContextStillの責務としている。この境界は推奨案と整合する。SAAA内部のSituation判断、tool
+    selection、pending decision等は別機能であり、ここで廃止対象としているDecisionには含めない。
+  </p>
+  <h2>Decisionを判断主体として残さない理由</h2>
+  <ol>
+    <li>
+      実行主体は現在の依頼、訂正、処理中の状態、権限を持っている。ContextStillへ判断を委譲するにはそれらの同期が必要になり、要約漏れや状態の変化によって判断がずれる。知識検索のために実行状態を丸ごと複製する必要はない。
+    </li>
+    <li>
+      Rust版のhas_hard_stop_languageは「reset
+      --hard」等の部分文字列で拒否する。その操作を避ける相談でも語句が含まれれば拒否し得る。一方、supportがなくてもrevise_and_executeを返す。固定confidenceの82
+      / 58 / 76 / 68は、このコード上では実測成功確率ではない。これを強制ゲートの根拠にするのは弱い。
+    </li>
+    <li>
+      Rust版の検索SQLにはproject / repo
+      scope条件がなく、dynamic_scoreの加算だけでも候補に入り得る。これに対してnative_memory_recall.rsはproject_refとglobal許可を検索条件に持つ。判断器の維持より、適切な範囲の知識が届く検索経路へ投資する方が重要である。
+    </li>
+    <li>
+      TypeScript版には有用な検索・反証・評価処理があるが、最終判断まで引き受けると呼出し元の推論と重複する。初期ガイダンスの「rejectは停止条件」と組み合わせると、検索由来の助言が操作権限のように扱われる。
+    </li>
+  </ol>
+  <h2>残す責務と移す責務</h2>
+  <table>
+    <caption>
+      推奨する責務分担
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">責務</th>
+        <th scope="col">所有者</th>
+        <th scope="col">扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">知識・Episodeの保存、検索、更新</th>
+        <td>ContextStill</td>
+        <td>維持する。適用条件、反証、古さ、矛盾を返す。</td>
+      </tr>
+      <tr>
+        <th scope="row">検索の充足度と出典</th>
+        <td>ContextStill</td>
+        <td>
+          見つからない・省略された・取得に失敗したを区別する。検索scoreを実行成功確率として返さない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">候補の選択、実行・保留・質問</th>
+        <td>SAAAまたは実行エージェント</td>
+        <td>現在の依頼と実行状態を踏まえて決める。Codex等の利用者をSAAA必須にはしない。</td>
+      </tr>
+      <tr>
+        <th scope="row">認可と必須の禁止条件</th>
+        <td>各実行ホスト</td>
+        <td>
+          構造化した権限や状態に基づくチェックとして保持する。知識の検索結果やLLM判断で解除しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">判断の経緯と実行結果</th>
+        <td>実行主体が正本を持つ</td>
+        <td>根拠参照と結果を記録し、再利用可能なlessonを選んでContextStillへ返す。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Decisionのcoverageが持つ「支持・反証・好み・リスク・検証・代案」の観点は残す価値がある。ただし常に6回検索する方式を固定せず、既存のrecall
+    /
+    context_compileの用途に合わせて必要な根拠を返す。新しい判断APIを名前だけ変えて再構築する必要はない。
+  </p>
+  <p>
+    feedback.service.tsには実行失敗やuser_overrode等から対象知識のpenalize
+    effectを作る処理がある。移行後は「知識が誤っていた」「適用条件が違った」「実装に失敗した」を分ける。実行失敗だけで知識の品質を下げる結び付けをそのまま継承しない。
+  </p>
+  <h2>段階的な移行案</h2>
+  <ol>
+    <li>
+      Decisionの新規機能拡張を止め、MCP、HTTP API、UI、feedback、PR discard
+      scan、doctor、評価fixture、利用者向けガイダンスの依存を棚卸しする。SAAA以外の外部利用者はコード検索だけでは把握できないため、呼出し実績も確認する。
+    </li>
+    <li>
+      比較用のケースを固定し、現状Decisionと「検索結果を受け取った実行主体の判断」を同じタスク・根拠・モデル条件で比較する。Rust版とTypeScript版は混ぜずに扱う。
+    </li>
+    <li>
+      有効性を確認した経路から必須Decision呼出しとrejectの強制停止ガイダンスを外す。旧APIを残す期間は非推奨を明示する。既存契約のまま黙って助言専用へ意味を変更しない。
+    </li>
+    <li>
+      知識検索の取りこぼし・反証・条件・出典を改善する。長期利用が必要になった段階で、安定した根拠ID、版、再検証・削除照会、scopeを含む版付き契約をSAAAと整備する。現行parserは未知fieldを拒否するため、v1へfieldを追加するだけでは移行できない。
+    </li>
+    <li>
+      利用者の移行後、Decisionの判定処理・新規作成UI・固有ML学習を撤去する。過去の判断とfeedbackは履歴として保持し、必要な検索traceやlessonを活用する。DBの即時削除は不要。
+    </li>
+  </ol>
+  <h2>移行前の検証条件</h2>
+  <p>
+    比較対象には、日本語の言い換え、支持と反証が競合するケース、禁止操作を「避ける」相談、古い知識、ユーザー訂正、異なるprojectの知識、検索0件、検索停止、実行直前の状態変化を含める。正しい実行・保留・質問の割合、誤った拒否、根拠の取り違え、不要な質問、遅延とtoken量を記録する。検索0件を許可と解釈せず、検索停止を知識不存在と同一視しないことを確認する。
+  </p>
+  <p>
+    採用条件は、必須の認可・scope条件を満たし、既存Decisionに対して判断品質を悪化させず、誤停止・不要質問または遅延等の事前に選んだ指標を改善すること。知識検索が弱ければ検索品質を先に直す。責務分離だけで検索精度やSAAAの判断品質が向上したとは結論しない。
+  </p>
+  <h2>今回の変更範囲</h2>
+  <p>
+    調査文書のみを追加した。Decisionのコード、運用ガイダンス、データ、SAAAの実装は変更していない。実装テストや実機比較は未実施であり、本書の整形とSpec
+    HTML検査を行う。
+  </p>
+</article>

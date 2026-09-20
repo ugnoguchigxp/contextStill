@@ -11,20 +11,20 @@ fn make_context() -> NativeToolContext {
 
 #[test]
 fn test_exposed_tool_count_matches_expected() {
-    assert_eq!(exposed_tool_count(), 12);
+    assert_eq!(exposed_tool_count(), 10);
 }
 
 #[test]
 fn test_tool_owner_inventory_includes_all_native_tools() {
     let inv = tool_owner_inventory();
     let native = inv["rustNative"].as_array().unwrap();
-    assert_eq!(native.len(), 12);
+    assert_eq!(native.len(), 10);
     let names: Vec<&str> = native.iter().map(|n| n.as_str().unwrap()).collect();
     assert!(names.contains(&"initial_instructions"));
     assert!(names.contains(&"context_compile"));
     assert!(names.contains(&"compile_eval"));
-    assert!(names.contains(&"context_decision"));
-    assert!(names.contains(&"context_decision_feedback"));
+    assert!(!names.contains(&"context_decision"));
+    assert!(!names.contains(&"context_decision_feedback"));
     assert!(names.contains(&"search_knowledge"));
     assert!(names.contains(&"register_candidates"));
     assert!(names.contains(&"search_memory"));
@@ -39,7 +39,7 @@ fn test_handle_native_dispatch_tools_list_returns_tools() {
     let context = make_context();
     let res = handle_native_dispatch("tools/list", &json!({}), &context).unwrap();
     let tools = res["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 12);
+    assert_eq!(tools.len(), 10);
 }
 
 #[test]
@@ -81,8 +81,8 @@ fn test_handle_native_dispatch_initial_instructions_returns_text() {
     assert!(text.contains("initial_instructions"));
     assert!(text.contains("context_compile"));
     assert!(text.contains("compile_eval"));
-    assert!(text.contains("context_decision"));
-    assert!(text.contains("context_decision_feedback"));
+    assert!(!text.contains("context_decision"));
+    assert!(!text.contains("context_decision_feedback"));
     assert!(
         text.contains("その他の公開ツールは補助機能")
             || text.contains("Other exposed tools are supplemental")

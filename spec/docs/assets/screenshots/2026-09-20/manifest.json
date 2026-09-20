@@ -1,0 +1,470 @@
+{
+  "date": "2026-09-20",
+  "baseUrl": "http://localhost:39171",
+  "viewport": {
+    "width": 1600,
+    "height": 1000
+  },
+  "deviceScaleFactor": 1,
+  "browser": "Playwright Chromium (headless)",
+  "frontendCommit": "760476e2744cd4e6d964b6703da4af85df176bb9",
+  "backendVersionShown": "context-still 0.1.0 (main@8a54cda)",
+  "data": "local live data; counts and timestamps may change between captures",
+  "uniqueScreens": 20,
+  "routeCount": 21,
+  "screenshots": [
+    {
+      "file": "overview.png",
+      "route": "/",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:29:31.467Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "sources.png",
+      "route": "/sources",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:29:39.279Z",
+      "width": 1600,
+      "height": 1502,
+      "apiErrors": []
+    },
+    {
+      "file": "vibe-memory.png",
+      "route": "/vibe-memory",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:29:46.325Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "episodes.png",
+      "route": "/episodes",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:29:52.748Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "candidates.png",
+      "route": "/candidates",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:29:57.038Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "queue.png",
+      "route": "/queue",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:02.766Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "knowledge.png",
+      "route": "/knowledge",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:06.980Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "landscape.png",
+      "route": "/landscape",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:12.840Z",
+      "width": 1600,
+      "height": 9956,
+      "apiErrors": []
+    },
+    {
+      "file": "graph.png",
+      "route": "/graph",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:17.872Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "compile.png",
+      "route": "/compile",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:22.940Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "decision.png",
+      "route": "/decision",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:25.774Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "audit.png",
+      "route": "/audit",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:28.891Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "doctor.png",
+      "route": "/doctor",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:41.296Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "setting-general.png",
+      "route": "/setting/general",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:44.002Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "setting-llmprovider.png",
+      "route": "/setting/llmprovider",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:46.825Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "setting-llmpool.png",
+      "route": "/setting/llmpool",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:49.474Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "setting-taskrouting.png",
+      "route": "/setting/taskrouting",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:52.135Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "setting-search.png",
+      "route": "/setting/search",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:54.803Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "setting-embedding.png",
+      "route": "/setting/embedding",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:30:57.437Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "setting-distillation-runtime.png",
+      "route": "/setting/distillation-runtime",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:31:00.080Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "setting-advanced.png",
+      "route": "/setting/advanced",
+      "state": "初期表示",
+      "capturedAt": "2026-09-20T14:31:02.755Z",
+      "width": 1600,
+      "height": 1000,
+      "apiErrors": []
+    },
+    {
+      "file": "overview-scroll-1-1.png",
+      "route": "/",
+      "state": "内部スクロール領域1、位置757px",
+      "capturedAt": "2026-09-20T14:31:19.908Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "overview-scroll-1-2.png",
+      "route": "/",
+      "state": "内部スクロール領域1、位置1515px",
+      "capturedAt": "2026-09-20T14:31:20.196Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "overview-scroll-1-3.png",
+      "route": "/",
+      "state": "内部スクロール領域1、位置1620px",
+      "capturedAt": "2026-09-20T14:31:20.574Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "knowledge-detail.png",
+      "route": "/knowledge",
+      "state": "先頭項目の詳細",
+      "capturedAt": "2026-09-20T14:31:24.706Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "knowledge-detail-scroll-2-1.png",
+      "route": "/knowledge",
+      "state": "内部スクロール領域2、位置471px",
+      "capturedAt": "2026-09-20T14:31:27.606Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "knowledge-new.png",
+      "route": "/knowledge",
+      "state": "新規作成フォーム（未保存）",
+      "capturedAt": "2026-09-20T14:31:30.204Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "episodes-detail.png",
+      "route": "/episodes",
+      "state": "先頭項目の詳細",
+      "capturedAt": "2026-09-20T14:31:33.878Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "episodes-detail-scroll-2-1.png",
+      "route": "/episodes",
+      "state": "内部スクロール領域2、位置195px",
+      "capturedAt": "2026-09-20T14:31:35.095Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "episodes-new.png",
+      "route": "/episodes",
+      "state": "新規作成フォーム（未保存）",
+      "capturedAt": "2026-09-20T14:31:37.261Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "candidates-detail.png",
+      "route": "/candidates",
+      "state": "先頭項目の詳細",
+      "capturedAt": "2026-09-20T14:31:40.842Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "sources-preview.png",
+      "route": "/sources",
+      "state": "画面プレビュー",
+      "capturedAt": "2026-09-20T14:31:50.112Z",
+      "width": 1600,
+      "height": 1502
+    },
+    {
+      "file": "compile-detail.png",
+      "route": "/compile",
+      "state": "先頭の実行履歴",
+      "capturedAt": "2026-09-20T14:32:47.382Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "compile-detail-scroll-1-1.png",
+      "route": "/compile",
+      "state": "内部スクロール領域1、位置5754px",
+      "capturedAt": "2026-09-20T14:32:47.593Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "decision-detail.png",
+      "route": "/decision",
+      "state": "先頭の判断履歴",
+      "capturedAt": "2026-09-20T14:32:50.695Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "decision-detail-scroll-1-1.png",
+      "route": "/decision",
+      "state": "内部スクロール領域1、位置3277px",
+      "capturedAt": "2026-09-20T14:32:50.891Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "graph-semantic.png",
+      "route": "/graph",
+      "state": "Graph semantic",
+      "capturedAt": "2026-09-20T14:32:58.424Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "graph-community.png",
+      "route": "/graph",
+      "state": "Graph community",
+      "capturedAt": "2026-09-20T14:33:07.156Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "graph-evidence.png",
+      "route": "/graph",
+      "state": "Graph evidence",
+      "capturedAt": "2026-09-20T14:33:12.559Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "setting-llmprovider-scroll-1-1.png",
+      "route": "/setting/llmprovider",
+      "state": "内部スクロール領域1、位置757px",
+      "capturedAt": "2026-09-20T14:33:16.520Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "setting-llmprovider-scroll-1-2.png",
+      "route": "/setting/llmprovider",
+      "state": "内部スクロール領域1、位置1515px",
+      "capturedAt": "2026-09-20T14:33:16.704Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "setting-llmprovider-scroll-1-3.png",
+      "route": "/setting/llmprovider",
+      "state": "内部スクロール領域1、位置2272px",
+      "capturedAt": "2026-09-20T14:33:16.886Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "setting-llmprovider-scroll-1-4.png",
+      "route": "/setting/llmprovider",
+      "state": "内部スクロール領域1、位置3029px",
+      "capturedAt": "2026-09-20T14:33:17.072Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "setting-llmprovider-scroll-1-5.png",
+      "route": "/setting/llmprovider",
+      "state": "内部スクロール領域1、位置3055px",
+      "capturedAt": "2026-09-20T14:33:17.253Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "setting-llmpool-scroll-1-1.png",
+      "route": "/setting/llmpool",
+      "state": "内部スクロール領域1、位置603px",
+      "capturedAt": "2026-09-20T14:33:19.205Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "setting-taskrouting-scroll-1-1.png",
+      "route": "/setting/taskrouting",
+      "state": "内部スクロール領域1、位置757px",
+      "capturedAt": "2026-09-20T14:33:21.160Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "setting-taskrouting-scroll-1-2.png",
+      "route": "/setting/taskrouting",
+      "state": "内部スクロール領域1、位置1515px",
+      "capturedAt": "2026-09-20T14:33:21.359Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "setting-taskrouting-scroll-1-3.png",
+      "route": "/setting/taskrouting",
+      "state": "内部スクロール領域1、位置2272px",
+      "capturedAt": "2026-09-20T14:33:21.568Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "setting-taskrouting-scroll-1-4.png",
+      "route": "/setting/taskrouting",
+      "state": "内部スクロール領域1、位置3015px",
+      "capturedAt": "2026-09-20T14:33:21.762Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "doctor-scroll-1-1.png",
+      "route": "/doctor",
+      "state": "内部スクロール領域1、位置543px",
+      "capturedAt": "2026-09-20T14:34:29.465Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "landscape-viewport.png",
+      "route": "/landscape",
+      "state": "先頭の表示領域（1600×1000）",
+      "capturedAt": "2026-09-20T14:34:32.754Z",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "sources-document.png",
+      "route": "/sources",
+      "state": "既存文書を選択した画面（未保存）",
+      "capturedAt": "2026-09-20T14:34:38.223Z",
+      "width": 1600,
+      "height": 1526
+    },
+    {
+      "file": "sources-view.png",
+      "route": "/sources",
+      "state": "既存文書の閲覧表示",
+      "capturedAt": "2026-09-20T14:34:38.659Z",
+      "width": 1600,
+      "height": 1526
+    },
+    {
+      "file": "compile-ranking.png",
+      "route": "/compile",
+      "state": "履歴のランキング情報",
+      "capturedAt": "2026-09-20T14:34:43.285Z",
+      "width": 1600,
+      "height": 1000
+    }
+  ]
+}

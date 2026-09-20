@@ -1,0 +1,659 @@
+<article lang="ja">
+  <h1>修正版LARMのContextStillホストE2E検証</h1>
+
+  <p>
+    2026-09-20 23:48 JSTから2026-09-21 00:00 JSTに、ContextStillホストから
+    <code>192.168.0.130:9810</code
+    >へ認証付きE2E検証を行った。LARMホストへのSSH、network設定変更、Queue停止、priority変更、timeout延長、retry追加は行っていない。Bearer
+    credentialは既存の <code>runtime.secret</code>参照からprocess
+    memory内へ読み込み、出力、fixture、source、log、commitへ保存していない。
+  </p>
+
+  <h2>結論</h2>
+
+  <ul>
+    <li>
+      修正版LARMのhealth、models、chatはContextStillホストから成功した。releaseCommitは
+      <code>beee10b6c62281b09d9f1cc90e4abb654982b5ef</code>、configRevisionは
+      <code>7b21ef45d0d196d804db97941446d3d3f88e7c5657186f377528f934882868e8</code>で期待値と一致した。
+    </li>
+    <li>
+      sequential chatは23件まで実施し、18件がHTTP 200、5件が90秒のclient read timeout、TCP connect
+      errorは0件、HTTP errorは0件だった。timeout後もserver側処理が残ってlive
+      Queue競合を増幅する可能性があるため、追加負荷を避けて24件目を中断した。
+    </li>
+    <li>
+      100件完遂には、既存の長時間jobと競合しないmaintenance
+      windowが必要である。目安は10分で、LARMの実行枠が空であり新規長時間jobを投入しない状態を前提とする。
+    </li>
+    <li>
+      過去のOS code
+      65はHTTPやlistenerより前の到達性失敗である。対象期間にContextStillホストのsleep/wakeやen0の切断を示す証拠はなく、同一subnet上のLARMホストに対するARP/neighbor解決失敗が有力だが、当時のneighbor
+      tableが保存されていないため断定できない。
+    </li>
+  </ul>
+
+  <h2>現在のnetwork状態</h2>
+
+  <p>採取時刻は2026-09-20 23:48:01 JST、2026-09-20 14:48:01 UTC。</p>
+
+  <table>
+    <caption>
+      検証開始時のContextStillホストnetwork状態
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">route</th>
+        <td>
+          <code>192.168.0.130</code>へのhost
+          routeは<code>en0</code>、flagsは<code>UP,HOST,DONE,LLINFO,WASCLONED,IFSCOPE,IFREF</code>、MTU
+          1500。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">source interface</th>
+        <td>
+          <code>en0</code
+          >はactive、IPv4は<code>192.168.0.180/24</code>。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">ARP/neighbor</th>
+        <td>
+          <code>192.168.0.130</code
+          >は<code>dc:56:7b:fb:3e:3f</code>へ解決済み、<code>en0 ifscope [ethernet]</code>。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">live socket</th>
+        <td>
+          ContextStill
+          daemonから<code>192.168.0.130:9810</code>へのESTABLISHED接続を確認。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Application Firewall</th>
+        <td>disabled。block-allはdisabled、stealth modeはoff。</td>
+      </tr>
+      <tr>
+        <th scope="row">PF</th>
+        <td>
+          <code>pfctl -s info</code>は非root実行でpermission
+          denied。設定変更や権限昇格は行っていない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>認証付き疎通</h2>
+
+  <p>2026-09-20 23:48:43 JSTから、同じ保存済みcredentialでhealth、models、chatの順に実行した。</p>
+
+  <table>
+    <caption>
+      認証付きhealth、models、chatの疎通結果
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">request</th>
+        <th scope="col">結果</th>
+        <th scope="col">latency</th>
+        <th scope="col">確認内容</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row"><code>GET /health</code></th>
+        <td>HTTP 200</td>
+        <td>1228.1 ms</td>
+        <td>
+          <code>status=ok</code
+          >、<code>ready=true</code>、readiness reasonは
+          <code>listener_verified</code>。bootEpochは
+          <code>epoch-2a152425-5693-4a89-82a8-344e9b82762f</code>。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>GET /v1/models</code></th>
+        <td>HTTP 200</td>
+        <td>11.9 ms</td>
+        <td><code>qwen-agent-worker</code>を確認。</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>POST /v1/chat/completions</code></th>
+        <td>HTTP 200</td>
+        <td>2151.1 ms</td>
+        <td>
+          <code>x-request-id=req_0d7f125a-89b4-4039-992c-2fd369ed8fad</code>、response
+          modelは<code>qwen-agent-worker</code>。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>sequential chat run</h2>
+
+  <p>
+    2026-09-20 23:49:31
+    JSTに開始した。retryは行っていない。healthは開始時、10件後、20件後に採取し、全sampleでHTTP 200、
+    <code>status=ok</code
+    >、<code>ready=true</code>だった。releaseCommit、configRevision、bootEpochの変化はなかった。
+  </p>
+
+  <table>
+    <caption>
+      sequential chat runの集計
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">指標</th>
+        <th scope="col">値</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">requested</th>
+        <td>23完了、24件目を手動中断</td>
+      </tr>
+      <tr>
+        <th scope="row">succeeded</th>
+        <td>18</td>
+      </tr>
+      <tr>
+        <th scope="row">failed</th>
+        <td>5</td>
+      </tr>
+      <tr>
+        <th scope="row">TCP connect error</th>
+        <td>0</td>
+      </tr>
+      <tr>
+        <th scope="row">HTTP error</th>
+        <td>0。429/503とも0。</td>
+      </tr>
+      <tr>
+        <th scope="row">その他transport error</th>
+        <td>5。すべてTCP接続後の90秒client read timeout。</td>
+      </tr>
+      <tr>
+        <th scope="row">latency min / p50 / p95 / p99 / max</th>
+        <td>2076.5 / 2262.8 / 90010.9 / 90114.2 / 90114.2 ms</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <table>
+    <caption>
+      sequential chat requestごとの結果
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">#</th>
+        <th scope="col">開始 JST / UTC</th>
+        <th scope="col">終了 JST / UTC</th>
+        <th scope="col">結果</th>
+        <th scope="col">ms</th>
+        <th scope="col">x-request-id</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>23:49:32.876 / 14:49:32.876Z</td>
+        <td>23:51:02.990 / 14:51:02.990Z</td>
+        <td>read timeout</td>
+        <td>90114.2</td>
+        <td>取得なし</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>23:51:02.990 / 14:51:02.990Z</td>
+        <td>23:51:51.129 / 14:51:51.129Z</td>
+        <td>200</td>
+        <td>48138.6</td>
+        <td><code>req_d3d01c9e-a158-4643-95b7-abc67e9040d6</code></td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>23:51:51.129 / 14:51:51.129Z</td>
+        <td>23:53:21.136 / 14:53:21.136Z</td>
+        <td>read timeout</td>
+        <td>90006.3</td>
+        <td>取得なし</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>23:53:21.136 / 14:53:21.136Z</td>
+        <td>23:54:51.147 / 14:54:51.147Z</td>
+        <td>read timeout</td>
+        <td>90010.9</td>
+        <td>取得なし</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>23:54:51.147 / 14:54:51.147Z</td>
+        <td>23:54:58.318 / 14:54:58.318Z</td>
+        <td>200</td>
+        <td>7170.9</td>
+        <td><code>req_efab30ec-f059-4a07-9033-453b0ec65751</code></td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>23:54:58.318 / 14:54:58.318Z</td>
+        <td>23:55:00.581 / 14:55:00.581Z</td>
+        <td>200</td>
+        <td>2262.6</td>
+        <td><code>req_2c31977c-3efa-41ae-b763-d3c51e7ffe6a</code></td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>23:55:00.581 / 14:55:00.581Z</td>
+        <td>23:55:02.914 / 14:55:02.914Z</td>
+        <td>200</td>
+        <td>2333.2</td>
+        <td><code>req_416b3ec3-8e62-44f4-83e5-4224821eb8b2</code></td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td>23:55:02.914 / 14:55:02.914Z</td>
+        <td>23:55:05.237 / 14:55:05.237Z</td>
+        <td>200</td>
+        <td>2322.2</td>
+        <td><code>req_2de790a4-4f86-4d7e-846f-22705e6b7b1b</code></td>
+      </tr>
+      <tr>
+        <td>9</td>
+        <td>23:55:05.237 / 14:55:05.237Z</td>
+        <td>23:55:07.389 / 14:55:07.389Z</td>
+        <td>200</td>
+        <td>2152.6</td>
+        <td><code>req_b8ff074e-02ad-46a9-b67b-4ea8f0f3391a</code></td>
+      </tr>
+      <tr>
+        <td>10</td>
+        <td>23:55:07.389 / 14:55:07.389Z</td>
+        <td>23:55:09.619 / 14:55:09.619Z</td>
+        <td>200</td>
+        <td>2230.0</td>
+        <td><code>req_5ebf8af9-cf9e-45e3-93b7-bd5574424fa4</code></td>
+      </tr>
+      <tr>
+        <td>11</td>
+        <td>23:55:09.630 / 14:55:09.630Z</td>
+        <td>23:55:11.893 / 14:55:11.893Z</td>
+        <td>200</td>
+        <td>2262.8</td>
+        <td><code>req_08424f32-7c9a-40f3-b2df-c48c56c92585</code></td>
+      </tr>
+      <tr>
+        <td>12</td>
+        <td>23:55:11.893 / 14:55:11.893Z</td>
+        <td>23:55:14.201 / 14:55:14.201Z</td>
+        <td>200</td>
+        <td>2307.8</td>
+        <td><code>req_5206cd4f-b887-4514-81af-a0602c172ca0</code></td>
+      </tr>
+      <tr>
+        <td>13</td>
+        <td>23:55:14.201 / 14:55:14.201Z</td>
+        <td>23:55:16.428 / 14:55:16.428Z</td>
+        <td>200</td>
+        <td>2227.4</td>
+        <td><code>req_7612ba59-e460-4484-920f-9025b4f317cf</code></td>
+      </tr>
+      <tr>
+        <td>14</td>
+        <td>23:55:16.428 / 14:55:16.428Z</td>
+        <td>23:55:18.713 / 14:55:18.713Z</td>
+        <td>200</td>
+        <td>2284.8</td>
+        <td><code>req_fb096a2f-90b9-4ba1-9928-ecf15ad9c795</code></td>
+      </tr>
+      <tr>
+        <td>15</td>
+        <td>23:55:18.713 / 14:55:18.713Z</td>
+        <td>23:55:20.900 / 14:55:20.900Z</td>
+        <td>200</td>
+        <td>2186.8</td>
+        <td><code>req_41efbb41-f3d9-40ba-b8c4-ac5e8aa47343</code></td>
+      </tr>
+      <tr>
+        <td>16</td>
+        <td>23:55:20.900 / 14:55:20.900Z</td>
+        <td>23:55:23.089 / 14:55:23.089Z</td>
+        <td>200</td>
+        <td>2188.8</td>
+        <td><code>req_635b3897-c100-4d77-82de-cc6d8c9950a7</code></td>
+      </tr>
+      <tr>
+        <td>17</td>
+        <td>23:55:23.089 / 14:55:23.089Z</td>
+        <td>23:55:25.195 / 14:55:25.195Z</td>
+        <td>200</td>
+        <td>2105.7</td>
+        <td><code>req_973e48bf-a8ed-4b6f-bdde-4b59cd2e2256</code></td>
+      </tr>
+      <tr>
+        <td>18</td>
+        <td>23:55:25.195 / 14:55:25.195Z</td>
+        <td>23:55:27.271 / 14:55:27.271Z</td>
+        <td>200</td>
+        <td>2076.5</td>
+        <td><code>req_20e5c3c6-88b7-4e1e-952b-4f9fe308e91a</code></td>
+      </tr>
+      <tr>
+        <td>19</td>
+        <td>23:55:27.272 / 14:55:27.272Z</td>
+        <td>23:55:29.400 / 14:55:29.400Z</td>
+        <td>200</td>
+        <td>2128.9</td>
+        <td><code>req_66ae6f5f-81f6-476b-90da-8a11ff9f7c5d</code></td>
+      </tr>
+      <tr>
+        <td>20</td>
+        <td>23:55:29.401 / 14:55:29.401Z</td>
+        <td>23:55:31.602 / 14:55:31.602Z</td>
+        <td>200</td>
+        <td>2201.7</td>
+        <td><code>req_9e9dc530-d3d9-49cb-b61b-e0e7910df053</code></td>
+      </tr>
+      <tr>
+        <td>21</td>
+        <td>23:55:31.614 / 14:55:31.614Z</td>
+        <td>23:55:33.824 / 14:55:33.824Z</td>
+        <td>200</td>
+        <td>2209.8</td>
+        <td><code>req_1164320e-edab-41dd-817e-495853646c14</code></td>
+      </tr>
+      <tr>
+        <td>22</td>
+        <td>23:55:33.824 / 14:55:33.824Z</td>
+        <td>23:57:03.831 / 14:57:03.831Z</td>
+        <td>read timeout</td>
+        <td>90006.8</td>
+        <td>取得なし</td>
+      </tr>
+      <tr>
+        <td>23</td>
+        <td>23:57:03.831 / 14:57:03.831Z</td>
+        <td>23:58:33.841 / 14:58:33.841Z</td>
+        <td>read timeout</td>
+        <td>90008.8</td>
+        <td>取得なし</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>過去のOS code 65</h2>
+
+  <p>
+    対象期間は2026-09-19 21:38 JSTから2026-09-20 21:58 JST。provider leaseは
+    <code>provider_unavailable_retry=1332</code>、<code>worker_failed=366</code>、
+    <code>worker_finished=6</code>だった。保存済みfinding errorには
+    <code>connect=true</code
+    >、<code>timeout=false</code>、<code>Os code 65</code>、
+    <code>HostUnreachable</code
+    >、<code>No route to host</code>が残っている。
+  </p>
+
+  <ul>
+    <li>
+      <code>pmset -g log</code>には対象期間のsystem
+      sleep、wake、darkwake遷移がなかった。
+    </li>
+    <li>
+      airportdの記録では対象networkへのassociationは2026-09-14から継続し、対象期間中もalready
+      associatedと記録されていた。
+    </li>
+    <li>
+      airportdのusage snapshotは<code>FaultReasonArpFailure=0</code>、DHCP failure
+      0を示すが、peer固有のARP履歴ではない。
+    </li>
+    <li>
+      configdにはen0のIPv6 publishが多数あるが、IPv4 route消失またはen0
+      link-downを示す記録は確認できなかった。
+    </li>
+    <li>
+      macOSは過去のARP/neighbor
+      entryを永続保存しないため、当時<code>192.168.0.130</code>のARP解決が失敗したことを直接証明できない。
+    </li>
+  </ul>
+
+  <p>
+    <code>192.168.0.130</code
+    >はContextStillホストと同一<code>/24</code>にある。listener未bindなら通常はTCP
+    connection refusedまたはtimeoutになり、code
+    65はIP/TCP接続前のhost到達性を示す。このため、LARMホストのsleep、電源断、Wi-Fi切断、IP競合、またはpeer固有のARP応答欠落が有力である。ただし、当時のpacket/neighbor証跡がないため原因は未確定とする。
+  </p>
+
+  <h2>次回発生時に必要な採取</h2>
+
+  <ol>
+    <li>
+      最初のcode
+      65と同時に、UTC/JST時刻、<code>route -n get 192.168.0.130</code>、<code>arp -n 192.168.0.130</code>、<code>ifconfig en0</code>、<code>scutil --nwi</code>を採取する。
+    </li>
+    <li>
+      同時にdefault gatewayと同一subnet内の別hostへTCP connect probeを行い、local
+      interface全体の障害とLARM peer固有障害を分離する。pingだけでは判定しない。
+    </li>
+    <li>
+      secretを含むHTTP payloadを採取せず、ARP request/replyとTCP
+      SYN/SYN-ACKの有無だけを短時間採取する。
+    </li>
+    <li>
+      Queue errorにprobe時刻、interface、route interface、neighbor
+      stateを関連付ける。routeやfirewallは変更しない。
+    </li>
+  </ol>
+
+  <h2>追加したdeterministic E2E test</h2>
+
+  <p>
+    <code>crates/context-stilld/src/domains/queue_lifecycle/larm_e2e_tests.rs</code>を追加した。外部networkやlive
+    credentialを使わず、loopback listenerで次を検証する。
+  </p>
+
+  <ul>
+    <li>
+      認証付きhealth、models、chatの順序、ready contract、model公開、chat response、x-request-id。
+    </li>
+    <li>not-readyのHTTP 503とqueue timeoutのHTTP 429をTCP connect failureと別分類する。</li>
+    <li>
+      listener停止中はTCP connect
+      failure、同じaddressへのrebind後はhealth成功となるrestart/rebind境界。
+    </li>
+  </ul>
+
+  <h2>過去のLARM到達不能jobの回復batch</h2>
+
+  <p>
+    <code>paused / provider_unavailable_exhausted</code>のうち、保存済みerrorが
+    <code>192.168.0.130:9810</code>を指すjobだけを選び、
+    <code>larm-recovery-20260921-bulk01</code>として再投入した。findingCandidateはさらに
+    <code>No route to host / os error 65</code>を必須条件とした。Queue priority、provider
+    routing、timeout、DB schemaは変更していない。
+  </p>
+
+  <table>
+    <caption>
+      recovery batch投入結果（2026-09-21 JST）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">対象</th>
+        <td>1388件。findingCandidate 74件、episodeDistiller 1314件。</td>
+      </tr>
+      <tr>
+        <th scope="row">投入時刻</th>
+        <td>UTC 2026-09-20 15:15:38〜15:18:37、JST 2026-09-21 00:15:38〜00:18:37。</td>
+      </tr>
+      <tr>
+        <th scope="row">追跡情報</th>
+        <td>
+          jobごとのdurable <code>requeued</code> event、payload内batch
+          ID、後続event、provider lease、現在statusをbatch単位で集計できる。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">sanitized log</th>
+        <td><code>logs/queue-recovery.ndjson</code>。credentialと元error本文は記録しない。</td>
+      </tr>
+      <tr>
+        <th scope="row">LARM実処理観測</th>
+        <td>
+          findingCandidate 3件がLARM leaseを取得。1件はcompleted、2件は
+          <code>structured_output_incomplete finish_reason=length</code>でfailed。TCP connect
+          failureは0件。さらに後続1件が実行中。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">その他target</th>
+        <td>
+          episodeDistiller 1件とfindingCandidate 1件が別local targetで
+          provider_unavailable_retry。batch traceではHTTP 503としてLARMの結果と分離した。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    traceはSQLiteの保存済みeventとleaseだけを読むため、LLM processが常駐していなくても実行できる。
+    mixed timestamp
+    formatは<code>datetime()</code>で正規化し、再投入以前のeventを誤集計しない。
+  </p>
+
+  <pre><code>bun run queue:recover-larm:dry-run -- --limit 5000 --batch-id larm-recovery-preview-20260921
+bun run queue:recover-larm:write -- --limit 1388 --batch-id larm-recovery-20260921-bulk01
+bun run queue:recover-larm:trace -- --batch-id larm-recovery-20260921-bulk01</code></pre>
+
+  <h2>sanitized commandとgate</h2>
+
+  <pre><code>date '+JST %Y-%m-%dT%H:%M:%S%z'
+TZ=UTC date '+UTC %Y-%m-%dT%H:%M:%SZ'
+route -n get 192.168.0.130
+arp -n 192.168.0.130
+ifconfig en0
+lsof -nP -iTCP:9810
+pmset -g log
+/usr/bin/log show --start '2026-09-19 21:30:00' --end '2026-09-20 22:10:00' ...
+
+# HTTP runnerはruntime.secretの対象keyを読み、secretRefならKeychainからmemory内へ解決。
+# Authorization header、credential value、response header以外のsecretは出力しない。
+python3 -u - &lt;&lt;'PY'
+# GET /health -&gt; GET /v1/models -&gt; POST /v1/chat/completions
+# sequential、retryなし、各requestの時刻/status/latency/x-request-idのみ出力
+PY
+
+cargo test -p context-stilld queue_lifecycle::larm_e2e_tests:: -- --nocapture
+cargo test -p context-stilld queue_lifecycle:: -- --nocapture
+cargo test -p context-stilld
+bun run test:unit
+bun run typecheck
+bun run lint
+cargo clippy --workspace --all-targets -- -D warnings</code></pre>
+
+  <table>
+    <caption>
+      実行したtest、typecheck、lint gate
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">gate</th>
+        <th scope="col">結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">targeted E2E</th>
+        <td>3 passed、0 failed。</td>
+      </tr>
+      <tr>
+        <th scope="row">recovery batch targeted test</th>
+        <td>4 passed、0 failed。</td>
+      </tr>
+      <tr>
+        <th scope="row">Queue lifecycle</th>
+        <td>163 passed、0 failed、3 ignored。</td>
+      </tr>
+      <tr>
+        <th scope="row">Rust crate全体</th>
+        <td>510 passed、0 failed、5 ignored。</td>
+      </tr>
+      <tr>
+        <th scope="row">TypeScript unit</th>
+        <td>283 files passed、2 skipped。2318 tests passed、13 skipped。</td>
+      </tr>
+      <tr>
+        <th scope="row">TypeScript typecheck</th>
+        <td>成功。</td>
+      </tr>
+      <tr>
+        <th scope="row">Biome lint</th>
+        <td>951 files、errorなし。</td>
+      </tr>
+      <tr>
+        <th scope="row">Rust clippy</th>
+        <td>成功。外部sqlite-vec C sourceのunused parameter warningのみ。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>変更file</h2>
+
+  <ul>
+    <li><code>crates/context-stilld/src/domains/queue_lifecycle/mod.rs</code>：test moduleを登録。</li>
+    <li>
+      <code>crates/context-stilld/src/domains/queue_lifecycle/larm_e2e_tests.rs</code>：LARM HTTP
+      contract、not-ready、restart/rebind、failure分類のdeterministic testを追加。
+    </li>
+    <li>
+      <code>src/modules/queue/core/larm-provider-recovery.ts</code>：対象限定requeue、batch event、offline
+      trace、sanitized audit logを追加。
+    </li>
+    <li>
+      <code>src/cli/recover-larm-provider-failures.ts</code>：dry-run、明示limit付きwrite、batch trace
+      CLIを追加。
+    </li>
+    <li>
+      <code>test/larm-provider-recovery.bun.ts</code>：対象選別、原子的requeue、offline trace
+      testを追加。
+    </li>
+    <li><code>package.json</code>：recovery CLI scriptを追加。</li>
+    <li><code>spec/docs/larm-e2e-verification-2026-09-21.html</code>：本検証記録。</li>
+  </ul>
+
+  <h2>未解決blocker</h2>
+
+  <ul>
+    <li>
+      recovery batch全件のterminal完了：既存backlogとpriorityを変更していないため、1314件のepisode
+      jobと残りのfinding jobは順次処理中。初期LARM処理3件中2件ではTCP/HTTPではなく
+      <code>finish_reason=length</code>を確認した。
+    </li>
+    <li>
+      100 sequential chatの完遂：live Queue競合下ではclient
+      timeout済みrequestがserver側負荷を増幅するため、10分程度のmaintenance windowが必要。
+    </li>
+    <li>
+      過去code 65の一意な原因：当時のARP/neighbor tableとpacket-level
+      evidenceが保存されていない。次回同時採取が必要。
+    </li>
+    <li>
+      PFの現在状態：非rootでは参照できなかった。Application
+      Firewallはdisabledであり、今回の検証では権限昇格しなかった。
+    </li>
+  </ul>
+</article>

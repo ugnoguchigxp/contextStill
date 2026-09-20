@@ -1,0 +1,603 @@
+<article lang="ja">
+  <h1>UIスクリーンショット一覧</h1>
+  <p>
+    UI見直しの参照画像は assets/screenshots/ に保存する。実画面は撮影日ごとの
+    YYYY-MM-DD/、画像生成によるUI提案は proposals/ に分ける。
+  </p>
+  <h2>現行UI：2026年9月20日撮影</h2>
+  <p>
+    認証後の通常画面13種類と設定7種類、計20画面を撮影した。互換URL /setting/distillation-runtime
+    も含む21ルートを確認し、詳細・新規作成フォーム・表示切替・内部スクロールを合わせて54枚を保存した。全21ルートの初回撮影でAPIのHTTPエラーは検出されなかった。
+  </p>
+  <p>
+    表示サイズは1600×1000、device scale factorは1、ブラウザーはPlaywright
+    Chromium。localhost:39171の開発サーバーを使用し、フロントエンドは作業ツリー（HEAD:
+    <code>760476e2744cd4e6d964b6703da4af85df176bb9</code>）、APIの画面内バージョン表示は
+    <code>context-still 0.1.0 (main@8a54cda)</code
+    >。既存のローカル実データを使用したため、撮影間で時刻・件数が変動する。設定の認証情報はUIのマスク表示のまま記録した。
+  </p>
+  <p>
+    通常はページ全体を保存し、固定高さの内部スクロール領域は追加画像で記録した。Landscapeは縦長の全体画像と先頭の表示領域を別々に保存した。詳細は代表項目のみで、全レコード・フィルターの全組み合わせ・モバイル幅・ログイン失敗状態は対象外。新規作成・編集フォームは表示のみで保存していない。
+  </p>
+  <p>
+    画面の正本は web/src/App.tsx。設定の distillation-runtime は Task Routing
+    と同じ表示になる互換パス。/setting、/settings、/settings/$section
+    はリダイレクト用のため独立画面には数えない。このリポジトリにはdeepStill専用ルートがなく、別アプリのdeepStill自体は今回の撮影対象に含めない。
+  </p>
+  <p>
+    <a href="assets/screenshots/2026-09-20/manifest.json"
+      >撮影マニフェスト（URL・状態・日時・画像サイズ）</a
+    >
+  </p>
+  <h2>全画面の画像</h2>
+  <table>
+    <caption>
+      全21ルートとスクリーンショット
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">画面・ルート</th>
+        <th scope="col">画像</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>/</code></td>
+        <td><a href="assets/screenshots/2026-09-20/overview.png">overview.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/sources</code></td>
+        <td><a href="assets/screenshots/2026-09-20/sources.png">sources.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/vibe-memory</code></td>
+        <td><a href="assets/screenshots/2026-09-20/vibe-memory.png">vibe-memory.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/episodes</code></td>
+        <td><a href="assets/screenshots/2026-09-20/episodes.png">episodes.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/candidates</code></td>
+        <td><a href="assets/screenshots/2026-09-20/candidates.png">candidates.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/queue</code></td>
+        <td><a href="assets/screenshots/2026-09-20/queue.png">queue.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/knowledge</code></td>
+        <td><a href="assets/screenshots/2026-09-20/knowledge.png">knowledge.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/landscape</code></td>
+        <td><a href="assets/screenshots/2026-09-20/landscape.png">landscape.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/graph</code></td>
+        <td><a href="assets/screenshots/2026-09-20/graph.png">graph.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/compile</code></td>
+        <td><a href="assets/screenshots/2026-09-20/compile.png">compile.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/decision</code></td>
+        <td><a href="assets/screenshots/2026-09-20/decision.png">decision.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/audit</code></td>
+        <td><a href="assets/screenshots/2026-09-20/audit.png">audit.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/doctor</code></td>
+        <td><a href="assets/screenshots/2026-09-20/doctor.png">doctor.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/setting/general</code></td>
+        <td><a href="assets/screenshots/2026-09-20/setting-general.png">setting-general.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/setting/llmprovider</code></td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-llmprovider.png"
+            >setting-llmprovider.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/llmpool</code></td>
+        <td><a href="assets/screenshots/2026-09-20/setting-llmpool.png">setting-llmpool.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/setting/taskrouting</code></td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-taskrouting.png"
+            >setting-taskrouting.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/search</code></td>
+        <td><a href="assets/screenshots/2026-09-20/setting-search.png">setting-search.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/setting/embedding</code></td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-embedding.png">setting-embedding.png</a>
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/distillation-runtime</code></td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-distillation-runtime.png"
+            >setting-distillation-runtime.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/advanced</code></td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-advanced.png">setting-advanced.png</a>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>詳細・表示切替・下部の画像</h2>
+  <table>
+    <caption>
+      主要な画面状態とスクロール位置
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ルート</th>
+        <th scope="col">状態</th>
+        <th scope="col">画像</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>/</code></td>
+        <td>内部スクロール領域1、位置757px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/overview-scroll-1-1.png"
+            >overview-scroll-1-1.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/</code></td>
+        <td>内部スクロール領域1、位置1515px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/overview-scroll-1-2.png"
+            >overview-scroll-1-2.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/</code></td>
+        <td>内部スクロール領域1、位置1620px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/overview-scroll-1-3.png"
+            >overview-scroll-1-3.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/knowledge</code></td>
+        <td>先頭項目の詳細</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/knowledge-detail.png">knowledge-detail.png</a>
+        </td>
+      </tr>
+      <tr>
+        <td><code>/knowledge</code></td>
+        <td>内部スクロール領域2、位置471px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/knowledge-detail-scroll-2-1.png"
+            >knowledge-detail-scroll-2-1.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/knowledge</code></td>
+        <td>新規作成フォーム（未保存）</td>
+        <td><a href="assets/screenshots/2026-09-20/knowledge-new.png">knowledge-new.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/episodes</code></td>
+        <td>先頭項目の詳細</td>
+        <td><a href="assets/screenshots/2026-09-20/episodes-detail.png">episodes-detail.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/episodes</code></td>
+        <td>内部スクロール領域2、位置195px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/episodes-detail-scroll-2-1.png"
+            >episodes-detail-scroll-2-1.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/episodes</code></td>
+        <td>新規作成フォーム（未保存）</td>
+        <td><a href="assets/screenshots/2026-09-20/episodes-new.png">episodes-new.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/candidates</code></td>
+        <td>先頭項目の詳細</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/candidates-detail.png">candidates-detail.png</a>
+        </td>
+      </tr>
+      <tr>
+        <td><code>/sources</code></td>
+        <td>画面プレビュー</td>
+        <td><a href="assets/screenshots/2026-09-20/sources-preview.png">sources-preview.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/compile</code></td>
+        <td>先頭の実行履歴</td>
+        <td><a href="assets/screenshots/2026-09-20/compile-detail.png">compile-detail.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/compile</code></td>
+        <td>内部スクロール領域1、位置5754px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/compile-detail-scroll-1-1.png"
+            >compile-detail-scroll-1-1.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/decision</code></td>
+        <td>先頭の判断履歴</td>
+        <td><a href="assets/screenshots/2026-09-20/decision-detail.png">decision-detail.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/decision</code></td>
+        <td>内部スクロール領域1、位置3277px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/decision-detail-scroll-1-1.png"
+            >decision-detail-scroll-1-1.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/graph</code></td>
+        <td>Graph semantic</td>
+        <td><a href="assets/screenshots/2026-09-20/graph-semantic.png">graph-semantic.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/graph</code></td>
+        <td>Graph community</td>
+        <td><a href="assets/screenshots/2026-09-20/graph-community.png">graph-community.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/graph</code></td>
+        <td>Graph evidence</td>
+        <td><a href="assets/screenshots/2026-09-20/graph-evidence.png">graph-evidence.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/setting/llmprovider</code></td>
+        <td>内部スクロール領域1、位置757px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-llmprovider-scroll-1-1.png"
+            >setting-llmprovider-scroll-1-1.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/llmprovider</code></td>
+        <td>内部スクロール領域1、位置1515px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-llmprovider-scroll-1-2.png"
+            >setting-llmprovider-scroll-1-2.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/llmprovider</code></td>
+        <td>内部スクロール領域1、位置2272px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-llmprovider-scroll-1-3.png"
+            >setting-llmprovider-scroll-1-3.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/llmprovider</code></td>
+        <td>内部スクロール領域1、位置3029px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-llmprovider-scroll-1-4.png"
+            >setting-llmprovider-scroll-1-4.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/llmprovider</code></td>
+        <td>内部スクロール領域1、位置3055px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-llmprovider-scroll-1-5.png"
+            >setting-llmprovider-scroll-1-5.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/llmpool</code></td>
+        <td>内部スクロール領域1、位置603px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-llmpool-scroll-1-1.png"
+            >setting-llmpool-scroll-1-1.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/taskrouting</code></td>
+        <td>内部スクロール領域1、位置757px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-taskrouting-scroll-1-1.png"
+            >setting-taskrouting-scroll-1-1.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/taskrouting</code></td>
+        <td>内部スクロール領域1、位置1515px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-taskrouting-scroll-1-2.png"
+            >setting-taskrouting-scroll-1-2.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/taskrouting</code></td>
+        <td>内部スクロール領域1、位置2272px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-taskrouting-scroll-1-3.png"
+            >setting-taskrouting-scroll-1-3.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/setting/taskrouting</code></td>
+        <td>内部スクロール領域1、位置3015px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/setting-taskrouting-scroll-1-4.png"
+            >setting-taskrouting-scroll-1-4.png</a
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>/doctor</code></td>
+        <td>内部スクロール領域1、位置543px</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/doctor-scroll-1-1.png">doctor-scroll-1-1.png</a>
+        </td>
+      </tr>
+      <tr>
+        <td><code>/landscape</code></td>
+        <td>先頭の表示領域（1600×1000）</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/landscape-viewport.png">landscape-viewport.png</a>
+        </td>
+      </tr>
+      <tr>
+        <td><code>/sources</code></td>
+        <td>既存文書を選択した画面（未保存）</td>
+        <td>
+          <a href="assets/screenshots/2026-09-20/sources-document.png">sources-document.png</a>
+        </td>
+      </tr>
+      <tr>
+        <td><code>/sources</code></td>
+        <td>既存文書の閲覧表示</td>
+        <td><a href="assets/screenshots/2026-09-20/sources-view.png">sources-view.png</a></td>
+      </tr>
+      <tr>
+        <td><code>/compile</code></td>
+        <td>履歴のランキング情報</td>
+        <td><a href="assets/screenshots/2026-09-20/compile-ranking.png">compile-ranking.png</a></td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>画面プレビュー</h2>
+  <details>
+    <summary>overview</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/overview.png" alt="overviewの現行画面" />
+      <figcaption>/：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>sources</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/sources.png" alt="sourcesの現行画面" />
+      <figcaption>/sources：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>vibe-memory</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/vibe-memory.png" alt="vibe-memoryの現行画面" />
+      <figcaption>/vibe-memory：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>episodes</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/episodes.png" alt="episodesの現行画面" />
+      <figcaption>/episodes：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>candidates</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/candidates.png" alt="candidatesの現行画面" />
+      <figcaption>/candidates：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>queue</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/queue.png" alt="queueの現行画面" />
+      <figcaption>/queue：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>knowledge</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/knowledge.png" alt="knowledgeの現行画面" />
+      <figcaption>/knowledge：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>landscape</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/landscape-viewport.png" alt="landscapeの現行画面" />
+      <figcaption>/landscape：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>graph</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/graph.png" alt="graphの現行画面" />
+      <figcaption>/graph：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>compile</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/compile.png" alt="compileの現行画面" />
+      <figcaption>/compile：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>decision</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/decision.png" alt="decisionの現行画面" />
+      <figcaption>/decision：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>audit</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/audit.png" alt="auditの現行画面" />
+      <figcaption>/audit：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>doctor</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/doctor.png" alt="doctorの現行画面" />
+      <figcaption>/doctor：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>setting-general</summary>
+    <figure>
+      <img
+        src="assets/screenshots/2026-09-20/setting-general.png"
+        alt="setting-generalの現行画面"
+      />
+      <figcaption>/setting/general：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>setting-llmprovider</summary>
+    <figure>
+      <img
+        src="assets/screenshots/2026-09-20/setting-llmprovider.png"
+        alt="setting-llmproviderの現行画面"
+      />
+      <figcaption>/setting/llmprovider：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>setting-llmpool</summary>
+    <figure>
+      <img
+        src="assets/screenshots/2026-09-20/setting-llmpool.png"
+        alt="setting-llmpoolの現行画面"
+      />
+      <figcaption>/setting/llmpool：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>setting-taskrouting</summary>
+    <figure>
+      <img
+        src="assets/screenshots/2026-09-20/setting-taskrouting.png"
+        alt="setting-taskroutingの現行画面"
+      />
+      <figcaption>/setting/taskrouting：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>setting-search</summary>
+    <figure>
+      <img src="assets/screenshots/2026-09-20/setting-search.png" alt="setting-searchの現行画面" />
+      <figcaption>/setting/search：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>setting-embedding</summary>
+    <figure>
+      <img
+        src="assets/screenshots/2026-09-20/setting-embedding.png"
+        alt="setting-embeddingの現行画面"
+      />
+      <figcaption>/setting/embedding：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>setting-distillation-runtime</summary>
+    <figure>
+      <img
+        src="assets/screenshots/2026-09-20/setting-distillation-runtime.png"
+        alt="setting-distillation-runtimeの現行画面"
+      />
+      <figcaption>/setting/distillation-runtime：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <details>
+    <summary>setting-advanced</summary>
+    <figure>
+      <img
+        src="assets/screenshots/2026-09-20/setting-advanced.png"
+        alt="setting-advancedの現行画面"
+      />
+      <figcaption>/setting/advanced：2026年9月20日の表示</figcaption>
+    </figure>
+  </details>
+  <h2>旧UI：legacy</h2>
+  <p>
+    artifacts/
+    から移動した既存5画像。製品名はmemory-routerで、撮影日時と対応コミットは未確認。Overviewには2026年5月28日の表示がある。現行UIとの比較用に保持する。
+  </p>
+  <ul>
+    <li>
+      <a href="assets/screenshots/legacy/overview.webp">overview.webp</a
+      >（旧配置：artifacts/overview.webp）
+    </li>
+    <li>
+      <a href="assets/screenshots/legacy/knowledge.webp">knowledge.webp</a
+      >（旧配置：artifacts/knowledge.webp）
+    </li>
+    <li>
+      <a href="assets/screenshots/legacy/compile.webp">compile.webp</a
+      >（旧配置：artifacts/compile.webp）
+    </li>
+    <li>
+      <a href="assets/screenshots/legacy/graph.webp">graph.webp</a>（旧配置：artifacts/graph.webp）
+    </li>
+    <li>
+      <a href="assets/screenshots/legacy/queue.webp">queue.webp</a>（旧配置：artifacts/queue.webp）
+    </li>
+  </ul>
+  <h2>今後の追加</h2>
+  <p>
+    ファイル名は画面名を小文字の英語で表し、必要に応じて状態を付ける。撮影日時、ルート、対応コミット、表示サイズ、データの種類をマニフェストと本文に記録する。UI提案の生成画像は実画面と混ぜず
+    proposals/ に保存する。
+  </p>
+</article>

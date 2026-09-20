@@ -50,10 +50,6 @@ pub(crate) fn handle_native_dispatch(
                 "context_compile" => Some(native_handlers::context_compile(params, context)),
                 "doctor" => Some(native_handlers::doctor(context)),
                 "compile_eval" => Some(native_handlers::compile_eval(params, context)),
-                "context_decision" => Some(native_handlers::context_decision(params, context)),
-                "context_decision_feedback" => {
-                    Some(native_handlers::context_decision_feedback(params, context))
-                }
                 "search_knowledge" => Some(native_handlers::search_knowledge(params, context)),
                 "register_candidates" => {
                     Some(native_handlers::register_candidates(params, context))
@@ -79,8 +75,6 @@ pub(crate) fn tool_owner_inventory() -> Value {
             "initial_instructions",
             "context_compile",
             "compile_eval",
-            "context_decision",
-            "context_decision_feedback",
             "search_knowledge",
             "register_candidates",
             "search_memory",
@@ -92,7 +86,7 @@ pub(crate) fn tool_owner_inventory() -> Value {
         "tsSidecar": [],
         "disabled": [],
         "counts": {
-            "rustNative": 12,
+            "rustNative": 10,
             "tsSidecar": 0,
             "disabled": 0
         }
@@ -139,32 +133,6 @@ fn exposed_tools() -> Value {
                 "specificity":{"type":"integer","minimum":0,"maximum":100,"description":"抽象すぎなかったか (0-100)"}
             },
             "required":["outcome","body","relevance","actionability","coverage","clarity","specificity"]
-        })),
-        tool("context_decision", "Use as an autonomous GO/NO-GO pre-question gate before you would otherwise ask the user when blocked, before PR creation, after failed tests/review, or when unfinished Todo/status remains. Returns a decision, not options. Estimate operational impact from metadata and Knowledge evidence; do not ask the user by default. Treat reject as a stop condition, but reserve it for obvious blocking danger or directly forbidden actions; prefer execute or revise_and_execute when safe autonomous progress remains possible. Escalate only when autonomous progress is not possible.", json!({
-            "type":"object",
-            "properties":{
-                "decisionPoint":{"type":"string"},
-                "retrievalHints":{"type":"object","properties":{
-                    "technologies":{"type":"array","items":{"type":"string"}},
-                    "changeTypes":{"type":"array","items":{"type":"string"}},
-                    "domains":{"type":"array","items":{"type":"string"}}
-                }},
-                "sessionId":{"type":"string"},
-                "metadata":{"type":"object"}
-            },
-            "required":["decisionPoint"]
-        })),
-        tool("context_decision_feedback", "Record Good/Bad human feedback or AI/system outcome feedback for a context_decision decisionId.", json!({
-            "type":"object",
-            "properties":{
-                "decisionId":{"type":"string"},
-                "source":{"type":"string","enum":["human","ai","system"]},
-                "value":{"type":"string","enum":["good","bad"]},
-                "outcome":{"type":"string","enum":["success","failed","discarded_pr","user_overrode","regression_found","still_unknown"]},
-                "reason":{"type":"string"},
-                "metadata":{"type":"object"}
-            },
-            "required":["decisionId","source"]
         })),
         tool("search_knowledge", "Inspect raw knowledge candidates with scores and source refs. Prefer context_compile for normal workflows.", json!({
             "type":"object",
@@ -301,18 +269,12 @@ const INITIAL_INSTRUCTIONS_JA: &str = concat!(
     "- まず `context_compile` を呼び、作業の主導線とする。`goal` を必ず渡し、適切な `changeTypes` / `technologies` を指定する。\n",
     "- local workspace taskでは、callerがcaptureしたabsolute workspace rootを`repoPath`として`context_compile`へ渡す。`repoKey`をpath/nameから生成しない。未指定時はglobal-onlyとして記録される。\n",
     "- `goal` は達成したい状態を1-3文で具体的に書き、設計書パスや `design.md` などの文書参照は含めない。\n",
-    "- 次の応答がユーザーへの確認質問になりそうで、かつ自律的に続行できる余地がある場合は、質問する前に `context_decision` を pre-question gate として呼ぶ。\n",
-    "- ブロッカー由来の判断が必要な場合、ユーザーに質問する前に `context_decision` を呼ぶ。例: このまま進めるか、修正して進めるか、reject/rollback/discard/escalate すべきか、PR作成前の判断、危険操作や未完了Todoの扱い。\n",
-    "- `context_decision` が `reject` を返した場合は、その判断を停止条件として扱い、実装・変更・PR作成などの対象アクションを継続しない。必要な報告や確認待ちに切り替える。\n",
-    "- `context_decision` に従った作業が完了し、結果が分かったら `context_decision_feedback` を保存する。成功/失敗/ユーザー上書き/回帰検出などの outcome は、完了直後または pre-commit 時点で分かる範囲で記録する。\n",
     "- ユーザーに情報を提示する際、それが本当に有用であるかを厳格に評価し、不確実な情報やノイズでコンテキストを圧迫しない。\n",
     "- 完了報告の前に、`context_compile` の実行回数と `compile_eval` の実行回数を自己申告する。また、各 runId ごとに `compile_eval` を1件以上保存する。ただし、`context_compile` が `No Content` を返した runId には保存しない。\n\n",
     "## 主要MCPツール\n",
     "- `initial_instructions`: プロジェクト作業開始時に一度だけ、運用ルールと主要フローを読む。\n",
     "- `context_compile`: 作業前の最小コンテキスト生成（主導線）。\n",
     "- `compile_eval`: `No Content` 以外の `context_compile` の作業後評価を保存。\n",
-    "- `context_decision`: ブロッカー由来の判断が必要な時に、ユーザーへ質問する前の実行/修正/拒否/巻き戻し等を判断。`reject` は停止条件として扱う。\n",
-    "- `context_decision_feedback`: `context_decision` 後の作業結果を Good/Bad または system/AI outcome として保存。\n",
     "\n",
     "その他の公開ツールは補助機能。通常フローでは主要ツールを優先し、補助ツールは明確に必要な場合だけ使う。"
 );
@@ -323,18 +285,12 @@ const INITIAL_INSTRUCTIONS_EN: &str = concat!(
     "- First call `context_compile` as the main baseline of the task. Always provide `goal`, and specify appropriate `changeTypes` / `technologies`.\n",
     "- For local workspace tasks, pass the caller-captured absolute workspace root as `repoPath` to `context_compile`. Never derive `repoKey` from a path/name. Missing identity is recorded as global-only.\n",
     "- Keep the `goal` focused on 1-3 specific sentences describing the desired outcome. Do not include path references like `design.md` or implementation plans.\n",
-    "- If the next response would ask the user for confirmation and autonomous progress may still be possible, call `context_decision` as a pre-question gate before asking.\n",
-    "- When a blocker-derived judgment is needed, call `context_decision` before asking the user. Examples: whether to proceed, revise and proceed, reject, rollback, discard, escalate, create a PR, handle a risky operation, or handle unfinished Todo/status.\n",
-    "- If `context_decision` returns `reject`, treat it as a stop condition and do not continue the target action, such as implementation, file changes, or PR creation. Switch to reporting or waiting for confirmation.\n",
-    "- After work based on a `context_decision` is complete and the outcome is known, record `context_decision_feedback`. Record success, failure, user override, regression, or still-unknown outcome as soon as it is known, including at pre-commit time when appropriate.\n",
     "- Strictly evaluate if the presented information to the user is truly useful and specific to avoid context pollution.\n",
     "- Before announcing completion, self-report the count of `context_compile` and `compile_eval` executions. Record at least one `compile_eval` for each runId in the session, except when `context_compile` returned `No Content`.\n\n",
     "## Primary MCP Tools\n",
     "- `initial_instructions`: Read operating rules and the primary flow once at the start of project work.\n",
     "- `context_compile`: Generates the baseline minimal context before working.\n",
     "- `compile_eval`: Saves post-task evaluation metrics for `context_compile` runs that returned content.\n",
-    "- `context_decision`: Resolves blocker-derived proceed/revise/reject/rollback/discard/escalate judgments before asking the user. Treat `reject` as a stop condition.\n",
-    "- `context_decision_feedback`: Records Good/Bad or system/AI outcome feedback after work based on a decision completes.\n",
     "\n",
     "Other exposed tools are supplemental. Prefer the primary tools in normal workflows and use supplemental tools only when clearly needed."
 );

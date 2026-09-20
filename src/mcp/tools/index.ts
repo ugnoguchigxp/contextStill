@@ -2,7 +2,6 @@ import { readProjectEnv } from "../../project-identity.js";
 import type { ToolEntry } from "../registry.js";
 import { compileEvalTool } from "./compile-eval.tool.js";
 import { contextCompileTool } from "./context-compile.tool.js";
-import { contextDecisionFeedbackTool, contextDecisionTool } from "./context-decision.tool.js";
 import { fetchEpisodeTool, searchEpisodesTool } from "./episode.tool.js";
 import {
   listKnowledgeTool,
@@ -28,8 +27,6 @@ function isMcpV2Enabled(): boolean {
 const v1ToolEntries: ToolEntry[] = [
   initialInstructionsTool,
   contextCompileTool,
-  contextDecisionTool,
-  contextDecisionFeedbackTool,
   searchKnowledgeTool,
   registerCandidatesTool,
   listKnowledgeTool,
@@ -44,8 +41,6 @@ const v2ToolEntries: ToolEntry[] = [
   initialInstructionsTool,
   contextCompileTool,
   compileEvalTool,
-  contextDecisionTool,
-  contextDecisionFeedbackTool,
   searchKnowledgeTool,
   registerCandidatesTool,
   searchMemoryTool,

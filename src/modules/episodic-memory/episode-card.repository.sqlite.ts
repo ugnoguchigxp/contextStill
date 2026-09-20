@@ -626,12 +626,12 @@ async function queryEpisodeCardsSqlite(
 
 export async function incrementEpisodeUsageCountsSqlite(params: {
   episodeIds: string[];
-  usageKind: "compile" | "decision";
+  usageKind: "compile";
 }): Promise<void> {
   const episodeIds = [...new Set(params.episodeIds.map((id) => id.trim()).filter(Boolean))];
   if (episodeIds.length === 0) return;
   const sqlite = await getSqliteCoreDatabase();
-  const column = params.usageKind === "compile" ? "compile_use_count" : "decision_use_count";
+  const column = "compile_use_count";
   const placeholders = episodeIds.map(() => "?").join(", ");
   sqlite.db
     .query(

@@ -35,7 +35,6 @@ if [ "$MODE" = "pre-commit" ]; then
   append_hook_log "pre-commit reminder emitted"
   echo "[context-still] pre-commit reminder"
   echo "  if this task used context_compile and it returned content, compile_eval is required before final completion report"
-  echo "  if this task followed context_decision, record context_decision_feedback when outcome is known"
   echo "  if compile_eval is needed, ask user first: Fill compile_eval now? (Yes/No)"
   exit 0
 fi
@@ -148,11 +147,6 @@ Evidence:
   - このタスクでの \`compile_eval\` の実行回数
   - \`No Content\` 以外の runId で評価回数が不足している場合は、先に不足分の \`compile_eval\` を追加実行してから完了報告を行ってください
 
-【重要】\`context_decision\` を利用した判断に従って作業した場合は、作業結果が分かった時点で MCP ツール \`context_decision_feedback\` を保存してください。pre-commit 時点で検証結果が分かっている場合は、そのタイミングで記録してください：
-- 成功した場合: \`source\` は \`system\` または \`ai\`、\`outcome\` は \`success\`
-- 失敗、回帰検出、ユーザー上書き、PR破棄などの場合: \`outcome\` は \`failed\` / \`regression_found\` / \`user_overrode\` / \`discarded_pr\`
-- まだ結果不明の場合: \`outcome\` は \`still_unknown\`
-- \`context_decision\` の戻り値に含まれる \`decisionId\` または \`feedbackHandle\` を使って対象判断へ紐付けてください
 
 候補登録の前に、\`register_candidates\` のための選出準備を行ってください：
 - 再利用可能な手順やルールのみを含めること
@@ -189,6 +183,6 @@ if [ "${CONTEXT_STILL_CANDIDATE_HOOK_QUIET:-0}" != "1" ]; then
 [context-still] post-commit candidate reminder
   commit: $SHORT_SHA $SUBJECT
   prompt: $LATEST_FILE
-  action: ask the coding agent to review the commit, call register_candidates for durable lessons, call compile_eval for context_compile quality, and call context_decision_feedback for completed decisions
+  action: ask the coding agent to review the commit, call register_candidates for durable lessons, call compile_eval for context_compile quality
 EOF
 fi

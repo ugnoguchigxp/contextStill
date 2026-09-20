@@ -229,9 +229,6 @@ export const overviewProductValueMetricSchema = z.object({
   metric: z.enum([
     "compile_adoption_rate",
     "compile_reuse_rate",
-    "decision_success_rate",
-    "bad_feedback_rate",
-    "prevented_rework_signals",
   ]),
   label: z.string().min(1),
   rate: z.number().min(0).max(1).nullable(),
@@ -249,13 +246,6 @@ export const overviewProductValueStatsSchema = z.object({
     compileEvaluationCount: z.number().int().nonnegative(),
     acceptedCompileEvaluationCount: z.number().int().nonnegative(),
     reusedCompileRunCount: z.number().int().nonnegative(),
-    decisionRunCount: z.number().int().nonnegative(),
-    decisionFeedbackCount: z.number().int().nonnegative(),
-    knownDecisionFeedbackCount: z.number().int().nonnegative(),
-    successfulDecisionFeedbackCount: z.number().int().nonnegative(),
-    badDecisionFeedbackCount: z.number().int().nonnegative(),
-    preventedReworkSignalCount: z.number().int().nonnegative(),
-    appliedFeedbackEffectCount: z.number().int().nonnegative(),
   }),
 });
 

@@ -13,8 +13,6 @@ owner = "platform"
 [keyspaces.contextCompiler]
 owner = "context-compiler"
 
-[keyspaces.contextDecision]
-owner = "context-decision"
 source_locale = "en-US"
 
 [keyspaces.provider]

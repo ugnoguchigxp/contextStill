@@ -167,9 +167,7 @@ og_image_alt: 知識蒸留をテーマにした contextStill のキービジュ�
           <span>After</span>
           <h3>作業前に、必要な文脈だけが届く</h3>
           <ul>
-            <li><span class="mono">context_compile</span> が task-specific context pack を返す</li>
-            <li><span class="mono">context_decision</span> がブロッカー判断を根拠付きで支える</li>
-            <li><span class="mono">compile_eval</span> と candidate 登録で次の作業に学びが戻る</li>
+            <li><span class="mono">context_compile</span> が task-specific context pack を返す</li>            <li><span class="mono">compile_eval</span> と candidate 登録で次の作業に学びが戻る</li>
           </ul>
         </article>
       </div>

@@ -32,7 +32,6 @@ import type { DoctorOptions, ResolvedDoctorOptions } from "./doctor.types.js";
 import { nowIso } from "./doctor.utils.js";
 import { inspectAgentLogSync } from "./inspectors/agent-log-sync.inspector.js";
 import { inspectCompileRuns } from "./inspectors/compile.inspector.js";
-import { inspectContextDecision } from "./inspectors/context-decision.inspector.js";
 import { type DatabaseInspection, inspectDatabase } from "./inspectors/database.inspector.js";
 import { inspectEmbedding } from "./inspectors/embedding.inspector.js";
 import { inspectMcpSurface } from "./inspectors/mcp.inspector.js";
@@ -115,26 +114,6 @@ function buildMcpReport(
           ]
         : []),
     ],
-  };
-}
-
-function createUnavailableContextDecisionReport(): DoctorReport["contextDecision"] {
-  return {
-    available: false,
-    totalDecisions: 0,
-    decisionCounts: {},
-    escalateRate: 0,
-    escalateTargetRate: 0.1,
-    goodFeedbackCount: 0,
-    badFeedbackCount: 0,
-    prDiscardFeedbackCount: 0,
-    autoAppliedEffectsCount: 0,
-    queuedEffectsCount: 0,
-    degradedDecisionsCount: 0,
-    requiredZeroEvidenceCount: 0,
-    lowRelevanceSelectedEvidenceCount: 0,
-    ghAvailable: false,
-    nextActions: ["Restore database connectivity before inspecting context_decision."],
   };
 }
 
@@ -345,7 +324,6 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       hitl: database.hitl,
       knowledgeLifecycle: database.knowledgeLifecycle,
       mcp,
-      contextDecision: createUnavailableContextDecisionReport(),
       agentLogSync,
       vibeDistillation,
       sourceDistillation,
@@ -371,10 +349,6 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     compileRunsTableAvailable: hasTable(database, "context_compile_runs"),
   });
   reasons.push(...compile.reasons);
-  const contextDecision = await inspectContextDecision({
-    tableAvailable: hasTable(database, "context_decision_runs"),
-  });
-  reasons.push(...contextDecision.reasons);
   const canQueryOperationalDb = canQueryOperationalTables();
   const canQueryAgentLogSyncDb = canQueryAgentLogSyncTables();
 
@@ -433,7 +407,6 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     hitl: database.hitl,
     knowledgeLifecycle: database.knowledgeLifecycle,
     mcp: mcpReport,
-    contextDecision: contextDecision.report,
     agentLogSync,
     vibeDistillation,
     sourceDistillation,

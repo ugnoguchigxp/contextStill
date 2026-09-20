@@ -514,9 +514,6 @@ export type OverviewDashboard = {
       metric:
         | "compile_adoption_rate"
         | "compile_reuse_rate"
-        | "decision_success_rate"
-        | "bad_feedback_rate"
-        | "prevented_rework_signals";
       label: string;
       rate: number | null;
       count: number;
@@ -529,13 +526,6 @@ export type OverviewDashboard = {
       compileEvaluationCount: number;
       acceptedCompileEvaluationCount: number;
       reusedCompileRunCount: number;
-      decisionRunCount: number;
-      decisionFeedbackCount: number;
-      knownDecisionFeedbackCount: number;
-      successfulDecisionFeedbackCount: number;
-      badDecisionFeedbackCount: number;
-      preventedReworkSignalCount: number;
-      appliedFeedbackEffectCount: number;
     };
   };
   landscape:

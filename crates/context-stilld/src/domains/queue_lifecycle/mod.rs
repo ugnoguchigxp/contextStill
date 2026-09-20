@@ -11,6 +11,8 @@ mod executor;
 mod finalize_executor;
 mod finding_executor;
 mod inspect;
+#[cfg(test)]
+mod larm_e2e_tests;
 mod maintenance;
 mod provider_execution;
 mod provider_lease;

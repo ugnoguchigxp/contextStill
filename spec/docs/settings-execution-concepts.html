@@ -1,0 +1,244 @@
+<article lang="ja">
+  <h1>設定の再整理：仕事の責務・実行先・Pool・LARM</h1>
+  <p>後続のLARM統合指示により、共有connectionのcapacity・context window・admissionはLARM公開応答を正本とする。以下の3セッション案は固定値で実装しない。公開契約の不足と最新sourceとの差分は<a href="larm-shared-connection-contract-audit.html">LARM共有connectionの契約調査</a>を参照。agent sessionの終了と共有Chat Completions requestの完了は別の管理単位である。</p>
+  <p>
+    2026年9月21日。現行作業ツリーの静的調査に基づく提案。先行するUI画像案はすべて不採用。本書は新たな画面デザインや実装承認を意味しない。製品コード、実環境の設定、接続情報は変更していない。
+  </p>
+  <section id="conclusion">
+    <h2>結論</h2>
+    <p>
+      設定の中心を「Providerを登録する」から「仕事ごとに使える実行先と待ち方を決める」へ移す。接続、実行先、Pool、仕事の割り当てを別の概念として扱う。LocalとAPIは対立する分類ではない。ローカル推論もHTTP
+      APIを使い、LARMは推論モデルそのものではなく実行先を動的に確保する接続方式である。
+    </p>
+    <p>
+      現行Poolは、同じ仕事を処理できる候補の集合と同時実行制御を表す。各モデルへの異なる責務の割り振りはtaskRoutingで行う。「Aが生成しBが検証する」という段階分担をPool内の順序に持たせない。Pool指定ではメンバー全体が選択対象となるため、特定モデルを期待する仕事に異質なメンバーを混ぜない。
+    </p>
+  </section>
+  <section id="findings">
+    <h2>現行実装で確認した不整合</h2>
+    <ol>
+      <li>
+        Findingはsourceとvibe、CoveringはsourceSupport・externalEvidence・mcpEvidenceを型上は分離している。しかし設定画面は各グループを一括で上書きする。責務別に割り当てた設定を画面から維持できない。根拠：web/src/modules/admin/components/settings/task-routing-settings-panel.tsx:59、112。
+      </li>
+      <li>
+        CompileのRouteEditorは静的Poolを選択肢に残すが、agenticCompileの型と更新処理にはproviderPoolIdがない。選択内容が保持されない経路がある。根拠：settings-controls.tsx:59、task-routing-settings-panel.tsx:184、src/modules/settings/settings.types.ts:276。保存・再読込までの再現試験は未実施。
+      </li>
+      <li>
+        LARMメンバーはPoolの型に存在するが、通常のRust実行器はLARMを一つでも含むPoolを丸ごと除外する。動的実行計画は直接LARMを指定したrouteから作られ、Finding・Episode・Landscapeの計画を組み立てる。型に書けることを全タスクでの対応保証にしてはいけない。根拠：crates/context-stilld/src/domains/queue_lifecycle/executor.rs:1936、dynamic_provider.rs:400、834。全呼び出し経路の実環境検証は未実施。
+      </li>
+      <li>
+        Pool編集UIはLocal LLMと固定のCodex
+        Sparkを主に扱う一方、型はAzure・OpenAI・Bedrock・LARMも表現する。型、編集可能な項目、実行器の対応範囲が一致していない。根拠：web/src/modules/admin/components/settings/local-llm-pools.tsx、src/modules/settings/settings.types.ts。
+      </li>
+      <li>
+        実行先プレビューはproviderPoolIdの一致だけで保存済みeffectiveTargetsを再利用する。直接接続同士では双方undefinedとなり、編集中の実行先と古い表示が食い違い得る。根拠：settings-controls.tsx:79。設定候補と実際に選ばれた実行先も分けて表示する必要がある。
+      </li>
+    </ol>
+    <p>
+      Poolの選択は、使用中・クールダウン中などの候補を除外した後のLRUとジョブの優先度・待機時間による。使用中target
+      IDはPoolをまたいで除外する。設定の順番を役割や優先順位と解釈しない。根拠：provider_lease.rs:16、297、346、executor.rs:2183。
+    </p>
+  </section>
+  <section id="concepts">
+    <h2>整理する4つの概念</h2>
+    <table>
+      <caption>
+        設定の責務とユーザーが決めること
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">概念</th>
+          <th scope="col">決めること</th>
+          <th scope="col">例・境界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">接続</th>
+          <td>どのサービスに、どの方式・認証で接続するか</td>
+          <td>固定HTTP、クラウドサービス、Codex、LARM制御接続。秘密情報はここで管理。</td>
+        </tr>
+        <tr>
+          <th scope="row">実行先</th>
+          <td>その接続で何を使うか</td>
+          <td>
+            固定接続のモデル・deployment、またはLARMのprofile・audience。LARMが払い出すURL・モデル・期限は実行時情報。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Pool</th>
+          <td>同じ仕事を任せられる実行先と同時実行上限</td>
+          <td>
+            用途・入出力条件を満たす候補集合。同じGPUなどの資源共有はメンバー数とは別。現行target
+            ID排他だけで物理資源共有を推定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">仕事の割り当て</th>
+          <td>どの責務に単一実行先またはPoolを使うか</td>
+          <td>抽出、根拠処理、最終化、Compile補助など。待機・代替先への切替条件もここに属する。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      実行先には「実行場所（ローカル／外部／未確認）」「接続方式」「固定／動的」の独立した属性を持たせる案とする。provider名やURLだけからデータの外部送信可否を断定しない。検索APIとEmbeddingは推論LLMのPoolに入れず、別の機能として設定する。現行でもsearchとembeddingは独立した設定である。
+    </p>
+  </section>
+  <section id="execution-limits">
+    <h2>実行制限はPoolから独立させる</h2>
+    <p>
+      ユーザー指定の運用要件として、OpenAI・Anthropic等のクラウドAPIは並列呼び出しを許容し、今回のLocal
+      LLMはProviderごと最大3セッション、Azure
+      OpenAIは同時リクエスト1とする。約10秒のインターバルはセッション上限とは別の制約として扱う。Azure全般の仕様とは扱わず、接続先ごとの運用制約として保存する。Anthropicはここでは将来の設定例であり、現行provider型への対応済みを意味しない。
+    </p>
+    <p>
+      接続・実行先・Pool・仕事への割り当てに加え、「実行制限」を独立した共有設定として設ける。同じGPU、サーバー、Azureの制限対象を共有する実行先は同じ制限グループを参照する。別Poolや直接指定、Compileから呼び出しても同じ上限を適用する。独立したローカル実行資源まで全体で直列化しない。
+    </p>
+    <table>
+      <caption>
+        今回の運用に合わせた実行制限の提案値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">同時利用の上限と単位</th>
+          <th scope="col">通常時の間隔</th>
+          <th scope="col">共有単位</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">OpenAI・Anthropic等</th>
+          <td>複数許可。上限は接続ごとに設定</td>
+          <td>固定待機なしを初期案とする</td>
+          <td>アカウント・プロジェクト等、実際の制限範囲</td>
+        </tr>
+        <tr>
+          <th scope="row">今回のLocal LLM</th>
+          <td>Providerごと最大3セッション</td>
+          <td>約10秒。セッション開始間隔か枠再利用間隔かは未確定</td>
+          <td>同じProviderの全セッション。Pool・Queueをまたいで共有</td>
+        </tr>
+        <tr>
+          <th scope="row">今回のAzure OpenAI</th>
+          <td>1</td>
+          <td>10秒</td>
+          <td>利用環境の制限を共有するdeployment・接続先</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM管理の実行先</th>
+          <td>払い出し側の条件と共有資源制限の双方を満たす</td>
+          <td>利用資源に設定された間隔</td>
+          <td>動的URLではなく安定した資源識別子。LARM側と制御責務を合わせる</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Azureの10秒の起点は未指定のため、「前のリクエスト終了から次の開始まで10秒」を提案上の仮定とする。開始時刻同士を10秒空ける方式とは区別する。例えば処理に20秒かかった場合、次は開始から30秒後以降となる。ストリーミングは終了まで実行中として数える。
+    </p>
+    <p>
+      制御単位は接続方式ごとに区別する。セッション型Local
+      LLMではセッション枠、通常の推論APIではリクエスト枠を管理する。1ジョブ内の複数LLM呼び出し、再試行、fallbackにも適用する。Poolのジョブ同時実行上限は別に残すが、メンバー1つのクラウドPoolでも複数リクエストを扱えるよう、現行の「target使用中なら一律除外」「Pool容量はtarget数以下」という前提の変更が必要になる。
+    </p>
+    <p>
+      現行provider_lease.rsのcooling_provider_targetsはprovider_unavailable_retry後の障害待機であり、正常終了後に毎回10秒空ける制約とは異なる。Finding固有のminIntervalSecondsも全呼び出し経路の制限にはならない。共通のリクエスト送信境界で、共有スロットとnextEligibleAtを原子的に管理する案とする。複数workerでも同時取得させず、実行中か不明なtimeoutやlease失効を安易に空き扱いしない。
+    </p>
+    <p>
+      通常インターバルと障害時backoffは別設定とし、両方の条件を満たすまで送信しない。LARMと直接接続が同じ資源を使う場合、アプリ内だけの制限では外部サービスとの排他は保証できないため、LARMを共通の管理元にするか資源識別と排他を連携させる。
+    </p>
+    <p>
+      UIでは「Poolと同時実行」を「Pool・実行制限」へ改め、Poolの候補選択と共有制限を分けて編集する。実行先の詳細には「Provider
+      A：セッション2/3、解放確認中1」のように実効制約と占有状態を表示する。解放確認中も上限に含める。Azureには「同時リクエスト1／終了後10秒」を表示する。待機理由も「実行枠待ち」「間隔待ち・残り秒数」「LARMの他サービス利用待ち」を区別する。
+    </p>
+    <p>
+      追加検証：別Pool・直接指定・CompileをまたぐProvider単位の最大3セッション、Azureの同時リクエスト1と正常終了後10秒の遵守、1ジョブ内の連続呼び出し、独立資源の並列実行、クラウド単一targetの複数同時実行、失敗・再起動時の制限維持。時間制約は制御可能な時計で検証する。
+    </p>
+  </section>
+  <section id="session-lifecycle">
+    <h2>Local LLMのセッション終了を確認して枠を返す</h2>
+    <p>
+      ユーザー訂正により、Local
+      LLMを一律に同時リクエスト1とした前案は撤回する。Providerごと最大3セッションを扱う。Providerはlocal-llmという種別全体ではなく、セッション枠を共有する実体を識別する。保持中のセッション数と、その内部で走る推論リクエスト数を同一視しない。
+    </p>
+    <p>
+      現行crates/context-stilld/src/shared/agent_session.rs:30では、session作成、turn送信、events受信、releaseの順に処理する。turn.completedで回答を確定し、releaseのHTTP成功を確認して呼び出しを成功にする。turn失敗時もreleaseを試みるが、turnとreleaseの両方が失敗した場合はturn側のエラーだけを返す。今回読んだ関数には、session
+      IDを永続化して解放未確認を再照合する処理はない。サーバー側の最大3枠の実装や終了通知契約はこの調査では未確認。
+    </p>
+    <p>
+      turn.completedはターン完了であり、session終了の証明ではない。release応答が解放完了を保証するならその成功を使い、受付のみならセッション終了イベントまたは状態照会で確認する。実際に提供される契約を確認して選ぶ。LARMのagent-connection
+      release、ジョブlease解放、session
+      releaseはそれぞれ別の資源の終了であり、相互の代用にはしない。
+    </p>
+    <p>
+      提案する枠状態は「予約中→セッション利用中→解放確認中→解放済み」。session ID・Provider
+      ID・担当ジョブ・最終確認時刻を記録し、解放済みになるまで枠を占有する。作成要求のtimeoutではサーバー上の作成有無が不明なので、同じ操作識別子を使った照合を前提とする。終了通知の重複で二重返却しない。通信断、プロセス再起動、release失敗では状態不明を空きにせず、サーバー側の状態を照合する。TTLもサーバーが終了を保証する契約がある場合だけ回収根拠にする。
+    </p>
+    <p>
+      3枠がすべて利用中なら4件目は待機し、1件の終了を確認した時点で1枠だけ返す。設定画面は上限と間隔を扱い、運用状態は利用中・解放確認中・空き枠を表示する。10秒はセッション開始間隔、解放後の枠再利用間隔、セッション内リクエスト間隔を分け、適用対象の確認まではLocal
+      LLMを一律直列化する値を導入しない。
+    </p>
+    <p>
+      追加検証は、3件利用中の4件目待機、turn完了だけでは枠を返さないこと、release成功または終了確認後の1枠返却、release失敗、作成timeout、終了通知重複、再起動後の再照合とする。これらは提案であり実装済みとは扱わない。
+    </p>
+  </section>
+  <section id="settings-structure">
+    <h2>設定は1画面・4区分から始める</h2>
+    <p>
+      新しい画面を増やす前に、設定内の区分を「仕事への割り当て」「実行先と接続」「Poolと同時実行」「検索・Embedding・詳細設定」の4つに整理する。通常は割り当てから入り、接続やPoolは詳細を開いて編集する。
+    </p>
+    <p>
+      割り当て一覧の1行はQueueではなく独立して指定できる責務とする。現行の11ルートとCompile補助の計12行が基準。Findingの2種、Coveringの3種はグループ表示しても個別値を保持する。一括適用は明示操作とし、対象と差分を見せる。各行には目的、実行先またはPool、候補メンバー、対応状況を表示し、使用不能な組合せは選択させない。
+    </p>
+    <p>
+      LARM詳細は固定エンドポイント入力欄の流用をやめ、制御接続・profile・audienceを設定する。状態は接続可否だけでなく「他サービス使用中で待機」「準備中」「利用可能」「更新中」「再試行待ち」を区別する。WaitingActivity等の内部状態は既存managerにあるが、UIへの提供方法は別途実装が必要。状態確認操作によって不用意に実行資源を確保しない。
+    </p>
+    <p>
+      Pool詳細では、メンバー一覧、上限、利用中、待機ジョブ、参照する仕事を優先する。lease回収やagingは詳細へ移す。staleLeaseSecondsはRust側で30〜120秒へ補正されるため、入力値と実効値の違いも解消対象とする。LARMのtoken
+      TTL、リクエストtimeout、Pool leaseは別の期限として扱う。
+    </p>
+  </section>
+  <section id="assignment-example">
+    <h2>責務分担の例</h2>
+    <p>
+      以下は初期設定を自動変更する案ではなく、評価後に選ぶ割り当て例である。ローカルなら低品質、外部APIなら高品質とは決めつけない。
+    </p>
+    <ul>
+      <li>
+        大量の定型抽出：必要な出力契約を満たすローカル実行先のPool。同一仕事を複数候補で分散する。
+      </li>
+      <li>
+        空き時間に進める処理：対応済みの仕事からLARMを直接割り当て、他サービスが稼働中なら待機する。
+      </li>
+      <li>
+        根拠の評価・最終化：対象責務だけ、品質評価で選んだモデルへ割り当てる。外部APIの利用は明示する。
+      </li>
+      <li>
+        対話中のCompile補助：背景処理と異なる応答時間の要件を持つため独立指定を維持する。現行契約のままPoolやLARMを選択させない。
+      </li>
+    </ul>
+    <p>
+      「待つ」「同じPoolの別候補を使う」「外部実行先へ切り替える」は別の操作方針である。特にLARMの使用中は故障ではない。将来の切替方針は、対象エラー・待機期限・外部送信可否を明示する契約として追加する。現行fallbackのprovider配列だけでこれらが保証されるとは扱わない。
+    </p>
+  </section>
+  <section id="migration">
+    <h2>実装する場合の順序と検証</h2>
+    <ol>
+      <li>
+        最初に設定UIの整合性を修正する。責務別の値保持、Compileの非対応候補除外、LARMの対応範囲表示、無効Poolの扱い、編集中プレビューの更新を行う。既存設定を自動で別の実行先へ移さない。
+      </li>
+      <li>
+        既存schemaを維持して4区分へ整理する。接続・実行先の表示を分け、保存前に「どの仕事が、どの候補へ変わるか」の差分を示す。
+      </li>
+      <li>
+        LARM混在Pool、実行先単位のfallback、物理資源ごとの同時実行制御は別の契約変更として検討する。UIだけで対応扱いにしない。未対応の保存済み設定は値を保持し、理由を示して修正できるようにする。
+      </li>
+    </ol>
+    <p>
+      検証は、責務別設定の保存・再読込、Compileの選択肢とschema一致、直接接続変更時の候補表示更新、LARM稼働中の未claim待機、混在Poolの拒否または明確な非対応診断、同じtargetを参照する複数Poolの排他、Pool全員を候補とする選択を対象にする。将来の外部切替を実装する場合は、未許可時に送信されないことも検証する。
+    </p>
+    <p>
+      今回行ったのはソースと既存テスト定義の調査、およびSpec
+      HTML検証。推論サービスへの呼び出しや実ジョブでの動作試験は行っていない。性能・品質・費用の最適値は未計測であり、モデル別の固定推奨値は提示しない。
+    </p>
+  </section>
+</article>

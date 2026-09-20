@@ -1,0 +1,477 @@
+<article lang="ja">
+  <h1>Decision全面撤去の作業手順書</h1>
+  <p>
+    作成日：2026-09-21。対象：ContextStill。状態：実装前。Terraが本書のカードを順番に実行できるよう、対象、変更内容、保持条件、検証、完了条件を固定する。今回の依頼は手順書の作成であり、この文書の追加時点では機能を削除していない。
+  </p>
+  <h2>1. 決定事項</h2>
+  <p>
+    ユーザーはDecisionの全面撤去を希望している。context_decisionとcontext_decision_feedbackの公開・実行・保存・表示・評価・固有学習・運用案内を削除する。非推奨のまま実行可能なAPIや、別名の判断サービスは残さない。最終的な実行判断はSAAA、Codex等の実行主体が担う。SAAAへのDecision移植は行わない。
+  </p>
+  <p>
+    <strong>context_compileは中核機能として維持する。</strong>
+    目的に応じた探索・選別・重複除去・圧縮・構成により、呼出し元へ必要以上のContextを渡さない価値を守る。単純なknowledge検索へ置換しない。LLM
+    composer、根拠付き手順、token予算、反証、project
+    scope、compile_eval、検索・採用履歴、KnowledgeとEpisodeの学習は維持する。
+  </p>
+  <p>
+    旧検討書は<a href="decision-responsibility-review-2026-09-20.html"
+      >Decisionの責務とSAAA連携の検討</a
+    >を参照。本書が撤去方針の正本である。旧検討書の互換期間やDecision固有処理の再利用案より、本書の「機能を撤去し、compileを変更しない」を優先する。過去のcontext_compile結果や保存済み知識にある「Decision必須」「公開API・DBは変更対象外」は今回の指示に適用しない。
+  </p>
+  <h2>2. 全面撤去と過去データの境界</h2>
+  <p>
+    全面撤去とは稼働する機能の撤去を指す。既存DBの過去記録を消去する依頼とは分ける。既存Decisionテーブルは不活性な履歴として残し、新規SQLiteでは作成しない。旧テーブルの存在を必須にせず、起動・Overview・Doctor・compile・検索が動くことを保証する。既存DBへのDROP、履歴の一括削除、過去のknowledge
+    scoreの巻き戻しは行わない。
+  </p>
+  <table>
+    <caption>
+      削除と保持の固定方針
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">方針</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">MCP / HTTP / UI / CLI</th>
+        <td>
+          Decisionを完全に除去。旧ツールを直接呼んでもunknown tool、旧APIは既存のAPI
+          not-found契約、旧画面は既存の未定義route契約に従う。成功を偽装するstubを作らない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Decision専用実装とプロンプト</th>
+        <td>削除する。固有ML、feedback effect作成、PR discard scanも対象。</td>
+      </tr>
+      <tr>
+        <th scope="row">現在のDB定義</th>
+        <td>
+          専用ORM定義、専用定数、新規SQLiteの6テーブルとindexを除去。共有Episodeの旧source種別・旧counterは既存データを読めるよう必要最小限保持。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">既存DB / migration履歴</th>
+        <td>
+          既存6テーブルはそのまま保持し、アプリからの参照・書込をなくす。適用済みdrizzle
+          SQL、snapshot、journalを書き換えない。PostgreSQLの履歴再生で旧テーブルが作られることは許容する。物理消去は本計画に含めない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">旧形式のimport/export</th>
+        <td>
+          既存のknowledge
+          portability形式を壊さない。既存Decision除外件数fieldは形式互換のため残してよいが、計数のために旧テーブルを読まない。詳細はD06。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">一般的なdecision語</th>
+        <td>
+          compile選別のagenticDecision、landscape判定、deadzone
+          review、decision-default等の外部provider名、知識本文内の意思決定は対象外。文字列の一括削除は禁止。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    既存Decisionの6テーブルはcontext_decision_runs、context_decision_evidence、context_decision_coverage_traces、context_decision_human_feedback、context_decision_feedback、context_decision_feedback_effects。共有knowledgeを削除した際の既存FK動作まで全面変更するものではない。退役テーブルを新しい履歴閲覧サービスとして公開し直さない。
+  </p>
+  <h2>3. 実行方法と作業記録</h2>
+  <ol>
+    <li>
+      AGENTS.mdを読み、この作業セッションで未実行ならinitial_instructionsを一度だけ実行する。context_compileで今回の目的を渡す。Decisionを撤去する作業の承認をDecision自身へ求めない。ユーザーの撤去指示を優先する。
+    </li>
+    <li>
+      git status --shortとgit rev-parse
+      HEADを記録する。既存の変更を戻さない。本書作成時にはqueue_lifecycleのRustファイル、スクリーンショット、複数の調査HTML、artifacts削除等が作業中だった。実行時に再確認する。
+    </li>
+    <li>
+      カードはD00から順番に実行する。対象ファイルと参照元を読み、編集、指定検証、記録の順で進める。新たな対象が見つかればカードへ追記し、同じ責務の範囲で処理する。
+    </li>
+    <li>
+      各カードの結果をspec/docs/decision-removal-progress.htmlへ記録する。rootはarticle
+      lang="ja"、h1は1つ。カードID、状態、変更ファイル、実行コマンド、exit
+      code、既存失敗との差分、次のカードを残す。ログはassets/decision-removal/以下へ置き、相対リンクで参照する。認証情報や私的な知識本文はログへ出さない。
+    </li>
+    <li>
+      チェックポイントの検証が通るまで次の段階へ進めない。途中で終了するときは「実装完了」とせず、最後に通ったチェックと残作業を記録する。別タスクへメッセージを送らない。
+    </li>
+  </ol>
+  <p>
+    コード変更はこのリポジトリ内に限定する。SAAAやNightWorkers、利用者のグローバルAGENTS.mdを勝手に編集しない。外部利用者への通知は移行案内を用意するところまで。作業完了にdaemon再起動・本番反映は含めず、コードの検証完了と稼働環境への反映を区別する。
+  </p>
+  <h2>4. D00 — ベースラインと撤去対象一覧</h2>
+  <p>
+    最初に以下の検索を実行し、結果をassets/decision-removal/へ保存する。未追跡ファイルも確認する。rgの終了コード1は一致なし、2は実行エラーである。
+  </p>
+  <pre><code class="language-bash">git status --short
+git rev-parse HEAD
+rg -n 'context_decision|contextDecision|ContextDecision|context-decision|decideContext|decisionRunCount|decisionFeedback|decision_success_rate|prevented_rework_signals' src api web crates scripts test shared contexts spec package.json s11tnext.config.toml README.md README.jp.md
+rg -n 'decision_use_count|decisionUseCount|decision_run|usageKind.*decision|/decision|bad_feedback_rate|appliedFeedbackEffectCount' src api web crates scripts test shared
+rg -n 'context_decision|contextDecision|context-decision' .github github-pages
+bun run typecheck
+bunx vitest run test/mcp.tools.test.ts test/mcp.tools.index.test.ts test/overview.repository.test.ts test/doctor.service.test.ts test/episode-card.service.test.ts
+cargo test -p context-stilld domains::mcp_lifecycle
+</code></pre>
+  <p>
+    各一致を「削除」「共有機能」「旧データ互換」「履歴資料」「撤去を検証するnegative
+    test」に分類する。ファイル全体を削除する一覧と、一部編集の一覧を分ける。baseline失敗は内容を記録し、テストを削って成功扱いにしない。既知の環境問題がある場合も、今回の変更の検証を未実施のまま完了しない。
+  </p>
+  <p>
+    完了条件：対象一覧とbaselineが記録済み。以降に出てくる具体的な参照先は調査時点のものなので、ファイル移動や追加はこの一覧で補う。
+  </p>
+  <h2>5. D01 — TypeScriptの公開入口と利用案内</h2>
+  <p>
+    編集対象：src/mcp/tools/index.ts、src/shared/locales/initial-instructions.ts、api/app.ts、scripts/post-commit-candidate-reminder.sh、package.json。関連テスト：test/mcp.tools.test.ts、test/mcp.tools.index.test.ts、test/mcp.contract.test.ts、test/locales.test.ts、test/api.routes.integration.test.ts、test/fixtures/api-route-contract-fixtures.ts。
+  </p>
+  <ol>
+    <li>
+      MCP V1とV2双方のexposed /
+      callable一覧からDecisionとfeedbackを外す。aliasや直接呼出しに抜け道を残さない。
+    </li>
+    <li>
+      /api/context-decisionsのrouter登録とimport、decision:pr-discard-scan
+      scriptを除去する。専用ファイル本体はD05で削除する。
+    </li>
+    <li>
+      初期案内の全言語からpre-question gate、reject停止、Decision
+      feedbackの義務を除去する。initial_instructions → context_compile → 作業・検証 →
+      compile_evalを維持し、必要なknowledge検索とcandidate登録を残す。
+    </li>
+    <li>post-commitの通常表示、長文テンプレート、action文のすべてからDecision案内を除去する。</li>
+    <li>
+      ツール非公開だけでなく直接呼出し失敗とHTTP旧pathのnot-foundを検証する。APIがSPA
+      HTMLの200へ落ちるなら既存API not-found境界を修正し、Decision専用stubは追加しない。
+    </li>
+  </ol>
+  <pre><code class="language-bash">bunx vitest run test/mcp.tools.test.ts test/mcp.tools.index.test.ts test/locales.test.ts test/api.routes.test.ts
+bun run typecheck
+</code></pre>
+  <p>
+    完了条件：TypeScript側の登録と案内にDecisionがなく、compile /
+    compile_evalの登録・説明が保たれる。DB依存のcontract testはD09でも実行する。
+  </p>
+  <h2>6. D02 — Rust MCP本体とfeedback</h2>
+  <p>
+    編集対象：crates/context-stilld/src/domains/mcp_lifecycle/のmod.rs、native_tools.rs、native_tools_tests.rs、native_handlers.rs、native_knowledge.rs、endpoint_server_tests.rs。削除：native_decision.rs。
+  </p>
+  <ol>
+    <li>
+      module宣言、dispatch、exposed toolsのschema、tool_owner_inventory、handler
+      wrapperから2ツールを除去する。現在のnative一覧は12件であり、他の変更がなければ10件になる。数値だけでなく期待する名前の集合で検証する。
+    </li>
+    <li>
+      Rustが返すinitial_instructionsからDecision案内を除去する。TypeScript
+      localeだけを直して完了にしない。
+    </li>
+    <li>
+      native_knowledge.rs内のcontext_decision_feedback、専用on_connection処理、selected_support_knowledge_idsと専用test
+      helperを除去する。同ファイルのcompile_eval、knowledge検索・candidate登録等は保持する。
+    </li>
+    <li>
+      旧ツールをendpoint経由で直接呼び、既存のunknown-tool
+      errorになりDBへ新規書込がないことを検証する。dispatchのNoneが他経路へfallbackして実行されないことも確認する。
+    </li>
+  </ol>
+  <pre><code class="language-bash">cargo test -p context-stilld domains::mcp_lifecycle
+cargo fmt --check
+</code></pre>
+  <p>
+    完了条件：Rustで旧ツールを呼べない。native_knowledgeの共有test、native_compile、memory-recall-v1の3ツールが通る。D01とD02がチェックポイントA。
+  </p>
+  <h2>7. D03 — UIとOverviewの契約</h2>
+  <p>
+    削除：web/src/modules/context-decision/全体、test/components/admin/context-decision-page.test.tsx、test/context-decision.hooks.test.ts。編集：web/src/App.tsx、web/src/modules/admin/components/app-shell.tsx、api/modules/overview/overview.repository.ts、src/shared/schemas/overview.schema.ts、web/src/modules/admin/repositories/admin/overview-contracts.ts、およびOverviewのfixtureとtest。
+  </p>
+  <ol>
+    <li>
+      /decisionのroute・lazy
+      import・navigationを除去し、旧URLは既存の未定義route動作とする。Decision履歴専用画面も残さない。
+    </li>
+    <li>
+      OverviewのSQLiteとPostgreSQLの双方から6テーブルへのSQL参照を除去する。decision_success_rateだけでなく、Decision由来のbad_feedback_rate、prevented_rework_signals、appliedFeedbackEffectCountと関連evidence
+      fieldも除去する。
+    </li>
+    <li>
+      API
+      schema、web型、画面、fixtureを同時に更新する。0を埋めて旧指標を残したり、compileの値へ黙って意味を変えたりしない。compile_adoption_rate、compile_reuse_rateは保持する。
+    </li>
+  </ol>
+  <pre><code class="language-bash">bunx vitest run test/overview.repository.test.ts test/components/admin/overview-page.test.tsx test/api.routes.test.ts
+bun run typecheck
+bun run build:web
+</code></pre>
+  <p>
+    完了条件：navigation、旧route、OverviewにDecision機能がない。Decisionテーブルを作らないSQLite
+    fixtureでもOverviewが成功し、compile指標が元の意味で返る。画面でOverviewとCompileを確認し、結果を記録する。
+  </p>
+  <h2>8. D04 — Doctorの検査契約</h2>
+  <p>
+    削除：src/modules/doctor/inspectors/context-decision.inspector.ts。編集：doctor.constants.ts、doctor.service.ts、src/shared/schemas/doctor.schema.ts、src/shared/doctor/doctor-reason-catalog.ts、test/doctor.service.test.ts、共有API
+    fixture。
+  </p>
+  <ol>
+    <li>
+      必須table/tool一覧からDecisionを除去する。contextDecision
+      report、unavailable時の代替report、reason合流、専用reason codeを除去する。
+    </li>
+    <li>
+      旧テーブルがなくても欠損警告を出さないこと、他のDB・queue・provider・compile検査が動くことを検証する。Rust側Doctorがこの変更へ間接依存していないかもD00一覧で確認する。
+    </li>
+  </ol>
+  <pre><code class="language-bash">bunx vitest run test/doctor.service.test.ts test/api.routes.system.test.ts
+bun run typecheck
+</code></pre>
+  <p>完了条件：Decisionがない状態を正常と扱う。D03とD04がチェックポイントB。</p>
+  <h2>9. D05 — 専用実装・ML・プロンプトの撤去</h2>
+  <p>
+    削除：src/modules/context-decision/、src/shared/schemas/context-decision.schema.ts、src/mcp/tools/context-decision.tool.ts、src/cli/context-decision-pr-discard-scan.ts、api/modules/context-decision/、contexts/contextDecision/、test/context-decision.*.test.ts。D03で削除済みのUIテストも一覧で確認する。
+  </p>
+  <ol>
+    <li>
+      専用モジュールの外側からimportが残っていないことを確認して削除する。一般的なknowledge /
+      Episode / compileの実装へ削除範囲を広げない。
+    </li>
+    <li>
+      s11tnext.config.tomlのcontextDecision
+      keyspaceを除去し、test/system-context.service.test.tsの期待値を更新する。system-contextの正規buildを実行し、生成catalogから消えたことを確認する。生成ファイルだけを手編集しない。
+    </li>
+    <li>
+      ml-random-forestは調査時点ではDecision専用だった。削除後に全体検索で利用者がいないことを再確認し、bun
+      remove
+      ml-random-forestでpackage.jsonとbun.lockを更新する。別用途が増えていたらdependencyを保持し理由を記録する。
+    </li>
+    <li>
+      spec/maintainability-budget.jsonから削除ファイルだけを除去する。残ったファイルの予算を緩めない。
+    </li>
+  </ol>
+  <pre><code class="language-bash">rg -n 'ml-random-forest|contextDecision|context-decision' src api web contexts s11tnext.config.toml
+bun run system-context:build
+bun run system-context:check
+bunx vitest run test/system-context.service.test.ts
+bun run typecheck
+</code></pre>
+  <p>
+    完了条件：専用判定・学習・feedback・CLIが存在せず、他機能のpromptが変わっていない。compileのprovider
+    routeやcomposerは変更しない。
+  </p>
+  <h2>10. D06 — Episodeとportabilityの旧データ互換</h2>
+  <p>
+    編集候補：src/modules/episodic-memory/episode-card.service.ts、episode-card.repository.ts、episode-card.repository.sqlite.ts、src/shared/schemas/episode-card.schema.ts、src/db/schema.constants.ts、web/src/modules/admin/components/episodes.page.tsx、web/src/modules/admin/repositories/admin/knowledge-contracts.ts、src/modules/knowledge-portability/format.tsとexport.service.ts、shared/fixtures/repository-isolation-producer-manifest-v1.json。
+  </p>
+  <ol>
+    <li>
+      recordEpisodeUsageの新規更新はcompileだけにする。decision
+      usageの新規書込分岐を除去し、compile_use_countの更新とusage eventは維持する。
+    </li>
+    <li>
+      旧Episodeのdecision_run、decisionUseCount、decision_use_count等は履歴の読み取りに必要な範囲で保持する。型を消して旧レコード全体がparse不能になる変更をしない。新規Decision由来のproducer経路があれば閉じる。共有producerを丸ごと削除しない。
+    </li>
+    <li>
+      Episodes
+      UIから新しいDecision利用を促す導線や固有counter表示を外す。履歴のsource種別は表示してよい。producer
+      manifestのepisode.decision_runは現行producerと履歴互換を区別し、実際の契約とtestに合わせて修正する。
+    </li>
+    <li>
+      knowledge portabilityのexcludedCountsにあるcontextDecisionEvidence / CoverageTraces /
+      HumanFeedback /
+      Feedbackは、旧export形式を受け入れるため保持してよい。現在のexportは0のままで、退役テーブルを読まない。形式versionを変えるついで対応はしない。これらを残存参照の例外一覧へ登録する。
+    </li>
+  </ol>
+  <pre><code class="language-bash">bunx vitest run test/episode-card.service.test.ts test/episode-card.repository.test.ts test/episode-card.repository.sqlite.test.ts test/components/admin/episodes-page.test.tsx test/knowledge-portability.import-dry-run.test.ts
+bun run typecheck
+</code></pre>
+  <p>
+    完了条件：旧Episodeと旧exportの読取互換が保たれ、Decisionを新規生成・更新する共有経路がない。compileのEpisode選択・使用記録に回帰がない。
+  </p>
+  <h2>11. D07 — 現行スキーマと移送・fixture</h2>
+  <p>
+    編集対象：src/db/schema-context.ts、src/db/schema.constants.ts、src/db/sqlite/core-schema.ts、src/modules/sqlite-migration/postgres-to-sqlite.service.ts、test/helpers/integration.ts、test/fixtures/schema-fixtures.ts、test/sqlite-runtime-support.bun.ts、test/sqlite-migration.bun.ts。共有schema
+    exportの参照も確認する。
+  </p>
+  <ol>
+    <li>
+      6テーブルの現行ORM
+      exportと専用定数を除去する。schema-context.ts全体は削除しない。core-schema.tsから6テーブルのCREATEと専用indexだけを除去し、後段のALTER・index作成等に残参照がないことを確認する。
+    </li>
+    <li>
+      PostgreSQL→SQLite移送対象から6テーブルを除去する。共有Knowledge / Episode /
+      compileの移送を保持する。移送は旧Decision履歴の移送手段ではなくなる旨を運用文書へ記す。旧履歴を保持したい利用者は元DBのbackupを保存する。
+    </li>
+    <li>
+      適用済みdrizzle/0057、0058、0059、0064および関連metaは保持する。db:pushや無検討のdb:generateでDROPを生成・適用しない。
+    </li>
+    <li>
+      新規SQLiteと、変更前schemaから作った旧DB
+      fixtureの両方で起動・Overview・Doctor・compile・検索を検証する。旧DBはDecision履歴行、旧Episodeを含める。検証後も旧履歴行が残り、新規書込が増えないことを確認する。
+    </li>
+    <li>
+      test helperのtruncate順・table一覧を更新する。PostgreSQL
+      migration再生時の旧テーブルの存在は許容するが、それがないDBでも現行の業務SQLが動くことを確認する。
+    </li>
+  </ol>
+  <pre><code class="language-bash">bun run test:sqlite-runtime
+bun run test:sqlite-migration
+bun run test:sqlite-manifest
+bun run typecheck
+</code></pre>
+  <p>
+    完了条件：新規SQLiteに専用6テーブルが作られない。既存DBの旧履歴は破壊されない。6テーブルへの業務SQL参照がない。D05〜D07がチェックポイントC。
+  </p>
+  <h2>12. D08 — 文書、公開サイト、残存参照</h2>
+  <p>
+    編集対象：README.md、README.jp.md、spec/docs/pub/のmcp-tools.md、api.md、operations.md、getting-started.md、cli.md、architecture.md、github-pages/site/index.md、github-pages/docs/index.html。spec/article/zenn-contextstill-article.md等の現行案内も確認する。
+  </p>
+  <ol>
+    <li>
+      ツール表、API表、CLI例、運用フロー、Decision画面紹介を除去する。compileの探索・選別・圧縮の説明は維持する。cloud-reviewのような一般的なdecision
+      support表現は製品機能を意味するか確認して編集する。
+    </li>
+    <li>
+      公開案内へ破壊的変更を明記する。削除した2ツール・API・CLI・画面、実行判断は呼出し元の責務、compileは継続、旧データは残るが新規利用されないことを短く記す。
+    </li>
+    <li>
+      github-pagesの生成元・生成手順をREADMEから確認し、生成物がある場合はその手順で再生成する。公開・deployは行わない。
+    </li>
+    <li>
+      内部の旧実装計画が現行指示と競合する場合は.archivedへ移動し、リンクを更新する。複数機能を扱う文書を丸ごとarchiveしない。調査履歴、旧migration、旧screenshotsの存在自体は許容する。
+    </li>
+    <li>
+      削除対象語を全体検索し、各残存参照に理由を付ける。例外はファイルとsymbol単位で記録し、src全体のような広い除外にしない。
+    </li>
+  </ol>
+  <p>
+    <strong>必ず残す評価資産：</strong>
+    spec/context-compile-foundation/decision-tasks.v1.json、manifest.decisions.v1.jsonはcompileの探索・選別を評価するfixtureである。名前だけで削除しない。compileのagenticDecision、landscapeCurationDecisionValues、deadzone
+    reviewのDecision表示もこの機能撤去の対象ではない。
+  </p>
+  <pre><code class="language-bash">bun run docs:check-links
+bun run spec:fix
+bun run spec:check
+git diff --check
+</code></pre>
+  <p>
+    完了条件：現行の利用案内に削除済み機能の呼出し指示がない。歴史資料、旧データ互換、negative
+    test、共有の別機能以外に残参照がない。
+  </p>
+  <h2>13. D09 — 統合検証</h2>
+  <p>
+    追加テストは削除した実装の内部動作を再現するものではなく、公開境界の不在と共有機能の維持に集中する。古いDecision専用testの単純削除だけで完了しない。
+  </p>
+  <table>
+    <caption>
+      必須受入条件
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">検証</th>
+        <th scope="col">合格条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">A1</th>
+        <td>Rust MCP、TypeScript MCP V1/V2</td>
+        <td>tools/listに2ツールがなく、直接callも失敗。初期ガイダンスにも呼出し義務がない。</td>
+      </tr>
+      <tr>
+        <th scope="row">A2</th>
+        <td>旧HTTP pathのGET / POST / detail / feedback / scan</td>
+        <td>
+          有効なfixture認証下でAPI
+          not-foundになる。認証失敗を撤去成功と誤認しない。DB・LLM・外部PR照会の副作用なし。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">A3</th>
+        <td>UI</td>
+        <td>
+          Decision導線なし。旧URLは既存未定義route動作。Overview、Compile、Episodesが正常表示。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">A4</th>
+        <td>新規SQLite / 旧SQLite</td>
+        <td>
+          新規は6テーブルなし。旧は履歴が残る。両方でOverviewとDoctorが成功し、Decision欠損警告なし。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">A5</th>
+        <td>context_compileとcompile_eval</td>
+        <td>
+          関連知識・反証・Episodeの選別、scope、出力量制御、No
+          Content、provider失敗時の既存挙動、使用記録とeval保存が既存test通り。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">A6</th>
+        <td>knowledge / memory / Episode / SAAA用recall</td>
+        <td>検索・fetch・candidate登録、memory-recall-v1の3ツールの契約が維持される。</td>
+      </tr>
+      <tr>
+        <th scope="row">A7</th>
+        <td>PostgreSQL側とportability</td>
+        <td>
+          Overview / Doctor /
+          共有repositoryで削除schema参照なし。旧exportと旧Episodeの読取互換が維持される。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">A8</th>
+        <td>残存参照</td>
+        <td>専用実装・登録・設定・指示・新規書込が0件。許容した残存は理由付き一覧に一致する。</td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code class="language-bash">bun run verify
+bun run verify:sqlite
+bun run verify:rust-daemon
+bun run verify:mcp
+</code></pre>
+  <p>
+    verifyはtypecheck、lint、format、Spec、unit test、web
+    build等を内包する。既に成功した個別検査を理由なく繰り返す必要はない。Rust
+    daemon検証は専用データディレクトリを使用する。実行前にscripts/verify-rust-daemon.mjsと各smoke
+    scriptの環境指定を確認し、利用者の稼働DBを指す環境変数が継承されていないことを確認する。live
+    ownership検査は本計画の必須条件にしない。
+  </p>
+  <p>
+    PostgreSQL用の専用test DBを用意した上でbun run test:integrationとbun run
+    test:mcp:contractを実行する。CONTEXT_STILL_TEST_DATABASE_URLはtest専用DBを指定し、本番・利用者DBを使わない。環境がなく実行できなければ「未検証」を残し、全面検証完了とはしない。LLM
+    credentialを必要とする実機の判断品質比較は不要で、provider
+    fixtureによるcompile回帰検証を必須とする。
+  </p>
+  <h2>14. D10 — 最終確認と引継ぎ</h2>
+  <ol>
+    <li>
+      git diffと対象一覧を照合し、無関係な変更、generated
+      artifactの不要差分、隠れた共有機能削除がないことを確認する。
+    </li>
+    <li>
+      進捗文書へA1〜A8の結果、残存参照例外、baselineから残った失敗、未実施チェック、運用反映の状態を記録する。context_compileを実行したrunにはcompile_evalを保存する。
+    </li>
+    <li>
+      コードを検証しただけなら「コード撤去完了・稼働daemonは未反映」と報告する。反映を別途実施する場合は新binaryで再起動したあとtools/listと初期ガイダンスを再確認し、既存MCP
+      sessionも再接続する。旧binaryを動かしたまま機能削除済みとは報告しない。
+    </li>
+    <li>
+      すべて完了したら本計画と完了した進捗文書を.archivedへ移し、現行リンクを更新してspec:fix /
+      spec:checkを実行する。公開の変更案内はpubに残す。
+    </li>
+  </ol>
+  <p>
+    通常のrollbackは変更前のコードへ戻すことで行う。旧DBのDecision履歴を物理削除しないためデータ復元操作は不要。ただし新規SQLiteを旧版で開く場合の初期化挙動は未保証なので、本番反映前のbackupを使用する。削除した機能をrollback名目で無条件に再公開しない。
+  </p>
+  <h2>15. Terraへ渡す開始指示</h2>
+  <pre><code class="language-text">spec/docs/decision-removal-work-plan.htmlを正本として、ContextStillのDecision機能を全面撤去してください。
+D00からD10まで順番に進め、チェックポイントごとに検証してください。
+context_compileの探索・選別・圧縮・composer、compile_eval、知識検索、Episode、SAAA用memory-recall-v1は維持してください。
+Decisionの代替サービスやSAAAへの移植は作らないでください。
+過去のDB履歴と適用済みmigrationは保持し、Decisionがない新規DBでも動くようにしてください。
+既存の作業ツリー変更は戻さず、結果と残課題をdecision-removal-progress.htmlへ記録してください。
+他のCodexタスクへメッセージを送らず、未検証事項を完了扱いにしないでください。
+</code></pre>
+</article>

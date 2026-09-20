@@ -18,7 +18,6 @@ const navItems = [
   { to: "/landscape", label: "Landscape" },
   { to: "/graph", label: "Graph" },
   { to: "/compile", label: "Compile" },
-  { to: "/decision", label: "Decision" },
   { to: "/audit", label: "Audit" },
   { to: "/doctor", label: "Doctor" },
   { to: "/setting", label: "Settings" },
@@ -165,7 +164,6 @@ export function AppShell() {
         className={`app-content ${
           pathname === "/" ||
           pathname.startsWith("/compile") ||
-          pathname.startsWith("/decision") ||
           pathname.startsWith("/vibe-memory") ||
           pathname.startsWith("/episodes") ||
           pathname.startsWith("/sources") ||

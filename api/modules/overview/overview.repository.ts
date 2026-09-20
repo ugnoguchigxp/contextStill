@@ -165,13 +165,6 @@ function buildProductValueStats(row: Record<string, unknown>) {
   const compileEvaluationCount = toNumber(row.compile_evaluation_count);
   const acceptedCompileEvaluationCount = toNumber(row.accepted_compile_evaluation_count);
   const reusedCompileRunCount = toNumber(row.reused_compile_run_count);
-  const decisionRunCount = toNumber(row.decision_run_count);
-  const decisionFeedbackCount = toNumber(row.decision_feedback_count);
-  const knownDecisionFeedbackCount = toNumber(row.known_decision_feedback_count);
-  const successfulDecisionFeedbackCount = toNumber(row.successful_decision_feedback_count);
-  const badDecisionFeedbackCount = toNumber(row.bad_decision_feedback_count);
-  const preventedReworkSignalCount = toNumber(row.prevented_rework_signal_count);
-  const appliedFeedbackEffectCount = toNumber(row.applied_feedback_effect_count);
 
   return overviewProductValueStatsSchema.parse({
     windowLabel: "All time",
@@ -192,30 +185,6 @@ function buildProductValueStats(row: Record<string, unknown>) {
         denominator: compileRunCount,
         evidenceLabel: "compile runs with pack items or selected traces",
       },
-      {
-        metric: "decision_success_rate",
-        label: "Decision success",
-        rate: rate(successfulDecisionFeedbackCount, knownDecisionFeedbackCount),
-        count: successfulDecisionFeedbackCount,
-        denominator: knownDecisionFeedbackCount,
-        evidenceLabel: "human good plus system success feedback",
-      },
-      {
-        metric: "bad_feedback_rate",
-        label: "Bad feedback",
-        rate: rate(badDecisionFeedbackCount, knownDecisionFeedbackCount),
-        count: badDecisionFeedbackCount,
-        denominator: knownDecisionFeedbackCount,
-        evidenceLabel: "human bad plus failed/regression/override/discard feedback",
-      },
-      {
-        metric: "prevented_rework_signals",
-        label: "Rework avoided",
-        rate: null,
-        count: preventedReworkSignalCount,
-        denominator: decisionRunCount,
-        evidenceLabel: "revise/rollback/discard/reject decisions plus applied feedback effects",
-      },
     ],
     evidence: {
       compileRunCount,
@@ -223,13 +192,6 @@ function buildProductValueStats(row: Record<string, unknown>) {
       compileEvaluationCount,
       acceptedCompileEvaluationCount,
       reusedCompileRunCount,
-      decisionRunCount,
-      decisionFeedbackCount,
-      knownDecisionFeedbackCount,
-      successfulDecisionFeedbackCount,
-      badDecisionFeedbackCount,
-      preventedReworkSignalCount,
-      appliedFeedbackEffectCount,
     },
   });
 }
@@ -525,27 +487,7 @@ async function fetchOverviewSystemQualityDomainForSqlite(
         (select count(*) from context_compile_evals where outcome in ('useful', 'partial'))
           as accepted_compile_evaluation_count,
         (select count(*) from compile_run_reuse where pack_item_count > 0 or selected_trace_count > 0)
-          as reused_compile_run_count,
-        (select count(*) from context_decision_runs) as decision_run_count,
-        ((select count(*) from context_decision_human_feedback) +
-          (select count(*) from context_decision_feedback)) as decision_feedback_count,
-        ((select count(*) from context_decision_human_feedback) +
-          (select count(*) from context_decision_feedback where outcome <> 'still_unknown'))
-          as known_decision_feedback_count,
-        ((select count(*) from context_decision_human_feedback where value = 'good') +
-          (select count(*) from context_decision_feedback where outcome = 'success'))
-          as successful_decision_feedback_count,
-        ((select count(*) from context_decision_human_feedback where value = 'bad') +
-          (select count(*) from context_decision_feedback
-           where outcome in ('failed', 'discarded_pr', 'user_overrode', 'regression_found')))
-          as bad_decision_feedback_count,
-        ((select count(*) from context_decision_runs
-          where status = 'completed'
-            and decision in ('revise_and_execute', 'rollback', 'discard', 'reject')) +
-          (select count(distinct decision_run_id) from context_decision_feedback_effects
-           where status = 'applied')) as prevented_rework_signal_count,
-        (select count(*) from context_decision_feedback_effects where status = 'applied')
-          as applied_feedback_effect_count
+          as reused_compile_run_count
     `,
   );
 
@@ -1251,30 +1193,7 @@ export async function fetchOverviewSystemQualityDomainForApi(
          where outcome in ('useful', 'partial')) as accepted_compile_evaluation_count,
         (select count(*)::int
          from compile_run_reuse
-         where pack_item_count > 0 or selected_trace_count > 0) as reused_compile_run_count,
-        (select count(*)::int from context_decision_runs) as decision_run_count,
-        ((select count(*)::int from context_decision_human_feedback) +
-          (select count(*)::int from context_decision_feedback)) as decision_feedback_count,
-        ((select count(*)::int from context_decision_human_feedback) +
-          (select count(*)::int from context_decision_feedback where outcome <> 'still_unknown'))
-          as known_decision_feedback_count,
-        ((select count(*)::int from context_decision_human_feedback where value = 'good') +
-          (select count(*)::int from context_decision_feedback where outcome = 'success'))
-          as successful_decision_feedback_count,
-        ((select count(*)::int from context_decision_human_feedback where value = 'bad') +
-          (select count(*)::int
-           from context_decision_feedback
-           where outcome in ('failed', 'discarded_pr', 'user_overrode', 'regression_found')))
-          as bad_decision_feedback_count,
-        ((select count(*)::int
-          from context_decision_runs
-          where status = 'completed'
-            and decision in ('revise_and_execute', 'rollback', 'discard', 'reject')) +
-          (select count(distinct decision_run_id)::int
-           from context_decision_feedback_effects
-           where status = 'applied')) as prevented_rework_signal_count,
-        (select count(*)::int from context_decision_feedback_effects where status = 'applied')
-          as applied_feedback_effect_count
+         where pack_item_count > 0 or selected_trace_count > 0) as reused_compile_run_count
     `),
   ]);
 

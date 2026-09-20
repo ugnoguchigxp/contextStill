@@ -488,7 +488,7 @@ async function queryEpisodeCards(
 
 export async function incrementEpisodeUsageCounts(params: {
   episodeIds: string[];
-  usageKind: "compile" | "decision";
+  usageKind: "compile";
 }): Promise<void> {
   const episodeIds = [...new Set(params.episodeIds.map((id) => id.trim()).filter(Boolean))];
   if (episodeIds.length === 0) return;
@@ -497,12 +497,11 @@ export async function incrementEpisodeUsageCounts(params: {
     await sqlite.incrementEpisodeUsageCountsSqlite({ ...params, episodeIds });
     return;
   }
-  const column =
-    params.usageKind === "compile" ? episodeCards.compileUseCount : episodeCards.decisionUseCount;
+  const column = episodeCards.compileUseCount;
   await db
     .update(episodeCards)
     .set({
-      [params.usageKind === "compile" ? "compileUseCount" : "decisionUseCount"]: sql`${column} + 1`,
+      compileUseCount: sql`${column} + 1`,
       updatedAt: new Date(),
     })
     .where(inArray(episodeCards.id, episodeIds));

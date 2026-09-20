@@ -1,0 +1,78 @@
+LARMのqwen-agent-workerで発生している間欠的な到達不能を調査し、原因に対する修正を実装してください。調査結果の報告だけで終了せず、再発防止に必要なコード、設定、テスト、観測性の変更まで行ってください。
+
+## 目的
+
+ContextStillのresident Queue executorからLARMへ接続する際に発生したTCP接続失敗を解消し、LARMがreadyを示している間はqwen-agent-workerへ安定して接続できる状態にしてください。
+
+## 対象
+
+- Endpoint: http://192.168.0.130:9810/v1/chat/completions
+- Model: qwen-agent-worker
+- ContextStill側target: local-llm-larm-qwen-agent-worker
+- LARM releaseCommit: e69dc6eaed706ff53a65ace5b0365b0a4758e67d
+- LARM bootEpoch: epoch-fc16ffa8-66c3-433d-a0f9-1af9cd863d8f
+- LARM configRevision: 7b21ef45d0d196d804db97941446d3d3f88e7c5657186f377528f934882868e8
+
+## 調査の入力情報
+
+- 2026-09-19 21:38 JST頃から2026-09-20 21:58 JST頃まで、Queue処理で接続失敗が継続しました。
+- 代表的なerror chain:
+  - reqwest connect=true, timeout=false
+  - tcp connect error to 192.168.0.130:9810
+  - OS code 65 / HostUnreachable / "No route to host"
+- 直近24時間のprovider lease記録では、このtargetに対してprovider_unavailable_retryが1,313件、worker_failedが357件ありました。
+- 失敗はHTTP responseを受信する前のTCP接続段階で発生しており、HTTP statusとLARM request IDは取得できていません。
+- 同じContextStillホストから同じBearer credentialを使った2026-09-20 21:56 JST頃の確認は成功しました。
+  - GET /health: HTTP 200、status=ok
+  - GET /v1/models: HTTP 200、qwen-agent-workerを確認
+  - POST /v1/chat/completions: HTTP 200、接続0.039秒、応答11.696秒
+  - x-request-id: req_939e052e-cffb-4a0d-b96d-370ddc2f7a46
+
+credential欠落やmodel未登録が恒常原因とは考えにくいため、listener lifecycle、起動・設定reload、host sleep/wake、network route・firewall、および長寿命clientとの組み合わせを重点的に調べてください。
+
+## 必須作業
+
+1. 障害時間帯のLARM process、listener、host network、firewall、route、sleep/wake、設定reloadの時系列を復元し、ContextStill側の失敗時刻と突き合わせてください。
+2. 現在のbootEpochの開始時刻と、process起動から9810番portのbind、model routeの準備完了、readiness公開までの状態遷移を確認してください。
+3. `/health`が200を返しているのにchat listenerまたはqwen-agent-workerが利用できない時間窓が生じる実装経路を特定してください。
+4. 原因を再現できる最小のtestまたは負荷・再起動手順を作り、修正前に失敗を確認してください。時刻や外部networkの偶然性に依存しないdeterministicなtestを優先してください。
+5. 根本原因に対する最小限の修正を実装してください。client側retryの追加だけで問題を隠さないでください。
+6. 起動、再起動、設定reload、listener再bind時は、chat endpointとmodel routeが実際に受付可能になるまでreadyを返さないようにしてください。切替が必要な場合はgraceful drainまたは明示的なnot-ready遷移を設けてください。
+7. 今後同じ障害を切り分けられるよう、bootEpoch、configRevision、readiness遷移、listener bind/accept失敗、reload開始・完了を時刻付きで記録してください。credentialやBearer tokenはlogへ出さないでください。
+8. 修正後にtargeted testと通常のtest/lint gateを実行し、実環境でも連続requestによる確認を行ってください。
+
+## 完了条件
+
+- 根本原因、または根本原因を一意に絞れる再現条件が示されている。
+- `/health`がreadyを示す期間に、同一listenerのchat endpointが未bindまたは受付不能になる経路がない。
+- 起動・reload・再起動の境界を含む自動testが追加され、修正前に失敗し修正後に成功する。
+- 同じContextStillホストから、認証付き`/health`、`/v1/models`、`/v1/chat/completions`を順に確認できる。
+- `qwen-agent-worker`への連続100 requestでTCP connect errorが0件である。各requestの成功数、失敗数、latency分布、実施時刻を記録する。
+- 既存の認証を弱めず、secretをsource、test fixture、log、報告へ残していない。
+
+## 対象外
+
+- ContextStill側のDB schema、Queue設計、provider routingの変更
+- LARMの認証無効化または認証要件の緩和
+- 原因修正を伴わないtimeout延長や無制限retry
+
+## 動作確認例
+
+Bearer tokenは環境変数`LARM_TOKEN`から渡し、出力やcommitへ含めないでください。
+
+curl -H "Authorization: Bearer $LARM_TOKEN" http://192.168.0.130:9810/health
+curl -H "Authorization: Bearer $LARM_TOKEN" http://192.168.0.130:9810/v1/models
+curl -H "Authorization: Bearer $LARM_TOKEN" -H "Content-Type: application/json" \
+  --data '{"model":"qwen-agent-worker","messages":[{"role":"user","content":"Reply with OK."}],"max_tokens":8,"temperature":0}' \
+  http://192.168.0.130:9810/v1/chat/completions
+
+## 返却してほしい内容
+
+- 根本原因と、障害が発生する条件・時系列
+- 変更したfileと変更理由
+- 追加・更新したtest、実行command、結果
+- 修正前後の再現結果と連続100 requestの結果
+- 追加したlog/metricと確認方法
+- 未解決のrisk、追加対応が必要な場合の具体的なblocker
+
+必要なrepositoryと実行環境へアクセスできる前提で、調査から修正・検証まで進めてください。権限や情報が不足して実装できない場合だけ、実施済みの切り分けと、作業再開に必要な最小限の情報を明示してください。

@@ -183,9 +183,6 @@ function sourceRefHref(ref: EpisodeRef): string {
   if (ref.refKind === "compile_run") {
     return `/compile?runId=${encodeURIComponent(extractRunId(value))}`;
   }
-  if (ref.refKind === "decision_run") {
-    return `/decision?runId=${encodeURIComponent(extractRunId(value))}`;
-  }
   if (ref.refKind === "audit_log") {
     return `/audit?q=${encoded}`;
   }
@@ -280,7 +277,6 @@ function EpisodeDetail({ episode }: { episode: EpisodeCard }) {
         <Badge variant="secondary">importance {episode.importance}</Badge>
         <Badge variant="secondary">confidence {episode.confidence}</Badge>
         <Badge variant="outline">compile uses {episode.compileUseCount}</Badge>
-        <Badge variant="outline">decision uses {episode.decisionUseCount}</Badge>
       </div>
       <div className="space-y-3">
         {facts.map(([label, value]) => (
@@ -803,11 +799,11 @@ export function EpisodesPage() {
       },
       {
         id: "uses",
-        accessorFn: (episode) => episode.compileUseCount + episode.decisionUseCount,
+        accessorFn: (episode) => episode.compileUseCount,
         header: "Uses",
         cell: ({ row }) => (
           <span className="font-mono text-[11px] text-muted-foreground">
-            C:{row.original.compileUseCount} / D:{row.original.decisionUseCount}
+            C:{row.original.compileUseCount}
           </span>
         ),
       },

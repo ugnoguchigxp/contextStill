@@ -25,8 +25,6 @@ vi.mock("../src/modules/episodic-memory/episode-card.service.js");
 vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
 vi.mock("../src/modules/settings/settings.service.js");
 vi.mock("../src/modules/knowledge/knowledge-admin.repository.js");
-vi.mock("../src/modules/context-decision/context-decision.service.js");
-vi.mock("../src/modules/context-decision/context-decision.feedback.service.js");
 vi.mock("../src/modules/readFile/domain.js");
 vi.mock("../src/db/client.js", () => ({
   db: mockDb,
@@ -39,10 +37,6 @@ import {
 import type { ToolHandlerContext } from "../src/mcp/registry.js";
 import { compileEvalTool } from "../src/mcp/tools/compile-eval.tool.js";
 import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
-import {
-  contextDecisionFeedbackTool,
-  contextDecisionTool,
-} from "../src/mcp/tools/context-decision.tool.js";
 import { fetchEpisodeTool, searchEpisodesTool } from "../src/mcp/tools/episode.tool.js";
 import {
   listKnowledgeTool,
@@ -61,8 +55,6 @@ import { readFileTool } from "../src/mcp/tools/read-file.tool.js";
 import { doctorTool, initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
 import { recordCompileEval } from "../src/modules/context-compiler/context-compile-eval.service.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
-import { recordContextDecisionFeedback } from "../src/modules/context-decision/context-decision.feedback.service.js";
-import { decideContext } from "../src/modules/context-decision/context-decision.service.js";
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
 import {
   fetchEpisode,
@@ -741,34 +733,6 @@ describe("MCP Tools Handlers", () => {
 
       const response = await doctorTool.handler();
       expect(JSON.parse(response.content[0].text)).toEqual(mockReport);
-    });
-  });
-
-  describe("context_decision & context_decision_feedback", () => {
-    test("context_decision handler passes arguments to decideContext", async () => {
-      const mockResult = { decision: "proceed", decisionId: "d1" };
-      vi.mocked(decideContext).mockResolvedValue(mockResult as never);
-
-      const args = { decisionPoint: "test point", sessionId: "session-123" };
-      const response = await contextDecisionTool.handler(args);
-      expect(decideContext).toHaveBeenCalledWith(args);
-      expect(JSON.parse(response.content[0].text)).toEqual(mockResult);
-    });
-
-    test("context_decision handler works with undefined args", async () => {
-      vi.mocked(decideContext).mockResolvedValue({ decision: "proceed" } as never);
-      await contextDecisionTool.handler(undefined);
-      expect(decideContext).toHaveBeenCalledWith({});
-    });
-
-    test("context_decision_feedback handler passes arguments to recordContextDecisionFeedback", async () => {
-      const mockResult = { success: true };
-      vi.mocked(recordContextDecisionFeedback).mockResolvedValue(mockResult as never);
-
-      const args = { decisionId: "d1", source: "ai", value: "good", outcome: "success" };
-      const response = await contextDecisionFeedbackTool.handler(args);
-      expect(recordContextDecisionFeedback).toHaveBeenCalledWith(args);
-      expect(JSON.parse(response.content[0].text)).toEqual(mockResult);
     });
   });
 

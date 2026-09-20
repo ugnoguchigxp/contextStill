@@ -39,7 +39,7 @@ collect evidence -> distill knowledge -> compile task context -> evaluate useful
 Core capabilities:
 
 - Evidence-backed knowledge distillation with source links and candidate review.
-- Primary MCP workflow tools for `initial_instructions`, `context_compile`, `compile_eval`, `context_decision`, and `context_decision_feedback`, with supplemental MCP lookup, diagnostics, and candidate-registration tools.
+- Primary MCP workflow tools for `initial_instructions`, `context_compile`, and `compile_eval`, with supplemental MCP lookup, diagnostics, and candidate-registration tools.
 - SQLite local storage for the primary knowledge/search/context compile path.
 - Agent log sync for Codex, Antigravity, and Claude logs.
 - Queue-based distillation workers and health diagnostics.
@@ -160,7 +160,7 @@ For an MCP client, use:
 
 `bun run setup:mcp-config` writes this URL-based registration for Codex and Antigravity. The old direct stdio context-still MCP server and TypeScript MCP HTTP worker have been removed and must not be restored for client registration. The endpoint and exposed tool handlers are owned by `context-stilld`.
 
-After connecting the MCP server, call `initial_instructions` once at the start of a project session. The primary workflow is `context_compile` before task work, `context_decision` before asking the user or creating a PR when autonomous progress may still be possible, `context_decision_feedback` when a decision outcome is known, and `compile_eval` after task work. Other exposed tools remain available as supplemental diagnostics, lookup, or explicit knowledge-maintenance tools, but they are not part of the normal primary workflow.
+After connecting the MCP server, call `initial_instructions` once at the start of a project session. The primary workflow is `context_compile` before task work and `compile_eval` after task work. Other exposed tools remain available as supplemental diagnostics, lookup, or explicit knowledge-maintenance tools, but they are not part of the normal primary workflow.
 
 MCP is an agent integration surface. It is not a hidden requirement for opening the local app or inspecting existing knowledge.
 

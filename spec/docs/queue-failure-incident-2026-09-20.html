@@ -1,0 +1,290 @@
+<article lang="ja">
+  <h1>Queue大量失敗インシデント調査（2026-09-20）</h1>
+
+  <p>
+    2026-09-20 21:38 JST時点で、resident
+    daemonは稼働しているが、LLMを使うQueueは正常処理できていない。
+    直近24時間に<code>coveringEvidence</code>で646件がfailed、<code>episodeDistiller</code>で1,288件がpaused、
+    <code>findingCandidate</code>で62件がpausedになった。同期間のQueue
+    eventにcompletedは0件だった。
+  </p>
+
+  <section id="conclusion">
+    <h2>結論</h2>
+    <ol>
+      <li>
+        全LLM routeが同じ<code>larm-qwen-background</code> poolを参照し、その3
+        targetがすべて利用不能である。 LARM Qwenは接続失敗、Museはhost
+        fingerprint不一致または初期化timeout、Codex SparkはCLI catalogに存在しない。
+      </li>
+      <li>
+        Queue
+        laneはすべてunpausedで、利用不能targetに対する有効な停止・隔離が働かず、claim、retry、terminal
+        failureを継続している。
+        6秒間の再観測でも<code>distillation_queue_events</code>は425,419件から425,420件へ増加した。
+      </li>
+      <li>
+        別件として、稼働中daemonにはcovering成功後のfinalize
+        enqueueでparameter順序を誤る既知不具合が残っている。
+        logには<code>finalize_distille_queue.protocol_version</code>へTEXTを保存しようとした失敗が123件ある。
+        repository上ではcommit <code>cd130e9</code>で修正済みだが、daemon
+        processは修正前の実行imageを保持している。
+      </li>
+    </ol>
+  </section>
+
+  <section id="current-state">
+    <h2>現況</h2>
+    <table>
+      <caption>
+        Queueごとの滞留件数、直近24時間の異常終了、最終正常完了時刻
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Queue</th>
+          <th scope="col">現在の主な滞留</th>
+          <th scope="col">直近24時間の異常終了</th>
+          <th scope="col">最後のcompleted（UTC）</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">findingCandidate</th>
+          <td>failed 4,072 / paused 197</td>
+          <td>paused 62</td>
+          <td>2026-09-17 12:59:23</td>
+        </tr>
+        <tr>
+          <th scope="row">episodeDistiller</th>
+          <td>pending 約4,710 / paused 約2,965 / failed 1,806</td>
+          <td>paused 1,288</td>
+          <td>2026-09-17 14:06:06</td>
+        </tr>
+        <tr>
+          <th scope="row">coveringEvidence</th>
+          <td>pending 約3,542 / failed 約2,922</td>
+          <td>failed 646</td>
+          <td>2026-09-17 13:48:54</td>
+        </tr>
+        <tr>
+          <th scope="row">landscapeCuration</th>
+          <td>pending 18</td>
+          <td>terminal failure 0、skipped 7</td>
+          <td>2026-09-17 13:52:23</td>
+        </tr>
+        <tr>
+          <th scope="row">finalizeDistille</th>
+          <td>active backlogなし</td>
+          <td>0</td>
+          <td>2026-09-17 13:03:52</td>
+        </tr>
+        <tr>
+          <th scope="row">deadZoneMergeReview</th>
+          <td>active backlogなし</td>
+          <td>0</td>
+          <td>2026-06-13 17:42:30</td>
+        </tr>
+        <tr>
+          <th scope="row">mergeActivationFinalize</th>
+          <td>active backlogなし</td>
+          <td>0</td>
+          <td>2026-06-13 17:43:28</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      件数はdaemon稼働中のlive SQLiteをread-onlyで採取したため、採取中にも増減している。
+      timestampは<code>unix-ms:</code>表現とISO表現をUTCへ正規化して集計した。
+    </p>
+  </section>
+
+  <section id="failure-causes">
+    <h2>直近24時間の原因分類</h2>
+    <table>
+      <caption>
+        直近24時間のprovider原因別異常終了件数
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">原因</th>
+          <th scope="col">episode paused</th>
+          <th scope="col">covering failed</th>
+          <th scope="col">finding paused</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Codex SparkがCLI catalogに存在しない</th>
+          <td>440</td>
+          <td>199</td>
+          <td>12</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM Qwenへの接続失敗</th>
+          <td>389</td>
+          <td>358</td>
+          <td>17</td>
+        </tr>
+        <tr>
+          <th scope="row">Muse host fingerprint不一致</th>
+          <td>394</td>
+          <td>63</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <th scope="row">Muse初期化timeout</th>
+          <td>66</td>
+          <td>26</td>
+          <td>3</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      provider leaseでも直近24時間に<code>provider_unavailable_retry</code>がLARM Qwen
+      1,313件、Codex Spark 1,224件、 Muse 1,191件記録されている。さらにworker
+      failureはそれぞれ357件、199件、90件である。
+    </p>
+  </section>
+
+  <section id="external-dependencies">
+    <h2>外部依存の確認</h2>
+    <ul>
+      <li>
+        <code>192.168.0.130:9810</code
+        >はHTTP応答するが、認証なしprobeは401を返した。daemon logにもLARM control HTTP
+        401が連続している。
+      </li>
+      <li><code>127.0.0.1:44448</code>は接続不能だった。</li>
+      <li>
+        <code>127.0.0.1:44449/health</code>はHTTP
+        200だが、本文は<code>enabled=false</code>、<code>ready=false</code>、<code>status=disabled</code>だった。models
+        endpointは503だった。
+      </li>
+      <li>
+        Codex targetは<code>gpt-5.3-codex-spark</code>を指定しているが、実行時は「Spark
+        is not available in the configured Codex CLI catalog」を返している。
+      </li>
+    </ul>
+  </section>
+
+  <section id="runtime-image-mismatch">
+    <h2>実装不具合と稼働imageの不一致</h2>
+    <p>
+      修正前のcovering
+      persistenceは、INSERT列順が<code>priority, protocol_version, requested_revision_id, provider_policy</code>なのに、
+      bind値を<code>priority, provider_policy, protocol_version, requested_revision_id</code>の順で渡していた。 STRICT
+      tableのため<code>protocol_version</code>へのTEXT bindで拒否される。commit
+      <code>cd130e9</code>はbind順を修正している。 現在のdaemon PID
+      99918は2026-09-12 23:52 JSTから継続稼働しており、修正commitは2026-09-13 08:59 JSTである。
+      binary file自体が後から更新されても、稼働processのmemory
+      imageは置換されないため、再起動まで旧不具合が残る。
+    </p>
+  </section>
+
+  <section id="larm-follow-up">
+    <h2>LARM調査・改修依頼</h2>
+    <p>
+      findingの保存済みerror chainでは、LARM接続失敗の最終原因は
+      <code>OS code 65 / HostUnreachable / No route to host</code>だった。HTTP response受信前のTCP接続失敗であり、
+      credential拒否やmodel未登録とは異なる。同一hostから保存済みBearer
+      credentialを使った追加probeでは、
+      <code>/health</code
+      >、<code>/v1/models</code>、<code>/v1/chat/completions</code>がすべてHTTP
+      200になり、 <code>qwen-agent-worker</code>も確認できた。Chat
+      Completionsの接続時間は0.039秒、総時間は11.696秒だった。
+    </p>
+    <p>
+      このため、恒常的なLARM設定不備ではなく、network経路、listener停止・再起動、sleep/wake、または長寿命daemonに限定した
+      間欠障害としてLARM側logとの時刻相関が必要である。調査で終わらず、原因修正、test追加、実環境検証まで依頼するpromptは
+      <a href="assets/queue-failure-incident-2026-09-20/larm-report-prompt.txt"
+        >LARM調査・改修依頼</a
+      >に保存した。
+    </p>
+  </section>
+
+  <section id="quota-suppression">
+    <h2>Muse利用制限中の呼び出し抑止</h2>
+    <p>
+      provider quotaは<code>runtime.provider-quota</code>へtarget
+      IDと<code>retryAt</code>を保存し、 provider lease
+      claim前に未来の<code>retryAt</code>を持つtargetを候補から除外する。今回、Museが返す
+      <code>rate_limit_error</code
+      >かつ<code>retryable=false</code>もquota exhaustedとして認識し、
+      数値・millisecond・ISO
+      timestampのreset表現と、秒数の<code>retry_after</code>を正規化するようにした。
+      reset情報がない場合は5分、過去時刻の場合も最低60秒は選択しない。解除時刻を過ぎると通常のleast-recently-used選択へ戻る。
+    </p>
+    <p>
+      現在のMuseはquota exhaustedではない。認証付き<code>/v1/agents/models?runtime=muse</code>
+      probeはHTTP 503を返し、
+      <code>provider_host_exited</code
+      >、<code>runtime.initialize timed out</code>、<code>retryable=false</code>、
+      <code>retry_after=null</code
+      >だった。このため今回追加した「解除時刻まで抑止」の条件には該当せず、Muse
+      bridge自体の復旧が別途必要である。
+    </p>
+  </section>
+
+  <section id="spark-removal">
+    <h2>Codex Spark設定の撤去</h2>
+    <p>
+      Codex Sparkは利用制限targetではなく廃止targetとして扱った。live settingsの
+      <code>larm-qwen-background</code>
+      poolから<code>codex-spark</code>を削除し、pool
+      concurrencyを3から2へ縮小した。 <code>runtime.provider-quota/codex-spark</code>も削除し、live
+      settings document内の
+      <code>codex-spark</code
+      >および<code>gpt-5.3-codex-spark</code>参照が0件であることを確認した。
+    </p>
+  </section>
+
+  <section id="impact">
+    <h2>影響</h2>
+    <ul>
+      <li>LLM依存の新規distillationは、少なくとも2026-09-17 23:06 JST以降、正常完了していない。</li>
+      <li>episodeとcoveringのbacklog合計は約8,252件で、さらにpaused・failedが蓄積している。</li>
+      <li>
+        失敗中もprovider callとDB
+        event書き込みを継続するため、無駄な負荷、ログ増加、失敗状態の増加が続く。
+      </li>
+      <li>
+        coveringがknowledge-readyを返しても、旧daemonではfinalize enqueueが失敗し、下流へ進めない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="recovery-order">
+    <h2>推奨する復旧順</h2>
+    <ol>
+      <li>まずLLM依存laneを一時停止し、失敗の増加を止める。</li>
+      <li>
+        3 targetのうち、実probeで成功するtargetだけをpoolへ戻す。LARM認証、Muse fingerprint、Codex
+        model catalogを個別に検証する。
+      </li>
+      <li>
+        current
+        sourceからdaemonをbuildし直して再起動し、<code>cd130e9</code>の修正を稼働imageへ反映する。
+      </li>
+      <li>
+        各Queueで1件ずつcanaryを流し、claimからcompleted、coveringからfinalize
+        enqueueまでを確認する。
+      </li>
+      <li>canary成功後にfailed・paused jobを段階的に再投入する。一括再投入は避ける。</li>
+      <li>
+        全target利用不能時のpool circuit breakerと、時間窓ごとのfailure-rate alertを追加する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="investigation-method">
+    <h2>調査方法</h2>
+    <p>
+      <code>data/context-still-core.sqlite</code>をread-onlyで参照し、7 Queue table、
+      <code>distillation_queue_events</code
+      >、<code>llm_provider_leases</code>、非secret設定を集計した。
+      あわせてLaunchAgent状態、PID、<code>logs/context-stilld.log</code>、local
+      providerのhealth endpoint、
+      Git履歴と稼働開始時刻を確認した。DB更新、Queue操作、daemon再起動は行っていない。
+    </p>
+  </section>
+</article>

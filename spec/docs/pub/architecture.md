@@ -35,8 +35,7 @@ sources + web + agent logs + candidates
   -> staged distillation
   -> draft/active knowledge
   -> task-specific context_compile
-  -> context_decision as the pre-question gate at blocking judgment points
-  -> compile_eval + decision/usage feedback
+  -> compile_eval + usage feedback
   -> new candidates
 ```
 
@@ -51,8 +50,7 @@ sources + web + agent logs + candidates
 | SQLite backend | `src/db/sqlite/`, SQLite repositories | Default local backend for the desktop product path |
 | Server backend | `src/db/`, `drizzle/` | PostgreSQL schema, migrations, and compatibility tooling |
 | Distillation | `src/modules/distillation*`, `src/modules/finalizeDistille/` | Candidate extraction, evidence coverage, and finalization |
-| Context compiler | `src/modules/context-compiler/` | Retrieval, ranking, budget allocation, and pack formatting |
-| Context decision | `src/modules/context-decision/`, `api/modules/context-decision/`, `web/src/modules/context-decision/` | Knowledge-backed autonomous decisions, audit traces, and feedback effects |
+| Context compiler | `src/modules/context-compiler/` | Retrieval, ranking, budget allocation, and pack formatting | Knowledge-backed autonomous decisions, audit traces, and feedback effects |
 | Knowledge graph | `src/modules/landscape/`, `api/modules/graph/` | Graph/replay diagnostics and review-item workflows |
 | Doctor | `src/modules/doctor/` | Health checks and desktop readiness summary |
 | Rust daemon boundary | `crates/context-stilld/` | Resident runtime ownership, lifecycle status, preflight checks, queue inspection, MCP endpoint inspection, and sidecar classification |
@@ -81,8 +79,7 @@ Use `cargo run -q -p context-stilld -- runtime sidecars --json` to inspect the c
 | `context_compile` runs and pack snapshots | Complete for local path | Preserved |
 | `compile_eval` | Complete for local path | Preserved |
 | Runtime settings | Complete for local path | Preserved |
-| Audit logs | Complete for local path | Preserved |
-| Context decision history | SQLite repository exists for local path | Preserved |
+| Audit logs | Complete for local path | Preserved | Preserved |
 | Landscape / overview diagnostics | SQLite-capable for active local diagnostics | Preserved |
 | Queue/distillation automation | Partially migrated; use explicit support checks | Preserved advanced path |
 | Multi-user/auth/server deployment | Not a desktop goal | Future productization work |
@@ -100,8 +97,7 @@ New features should declare one backend target before implementation starts:
 | Evidence | `sources`, `source_fragments`, `vibe_memories`, `agent_diff_entries` | Raw or lightly structured inputs |
 | Knowledge | `knowledge_items`, `knowledge_source_links`, `knowledge_tag_definitions` | Reusable `rule` / `procedure` knowledge and traceability |
 | Distillation | `distillation_target_states`, `find_candidate_results`, `cover_evidence_results`, `distillation_evidence_cache` | Staged extraction and evidence coverage |
-| Compile | `context_compile_runs`, `context_pack_items`, `context_compile_evals`, `knowledge_usage_events` | Compile output, selected items, and usefulness feedback |
-| Decision | `context_decision_runs`, `context_decision_evidence`, `context_decision_coverage_traces`, `context_decision_feedback*` | Autonomous decision history, selected Knowledge evidence, coverage traces, and feedback effects |
+| Compile | `context_compile_runs`, `context_pack_items`, `context_compile_evals`, `knowledge_usage_events` | Compile output, selected items, and usefulness feedback | Autonomous decision history, selected Knowledge evidence, coverage traces, and feedback effects |
 | Landscape | `landscape_review_items`, `landscape_review_item_candidate_links`, `knowledge_community_labels` | Graph/replay review loop and approval-gated candidates |
 | Operations | `sync_states`, `settings`, `audit_logs`, `llm_usage_logs` | Runtime state, settings, audit, and observability |
 

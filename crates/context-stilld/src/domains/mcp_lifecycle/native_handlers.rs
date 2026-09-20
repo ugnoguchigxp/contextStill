@@ -9,7 +9,6 @@ use super::native_common::{
     table_exists, tool_error, with_writer, HandlerEnv,
 };
 use super::native_compile;
-use super::native_decision;
 use super::native_episodes;
 use super::native_knowledge;
 use super::native_memory;
@@ -144,10 +143,6 @@ pub(crate) fn context_compile(params: &Value, context: &NativeToolContext) -> Va
     native_compile::context_compile(params, context)
 }
 
-pub(crate) fn context_decision(params: &Value, context: &NativeToolContext) -> Value {
-    native_decision::context_decision(params, context)
-}
-
 pub(crate) fn search_memory(params: &Value, context: &NativeToolContext) -> Value {
     native_memory::search_memory(params, context)
 }
@@ -166,10 +161,6 @@ pub(crate) fn fetch_episode(params: &Value, context: &NativeToolContext) -> Valu
 
 pub(crate) fn search_knowledge(params: &Value, context: &NativeToolContext) -> Value {
     native_knowledge::search_knowledge(params, context)
-}
-
-pub(crate) fn context_decision_feedback(params: &Value, context: &NativeToolContext) -> Value {
-    native_knowledge::context_decision_feedback(params, context)
 }
 
 pub(crate) fn register_candidates(params: &Value, context: &NativeToolContext) -> Value {

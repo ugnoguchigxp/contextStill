@@ -191,38 +191,6 @@ describe("postgres to sqlite migration", () => {
         ],
       ],
       [
-        "context_decision_runs",
-        [
-          {
-            id: "55555555-5555-4555-8555-555555555555",
-            session_id: "session-1",
-            premise: "Premise",
-            decision_point: "Migrate?",
-            proposed_action: "Apply",
-            options: [],
-            retrieval_hints: {},
-            decision: "proceed",
-            selected_action: "Apply",
-            rejected_actions: [],
-            mandate: "Do it",
-            agent_message: "Proceeding",
-            confidence: 80,
-            confidence_trace: {},
-            autonomy_level: "high",
-            risk_budget: "medium",
-            knowledge_policy: "optional",
-            available_rollback: "restore backup",
-            verification_plan: "run tests",
-            guardrails: {},
-            unsupported_alternatives: [],
-            status: "completed",
-            metadata: { kind: "test" },
-            created_at: now,
-            updated_at: now,
-          },
-        ],
-      ],
-      [
         "llm_usage_logs",
         [
           {
@@ -280,11 +248,6 @@ describe("postgres to sqlite migration", () => {
     expect(
       sqlite.db
         .query<{ count: number }>("select count(*) as count from knowledge_source_links")
-        .get()?.count,
-    ).toBe(1);
-    expect(
-      sqlite.db
-        .query<{ count: number }>("select count(*) as count from context_decision_runs")
         .get()?.count,
     ).toBe(1);
     expect(

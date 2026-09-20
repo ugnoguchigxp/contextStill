@@ -27,9 +27,13 @@ fn now() -> i64 {
         .as_secs() as i64
 }
 
-/// Only explicit quota codes exclude a provider. Generic 429/busy is a short retry.
+/// Explicit quota codes and non-retryable rate limits exclude a provider.
+/// Generic 429/busy remains a short job retry.
 fn quota_retry_at(error: &str) -> Option<i64> {
-    if ![
+    let payload = error
+        .find('{')
+        .and_then(|start| serde_json::from_str::<Value>(&error[start..]).ok());
+    let has_explicit_quota_code = [
         "quota_exhausted",
         "runtime_quota_exceeded",
         "quota_exceeded",
@@ -37,27 +41,61 @@ fn quota_retry_at(error: &str) -> Option<i64> {
         "Subscription quota exhausted.",
     ]
     .iter()
-    .any(|code| error.contains(code))
-    {
+    .any(|code| error.contains(code));
+    fn non_retryable_rate_limit(v: &Value) -> bool {
+        v.as_object().is_some_and(|object| {
+            object.get("code").and_then(Value::as_str) == Some("rate_limit_error")
+                && object.get("retryable").and_then(Value::as_bool) == Some(false)
+        }) || v
+            .as_object()
+            .is_some_and(|object| object.values().any(non_retryable_rate_limit))
+    }
+    if !has_explicit_quota_code && !payload.as_ref().is_some_and(non_retryable_rate_limit) {
         return None;
     }
-    let payload = error
-        .find('{')
-        .and_then(|start| serde_json::from_str::<Value>(&error[start..]).ok());
-    fn timestamp(v: &Value) -> Option<i64> {
-        v.get("retryAt")
-            .or_else(|| v.get("resetsAt"))
-            .or_else(|| v.get("reset_at"))
-            .and_then(Value::as_i64)
-            .or_else(|| {
-                v.as_object()
-                    .and_then(|o| o.values().filter_map(timestamp).max())
+    let current = now();
+    fn parse_absolute_timestamp(v: &Value) -> Option<i64> {
+        let numeric = v
+            .as_i64()
+            .or_else(|| v.as_str()?.trim().parse::<i64>().ok());
+        if let Some(numeric) = numeric {
+            return Some(if numeric > 10_000_000_000 {
+                numeric / 1_000
+            } else {
+                numeric
+            });
+        }
+        let value = v.as_str()?.trim();
+        Connection::open_in_memory()
+            .ok()?
+            .query_row("select unixepoch(?1)", [value], |row| {
+                row.get::<_, Option<i64>>(0)
             })
+            .ok()
+            .flatten()
+    }
+    fn timestamp(v: &Value, current: i64) -> Option<i64> {
+        for key in ["retryAt", "resetsAt", "resetAt", "reset_at"] {
+            if let Some(timestamp) = v.get(key).and_then(parse_absolute_timestamp) {
+                return Some(timestamp);
+            }
+        }
+        for key in ["retryAfter", "retry_after"] {
+            if let Some(seconds) = v.get(key).and_then(Value::as_i64) {
+                return Some(current.saturating_add(seconds.max(60)));
+            }
+        }
+        v.as_object().and_then(|object| {
+            object
+                .values()
+                .filter_map(|value| timestamp(value, current))
+                .max()
+        })
     }
     Some(
         payload
             .as_ref()
-            .and_then(timestamp)
+            .and_then(|value| timestamp(value, current))
             .or_else(|| {
                 let reset = error
                     .split("Your usage window resets at ")
@@ -73,8 +111,8 @@ fn quota_retry_at(error: &str) -> Option<i64> {
                     .ok()
                     .flatten()
             })
-            .unwrap_or_else(|| now() + 300)
-            .max(now() + 60),
+            .unwrap_or(current + 300)
+            .max(current + 60),
     )
 }
 
@@ -250,6 +288,22 @@ mod tests {
             )),
             Some(reset)
         );
+        assert_eq!(
+            quota_retry_at(
+                r#"turn.failed: {"error":{"code":"rate_limit_error","retryable":false,"reset_at":"2099-09-14T00:00:00Z"}}"#
+            ),
+            Some(4093027200)
+        );
+        let retry_after_start = now();
+        let retry_after = quota_retry_at(
+            r#"turn.failed: {"error":{"code":"rate_limit_error","retryable":false,"retry_after":900}}"#,
+        )
+        .unwrap();
+        assert!((retry_after_start + 900..=retry_after_start + 901).contains(&retry_after));
+        assert!(quota_retry_at(
+            r#"HTTP 429 {"error":{"code":"rate_limit_error","retryable":true,"retry_after":30}}"#
+        )
+        .is_none());
     }
     #[cfg(unix)]
     #[test]

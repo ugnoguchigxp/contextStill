@@ -2,10 +2,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest"
 import { listStaticResources, readStaticResource } from "../src/mcp/server.js";
 import { compileEvalTool } from "../src/mcp/tools/compile-eval.tool.js";
 import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
-import {
-  contextDecisionFeedbackTool,
-  contextDecisionTool,
-} from "../src/mcp/tools/context-decision.tool.js";
 import { getCallableToolEntries, getExposedToolEntries } from "../src/mcp/tools/index.js";
 import { searchKnowledgeTool } from "../src/mcp/tools/knowledge.tool.js";
 import { initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
@@ -59,45 +55,6 @@ describeDb("mcp contract", () => {
     expect(properties).not.toHaveProperty("queryEmbedding");
   });
 
-  test("context_decision tool input schema contract", () => {
-    expect(contextDecisionTool.inputSchema).toMatchObject({
-      type: "object",
-      required: ["decisionPoint"],
-    });
-    expect(contextDecisionTool.description).toContain("pre-question gate");
-    expect(contextDecisionTool.description).toContain("Treat reject as a stop condition");
-    const properties = (contextDecisionTool.inputSchema as { properties?: Record<string, unknown> })
-      .properties;
-    expect(properties?.retrievalHints).toMatchObject({
-      type: "object",
-      properties: {
-        technologies: { type: "array", items: { type: "string" } },
-        changeTypes: { type: "array", items: { type: "string" } },
-        domains: { type: "array", items: { type: "string" } },
-      },
-    });
-    expect(properties).not.toHaveProperty("premise");
-    expect(properties).not.toHaveProperty("proposedAction");
-    expect(properties).not.toHaveProperty("options");
-    expect(properties).not.toHaveProperty("knowledgePolicy");
-    expect(properties).not.toHaveProperty("autonomyLevel");
-    expect(properties).not.toHaveProperty("riskBudget");
-    expect(properties).not.toHaveProperty("availableRollback");
-    expect(properties).not.toHaveProperty("verificationPlan");
-  });
-
-  test("context_decision_feedback tool input schema contract", () => {
-    expect(contextDecisionFeedbackTool.inputSchema).toMatchObject({
-      type: "object",
-      required: ["decisionId", "source"],
-    });
-    const properties = (
-      contextDecisionFeedbackTool.inputSchema as { properties?: Record<string, unknown> }
-    ).properties;
-    expect(properties?.value).toEqual({ type: "string", enum: ["good", "bad"] });
-    expect(properties?.source).toEqual({ type: "string", enum: ["human", "ai", "system"] });
-  });
-
   test("compile_eval tool input schema contract", () => {
     expect(compileEvalTool.inputSchema).toMatchObject({
       type: "object",
@@ -137,8 +94,6 @@ describeDb("mcp contract", () => {
       "initial_instructions",
       "context_compile",
       "compile_eval",
-      "context_decision",
-      "context_decision_feedback",
       "search_knowledge",
       "register_candidates",
       "search_memory",
@@ -165,8 +120,8 @@ describeDb("mcp contract", () => {
     expect(text).toContain("## 主要MCPツール");
     expect(text).toContain("initial_instructions");
     expect(text).toContain("context_compile");
-    expect(text).toContain("context_decision");
-    expect(text).toContain("context_decision_feedback");
+    expect(text).not.toContain("context_decision");
+    expect(text).not.toContain("context_decision_feedback");
     expect(text).not.toContain("`register_candidate`");
     expect(text).not.toContain("`register_candidates`");
     expect(text).not.toContain("`session_memo`");

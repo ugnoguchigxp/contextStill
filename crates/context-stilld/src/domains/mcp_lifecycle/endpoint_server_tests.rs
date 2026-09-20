@@ -350,7 +350,7 @@ fn test_server_mcp_initialize_and_flow() {
     assert_eq!(res_tools.status(), reqwest::StatusCode::OK);
     let body_tools: serde_json::Value = res_tools.json().expect("Failed to parse");
     assert!(body_tools["result"]["tools"].is_array());
-    assert_eq!(body_tools["result"]["tools"].as_array().unwrap().len(), 12);
+    assert_eq!(body_tools["result"]["tools"].as_array().unwrap().len(), 10);
 
     // 6. Call resources/list with session ID
     let res_res = client
@@ -453,7 +453,7 @@ fn test_server_mcp_initialize_and_flow() {
     assert!(body_del["ok"].as_bool().unwrap());
     assert_eq!(body_del["sessionId"].as_str().unwrap(), session_id);
 
-    // 12. Delete session with invalid id
+    // 10. Delete session with invalid id
     let res_del_invalid = client
         .delete(format!("{}/mcp", server.url))
         .header("mcp-session-id", "non-existent")

@@ -3,7 +3,7 @@
 context-still exposes a compact MCP surface for coding agents. The tools are designed around this repeatable workflow:
 
 ```text
-initial_instructions -> context_compile -> context_decision as a pre-question gate when a blocker-derived decision would stop progress -> work or stop on reject -> context_decision_feedback when the decision outcome is known -> compile_eval
+initial_instructions -> context_compile -> work -> compile_eval
 ```
 
 ## Client Registration
@@ -65,9 +65,7 @@ Authentication uses a fresh local bearer token on every start. Read `authTokenPa
 | --------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `initial_instructions`      | Load operating rules and hook guidance once per project session                                       |
 | `context_compile`           | Compile task-specific context before work                                                             |
-| `compile_eval`              | Record post-task usefulness scores for compiled context                                               |
-| `context_decision`          | Decide execute/revise/reject/rollback/discard/escalate from Knowledge evidence before asking the user |
-| `context_decision_feedback` | Record Good/Bad or system/AI outcome feedback for a decision                                          |
+| `compile_eval`              | Record post-task usefulness scores for compiled context                                               | Record Good/Bad or system/AI outcome feedback for a decision                                          |
 
 ## Supplemental Tool Inventory
 
@@ -79,7 +77,7 @@ These tools remain exposed for focused inspection, diagnostics, and explicit kno
 | `register_candidates`   | Register positive or negative rule/procedure candidates in one call           |
 | `search_memory`         | Search past sessions and diffs                                                |
 | `fetch_memory`          | Fetch one memory item                                                         |
-| `doctor`                | Diagnose DB, embedding, sync, queue, provider, decision, and compile health   |
+| `doctor`                | Diagnose DB, embedding, sync, queue, provider, and compile health   |
 
 Deprecated hidden aliases remain for compatibility but are not listed:
 
@@ -90,11 +88,8 @@ Deprecated hidden aliases remain for compatibility but are not listed:
 
 1. Call `initial_instructions` once when starting work in this project.
 2. Call `context_compile` with the actual task goal and, for workspace tasks, a stable `projectRef`, explicit `repoKey`, or absolute `repoPath`.
-3. Call `context_decision` before asking the user when the next response would be a confirmation question and autonomous progress might still be possible.
-4. Do the work and verify changes, unless the decision is `reject`.
-5. If `context_decision` returns `reject`, stop the target action and report or wait for confirmation instead of continuing implementation, file changes, or PR creation.
-6. Call `context_decision_feedback` after work based on a decision completes, including at pre-commit time when the outcome is known.
-7. Call `compile_eval` for the compile run used during the task.
+3. Do the work and verify changes.
+4. Call `compile_eval` for the compile run used during the task.
 
 Supplemental tools can be used when clearly needed, for example `doctor` for runtime health diagnostics, `search_memory` / `fetch_memory` for past-session lookup, `search_knowledge` for retrieval debugging, or `register_candidates` for explicit durable knowledge maintenance.
 
@@ -163,50 +158,6 @@ Input:
 | `title`         |       no | Short label for the evaluation.                                                      |
 
 Use after completing the task that used `context_compile`.
-
-### `context_decision`
-
-Purpose: Make an autonomous blocker-derived decision from Knowledge evidence before asking the user.
-
-Input:
-
-| Field            | Required | Description                                                                       |
-| ---------------- | -------: | --------------------------------------------------------------------------------- |
-| `decisionPoint`  |      yes | Decision brief: the decision that would otherwise block progress or ask the user. |
-| `retrievalHints` |       no | Structured search hints: `technologies`, `changeTypes`, `domains`.                |
-| `sessionId`      |       no | External session/thread identifier.                                               |
-| `metadata`       |       no | Optional branch, PR, Todo, task, or caller metadata.                              |
-
-Behavior:
-
-- Builds four Knowledge searches: support, counter-evidence, prior user preference, and risk/guardrail.
-- Persists the decision run, selected evidence, coverage traces, confidence trace, and metadata.
-- Returns one decision, not a menu of options.
-- Use it as a pre-question gate when the agent's next response would ask the user for confirmation but autonomous progress may still be possible.
-- Use it for decisions that would otherwise block progress, such as proceed vs revise, reject, rollback, discard, escalation, PR creation readiness, risky operations, or unfinished Todo/status handling.
-- Treat `reject` as a stop condition. Do not continue the rejected action; report the decision or wait for user confirmation instead.
-- In the current v1 implementation, `execute` is returned when Knowledge support clears the confidence threshold; otherwise it returns `escalate`.
-
-Output is compact and intended to stay under an 8k token response budget. It includes `decisionId`, decision, mandate, confidence, the LLM-written `agentMessage`, coverage summary, and feedback handle. Evidence bodies and source refs are not returned by the MCP tool; they remain persisted for audit and can be inspected from the Decision screen/detail API. The generated `agentMessage` may use short selected-Knowledge excerpts to explain the supporting prior tendency, best-practice rule, or procedure guidance.
-
-### `context_decision_feedback`
-
-Purpose: Feed Good/Bad or system/AI outcome feedback back into the decision record and effects table after work based on a decision completes.
-
-Input:
-
-| Field        |    Required | Description                                                       |
-| ------------ | ----------: | ----------------------------------------------------------------- |
-| `decisionId` |         yes | ID returned by `context_decision`.                                |
-| `source`     |         yes | `human`, `ai`, or `system`.                                       |
-| `value`      | conditional | Human `good` or `bad`.                                            |
-| `outcome`    | conditional | AI/system outcome such as `success`, `failed`, or `discarded_pr`. |
-| `reason`     |          no | Short inferred reason.                                            |
-| `metadata`   |          no | Optional trace data.                                              |
-
-Human feedback is intentionally Good/Bad only.
-
-Record feedback as soon as the outcome is known. Pre-commit is an appropriate point when verification has completed and the result of the decision is clear.
 
 ### `search_knowledge`
 

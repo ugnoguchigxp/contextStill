@@ -66,7 +66,7 @@ export async function searchEpisodes(input: EpisodeCardSearchInput) {
 
 export async function recordEpisodeUsage(input: {
   episodeIds: string[];
-  usageKind: "compile" | "decision";
+  usageKind: "compile";
 }) {
   return incrementEpisodeUsageCounts(input);
 }

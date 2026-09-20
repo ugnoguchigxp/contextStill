@@ -12,7 +12,6 @@ mod memory_recall_contract;
 mod memory_recall_projection;
 mod native_common;
 pub(crate) mod native_compile;
-mod native_decision;
 mod native_episodes;
 mod native_handlers;
 #[cfg(test)]

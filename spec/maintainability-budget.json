@@ -17,13 +17,11 @@
     "src/db/sqlite/core-schema.ts": 1367,
     "src/modules/context-compiler/context-compiler.repository.sqlite.ts": 1454,
     "src/modules/context-compiler/context-compiler.repository.ts": 1207,
-    "src/modules/context-decision/context-decision.service.ts": 1713,
     "src/modules/coverEvidence/llm-runner.ts": 1543,
     "src/modules/queue/core/worker.ts": 2465,
     "web/src/modules/admin/components/graph.page.tsx": 2887,
     "web/src/modules/admin/components/knowledge.page.tsx": 1538,
     "web/src/modules/admin/components/sources.page.tsx": 1583,
     "web/src/modules/context-compiler/components/context-compiler.page.tsx": 1364,
-    "web/src/modules/context-decision/components/context-decision.page.tsx": 1808
   }
 }
