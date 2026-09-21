@@ -1,0 +1,768 @@
+<article lang="ja">
+  <h1>Tauri / Rust共通ビルド環境基盤：設計メモと段階的移行計画</h1>
+  <p>
+    2026年9月21日時点のFoundry、contextStill、SAAAの調査に基づく。NightWorkersは停止済みのため対象外とする。本書の結論は、依存の取得元とコンパイル結果を同じ単位で共有しないことである。Rustup
+    toolchain、Cargoのregistry / Git
+    download、内容アドレス型のコンパイルキャッシュ、検証済みのnative
+    prefixはユーザー環境で共有する。一方、Cargo.lock、Cargo feature、build
+    script、Tauri設定、target出力、最終成果物はプロジェクトまたはcheckoutごとに分離する。
+  </p>
+  <section id="decision">
+    <h2>決定要約</h2>
+    <ol>
+      <li>
+        <code>CARGO_HOME</code
+        >は既定の<code>~/.cargo</code>を共有し、crates.io archive /
+        sourceとGit database /
+        checkoutをCargo自身の排他制御に委ねる。Cargo.lockは各リポジトリに残す。
+      </li>
+      <li>
+        <code>CARGO_TARGET_DIR</code
+        >はリポジトリ間で共有しない。環境側へ移す場合も、project ID、checkout ID、build unit、target
+        tripleで分離する。異なるworktreeも別targetとする。
+      </li>
+      <li>
+        再利用は共有targetではなく<code>sccache</code>で行う。Rustだけでなく、target固有のApple
+        clang / clang++設定とCMake compiler launcherを通じて<code
+          >cc</code
+        >
+        crateとCMakeのcompileも同じcacheへ載せる。compiler、入力、flag、環境を含むcache
+        keyで安全に共有し、targetは削除可能な作業領域として扱う。
+      </li>
+      <li>
+        SQLiteとlibwebpは当面bundledを維持する。現在のcrateは別version・別featureであり、Homebrewの同一ライブラリへ強制的に切り替えると再現性と配布互換性を失う。コンパイルコストの共有はsccacheに任せる。
+      </li>
+      <li>
+        OpenSSL、FFmpeg等、将来system native
+        dependencyが必要になった場合だけ、Foundry管理のversioned native
+        prefixを使用する。グローバルな<code>LDFLAGS</code>や<code>PKG_CONFIG_PATH</code>は設定せず、Foundry経由のプロセスに限定して注入する。
+      </li>
+      <li>
+        Foundryは環境のsource of truthではなく、宣言の検証、setupのplan /
+        apply、環境変数の生成、doctor、cacheの観測と限定削除を担う。各リポジトリの<code>rust-toolchain.toml</code>とCargo.lockが要求versionのsource
+        of truthであり続ける。
+      </li>
+    </ol>
+  </section>
+  <section id="implementation-status">
+    <h2>2026年9月21日の実装結果</h2>
+    <p>
+      初期基盤をFoundryへ実装し、contextStillとSAAAをproject宣言へ登録した。Foundryは<code>doctor rust</code>、<code>cache status</code>、<code>setup rust</code>、<code>env rust</code>、<code>run rust</code>を提供する。<code>foundry-rust.toml</code>にproject
+      ID、Rust toolchain、独立したCargo build
+      unitを宣言し、外部targetをproject、checkout、unit、host
+      tripleで分離する。共有するのは既定のCargo download cacheとsccacheだけである。
+    </p>
+    <p>
+      macOS arm64環境へRust 1.92.0、sccache 0.18.0、pkgconf 3.0.7、CMake 4.3.1、Ninja
+      1.13.2を準備した。ユーザーのshell
+      rcと<code>~/.cargo/config.toml</code>は変更していない。contextStillには<code>rust-toolchain.toml</code>を追加し、1.92.0、rustfmt、Clippyを固定した。SQLiteとlibwebpはbundledのまま維持し、Cargo.lock、build.rs、Tauri設定は変更していない。
+    </p>
+  </section>
+  <section id="maximum-sharing">
+    <h2>最大共通化後の配置</h2>
+    <p>
+      共通化は可能であり、repositoryに残すコンパイル環境資材は原則として宣言だけにできる。実体は次の共有層へ集約する。targetの内容だけは混ぜないが、配置root、容量制限、観測、削除手順は共通化するため、運用上はFoundryが一元管理する。
+    </p>
+    <table>
+      <caption>
+        ユーザー環境へ集約する実体
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">共有層</th>
+          <th scope="col">共有する実体</th>
+          <th scope="col">repository側に残すもの</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Toolchain</th>
+          <td>rustup本体、Rust toolchain、component、cross target、rust-src、llvm-tools</td>
+          <td><code>rust-toolchain.toml</code>によるversionとcomponent要求</td>
+        </tr>
+        <tr>
+          <th scope="row">Cargo source</th>
+          <td>crates.io index / archive / 展開source、Git database / checkout</td>
+          <td>Cargo.tomlとCargo.lock</td>
+        </tr>
+        <tr>
+          <th scope="row">Build tools</th>
+          <td>
+            sccache、pkg-config、CMake、Ninja、必要なLLVM tool、cargo補助toolのversioned
+            installation
+          </td>
+          <td>必要toolとversion rangeの宣言</td>
+        </tr>
+        <tr>
+          <th scope="row">Compile cache</th>
+          <td>rustc出力、clang / clang++出力、cache統計、namespace metadata</td>
+          <td>cache利用可否と再現性laneの宣言</td>
+        </tr>
+        <tr>
+          <th scope="row">Native dependency</th>
+          <td>
+            source archive、header、static / dynamic library、pkg-config / CMake
+            metadata、license、checksum
+          </td>
+          <td>dependency名、version、link mode、feature</td>
+        </tr>
+        <tr>
+          <th scope="row">macOS build profile</th>
+          <td>SDK / clang検出結果、linker設定、deployment target方針、環境変数template</td>
+          <td>profile revisionのpinと例外だけ</td>
+        </tr>
+        <tr>
+          <th scope="row">Target management</th>
+          <td>共通cache root、index、容量quota、LRU / age policy</td>
+          <td>project / checkout / build unitごとに隔離されたtarget内容</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      これにより、新しいTauri / Rust
+      projectは小さな宣言とCargo.lockを追加するだけで同じ環境を利用できる。Foundry、contextStill、SAAAで重複するdownload、toolchain、build
+      tool、Rust compile、同一C / C++ sourceのcompile、native
+      prefixは共有される。共有不能なのは製品source、dependency解決結果、build.rsが生成したproject固有物、link済み最終成果物である。
+    </p>
+  </section>
+  <section id="investigation">
+    <h2>現状調査</h2>
+    <table>
+      <caption>
+        リポジトリ別のRust構成
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">toolchain / Cargo構成</th>
+          <th scope="col">native dependency / build script</th>
+          <th scope="col">現在の分離状態</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Foundry</th>
+          <td>
+            workspace 1個、Cargo.lock 1個。Rust 1.92.0、profile=minimal、edition
+            2024、rust-version=1.92。CIも1.92.0を指定する。
+          </td>
+          <td>
+            <code>webp 0.3</code
+            >から<code>libwebp-sys 0.9.6</code>を使用する。同crateは同梱C
+            sourceを<code>cc</code>でbuildし、system
+            libwebpを探索しない。repository固有build.rsはない。
+          </td>
+          <td>
+            repository直下のtargetは約684
+            MiB。現在のdoctorは画像機能の実行時診断だけで、Rust環境診断はない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">contextStill</th>
+          <td>
+            workspace 1個、Cargo.lock 1個、edition
+            2021。<code>rust-toolchain.toml</code>がなく、CIもstableを使用する。調査時のdefault
+            stableではrustc 1.98.0本体は存在するが、rustup経由のcargo実行が「not
+            applicable」で失敗した。1.92.0のcargoは実行できた。
+          </td>
+          <td>
+            <code>rusqlite 0.32</code>の<code
+              >bundled</code
+            >
+            featureにより<code>libsqlite3-sys 0.30.1</code>をbuildする。repository内のsqlite-vec
+            C sourceもbuild.rsと<code>cc</code>でbuildする。HTTP
+            TLSはrustls、macOS credentialはSecurity.frameworkでありOpenSSL依存はない。
+          </td>
+          <td>repository直下のtargetは約3.5 GiB。共通Cargo configやbuild環境変数はない。</td>
+        </tr>
+        <tr>
+          <th scope="row">SAAA</th>
+          <td>
+            Rust 1.92.0、profile=minimal、componentsはrustfmtとClippy。Tauri本体と4つの独立Rust
+            packageがそれぞれCargo.lockとtargetを持つ。CIは1.92.0と<code>Swatinem/rust-cache</code>をbuild
+            unitごとに使用する。
+          </td>
+          <td>
+            Tauri 2.11.5、<code>rusqlite 0.37</code>のbundled
+            SQLite（<code>libsqlite3-sys 0.35.0</code>）、rustls、Security.framework。Git依存<code>tauri-plugin-llm-fetch</code>はcommit
+            SHA固定。src-tauri/build.rsはTauri buildに加え、node_modules内Codex
+            runtimeのstagingとBunによるWebFetch sidecar buildを行う。これはSAAA固有成果物である。
+          </td>
+          <td>
+            src-tauri/target/debugが約112.3 GiB、4つの独立packageのtarget合計が約2.8
+            GiBで、SAAA全体は約115 GiB。target統合より、保持期限とincremental /
+            cache方針の見直しが先である。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      ユーザー環境にはApple clang 17.0.0、macOS SDK 26.2、CMake 4.3.1、Homebrew SQLite
+      3.53.4、FFmpeg 8.1.2_1、LLVM
+      23.1.1がある。調査開始時は<code>pkg-config</code>、Ninja、sccacheがPATH上になかったが、移行時に導入した。Rust
+      1.92.0にはrustc、cargo、rustfmt、Clippy、llvm-tools、rust-srcが導入済みである。共通のCargo
+      configおよび関連する<code>RUSTFLAGS</code>、<code>RUSTC_WRAPPER</code>、<code>PKG_CONFIG_PATH</code>等は設定されていない。
+    </p>
+    <p>
+      共有済み領域はCargo registry約1.69 GiB、Cargo Git約156 MiB、rustup約4.76
+      GiBである。contextStillとSAAAのoffline
+      metadata生成は未取得crateがあり完走しなかったため、native
+      crateの棚卸しは各Cargo.toml、Cargo.lock、取得済みcrateのbuild.rsを照合した。調査のための追加downloadやbuildは行っていない。
+    </p>
+  </section>
+  <section id="ownership">
+    <h2>共有境界と所有権</h2>
+    <table>
+      <caption>
+        資材ごとの配置と共有単位
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">資材</th>
+          <th scope="col">配置</th>
+          <th scope="col">共有単位</th>
+          <th scope="col">理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Rust toolchain / component / target</th>
+          <td>
+            <code>RUSTUP_HOME</code
+            >（既定は<code>~/.rustup</code>）
+          </td>
+          <td>ユーザー × toolchain × host triple</td>
+          <td>rustupがversion別に管理し、複数repositoryから安全に参照できる。</td>
+        </tr>
+        <tr>
+          <th scope="row">crates.io archive / source、Git database / checkout</th>
+          <td>
+            <code>CARGO_HOME</code
+            >（既定は<code>~/.cargo</code>）
+          </td>
+          <td>ユーザー × Cargo source identity</td>
+          <td>
+            Cargoのchecksum、commit identity、file lockを利用する。repositoryごとの複製は不要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">sccache object</th>
+          <td><code>~/Library/Caches/Foundry/rust-build/sccache/v1</code></td>
+          <td>ユーザー × compiler / input / flag / env key</td>
+          <td>内容アドレス型でcross-project再利用でき、miss時は通常compileへfallbackできる。</td>
+        </tr>
+        <tr>
+          <th scope="row">managed native prefix</th>
+          <td><code>~/Library/Application Support/Foundry/rust-build/native/&lt;name&gt;/&lt;version&gt;/&lt;platform-arch-abi&gt;</code></td>
+          <td>dependency version × platform × architecture × ABI / build option</td>
+          <td>
+            header、static / dynamic library、pkg-config metadata、license、checksum
+            manifestを一体としてimmutableにする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Cargo target</th>
+          <td>
+            初期はrepository内。移行後は<code>~/Library/Caches/Foundry/rust-build/targets/&lt;project&gt;/&lt;checkout&gt;/&lt;unit&gt;/&lt;triple&gt;</code>も選択可能。
+          </td>
+          <td>project × checkout / worktree × build unit × target triple</td>
+          <td>
+            build.rs出力、feature union、profile、source
+            path、最終binaryが混在するためcross-project共有しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">環境profile</th>
+          <td><code>~/.config/foundry/rust-build/profiles/&lt;revision&gt;</code></td>
+          <td>immutable revision</td>
+          <td>
+            toolchain、SDK、linker、native prefix、cache policyをmanifestとJSON診断結果で追跡する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            Cargo.toml、Cargo.lock、build.rs、Tauri config、source、resource、最終成果物
+          </th>
+          <td>各repository</td>
+          <td>repository / package</td>
+          <td>製品の依存graph、feature、生成規則、bundle内容であり環境基盤へ移してはならない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      repositoryには小さな宣言ファイルだけを置く。候補名は<code>foundry-rust.toml</code>で、安定したproject
+      ID、要求profile revision、build unit、target保持方針、許可するnative dependency
+      modeを記載する。絶対path、Homebrew prefix、secret、機種固有SDK pathは記載しない。toolchain
+      versionは<code>rust-toolchain.toml</code>を正本とし、宣言ファイルへ重複させる場合はdoctorが一致を必須検証する。
+    </p>
+  </section>
+  <section id="cargo-cache">
+    <h2>Cargo download、target、コンパイルキャッシュ</h2>
+    <h3>Download cache</h3>
+    <p>
+      <code>CARGO_HOME</code
+      >のregistryとgitは全対象で共有する。Cargo.lockのsource、version、checksumまたはGit
+      commitが選択を決めるため、共有cacheがdependency
+      versionを決定することはない。通常buildは<code>--locked</code>を必須とし、再現性試験では<code>--frozen</code>を使う。private
+      registry credentialはCargo標準credential providerの領域に残し、Foundry
+      profileや診断出力へ複製しない。
+    </p>
+    <h3>Target output</h3>
+    <p>
+      targetは共有cacheではなく、削除して再生成できるproject固有作業領域である。同じcrate名・versionでもfeature、build.rs環境、source
+      path、linker、SDK、profileが異なる。単一targetへ全repositoryを集約すると、fingerprintの想定外共有、同時buildのlock競合、誤った最終binaryの回収、障害時の全project同時invalid化を招く。したがって共有しない。
+    </p>
+    <p>
+      環境側へtargetを置く目的は再利用ではなく、容量計測、LRU / age-based
+      cleanup、checkout削除時の回収を一元化することである。keyにはproject IDだけでなくcheckout
+      IDとbuild unitを含める。branch名やrepository名だけは衝突するため使わない。checkout
+      IDはFoundryがcanonical pathとrepository
+      identityから生成し、diagnosticでは対応表を示す。cleanは常に解決済みの単一keyを対象とし、cache
+      root全体を暗黙に削除しない。
+    </p>
+    <h3>Compiler cache</h3>
+    <p>
+      <code>RUSTC_WRAPPER=sccache</code>と共有cache directoryをFoundry
+      が子processへ設定する。全repositoryのshellへ恒久exportはしない。共有cacheの再利用とtarget容量を優先し、初期profileは<code>CARGO_INCREMENTAL=0</code>を既定とした。release、CI相当、clean
+      rebuildは再利用重視profileを候補とする。proc macro、build
+      script、link、最終bundleはsccacheだけで完全共有できないため、hit率だけを成功指標にしない。
+    </p>
+    <p>
+      C /
+      C++については<code>CC_&lt;target&gt;</code>と<code>CXX_&lt;target&gt;</code>をFoundryのversioned
+      target固有の<code>CC_*</code>と<code>CXX_*</code>をprofileで確定したApple
+      clang / clang++へ向ける。<code>cc</code>
+      crateは<code>RUSTC_WRAPPER</code>を利用し、CMakeにはcompiler
+      launcherを明示する。これによりFoundryのlibwebp、contextStillのsqlite-vec、両projectのbundled
+      SQLiteを、source versionとflagが一致する範囲でproject /
+      worktreeを越えて再利用できる。この設定を認識しないbuild
+      systemはdoctorが検出し、直接clangへfallbackした事実を測定結果へ残す。
+    </p>
+    <p>
+      Foundry管理tool自体も共有する。<code>~/Library/Application Support/Foundry/rust-build/tools/&lt;tool&gt;/&lt;version&gt;/&lt;platform-arch&gt;</code>へimmutableに配置し、sccache、pkg-config、CMake、Ninja、必要なcargo補助toolを全projectから参照する。HomebrewのPATH順序には依存せず、profileが解決した絶対pathを子processだけに渡す。
+    </p>
+  </section>
+  <section id="native">
+    <h2>C / C++依存の共通化</h2>
+    <p>依存ごとに次の3 modeを明示し、暗黙の探索順序に任せない。</p>
+    <table>
+      <caption>
+        Native dependency mode
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">mode</th>
+          <th scope="col">用途</th>
+          <th scope="col">具体策</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>bundled</code>（既定）</th>
+          <td>SQLite、libwebp、配布binaryへ組み込む小〜中規模C依存</td>
+          <td>
+            Cargo.lockとcrate sourceを正本にし、Rust
+            compileは<code>RUSTC_WRAPPER</code>、<code>cc</code>等のC
+            / C++ compileはFoundryのcompiler wrapperを通してsccacheで共有する。system
+            library用のenvは注入しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>managed-prefix</code></th>
+          <td>FFmpeg、OpenSSL等、system ABIを使うことを明示した依存</td>
+          <td>
+            Foundryがchecksum付きmanifestからversioned
+            prefixを準備する。<code>PKG_CONFIG_PATH</code>、<code>CMAKE_PREFIX_PATH</code>、dependency固有のinclude
+            / lib envを子processだけに設定する。link方式、minimum
+            macOS、architecture、licenseをmanifestへ含める。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>system-probe</code>（開発限定）</th>
+          <td>Xcode SDK / framework、明示的に許可したHomebrew formula</td>
+          <td>
+            doctorがpath、version、architecture、link testを検証する。CI /
+            releaseでの利用は禁止するか、同一fingerprintを要求する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      現在のSQLiteはcontextStillがlibsqlite3-sys 0.30.1、SAAAが0.35.0で、いずれもbundled
+      featureを明示している。Homebrew SQLite 3.53.4へ揃える変更はCargo
+      featureとruntime配布契約を変えるため、本基盤の移行には含めない。Foundryのlibwebp-sys
+      0.9.6もsystem libwebpを探索しないため同様である。OpenSSLは現行3repositoryのmacOS build
+      graphに必須ではなく、FFmpegもCargo dependencyではない。存在するHomebrew
+      formulaを「共通依存」とみなしてenvへ自動注入しない。
+    </p>
+    <p>
+      Apple
+      clang、<code>xcrun</code>、SDK、linkerはXcode側の資材として共有する。Foundryは<code>xcode-select -p</code>、SDK
+      path / version、clang version、host / target architecture、minimum deployment
+      targetをfingerprint化する。SDK absolute
+      pathそのものをrepositoryへ保存せず、build開始時に解決する。profileが要求するSDK
+      familyと実環境が一致しなければfail-fastする。
+    </p>
+  </section>
+  <section id="foundry">
+    <h2>Foundryの責務と非責務</h2>
+    <h3>責務</h3>
+    <ul>
+      <li>
+        <code>foundry rust doctor [--json]</code>：rustup / rustc / cargo / component、Xcode /
+        SDK / clang / linker、pkg-config / CMake / Ninja / sccache、native prefix、Cargo download
+        cache、target容量、profile driftを検査する。各項目はstatus、観測値、期待値、remediation
+        codeを返す。
+      </li>
+      <li>
+        <code>foundry rust setup --plan</code
+        >：変更内容、download、必要容量、導入先、rollback先を表示する。<code>--apply</code>を明示した場合だけrustup
+        component、Foundry管理tool、native prefixを導入する。Xcode
+        licenseやOS設定など対話が必要な作業は手順を示して停止する。
+      </li>
+      <li>
+        <code>foundry rust run --project ... -- cargo ...</code
+        >またはenv出力：選択profileの環境変数を子processへ限定して渡し、実行前後にprofile
+        fingerprint、target key、RustおよびC / C++のsccache統計を記録する。
+      </li>
+      <li>
+        Rust toolchain、component、cross
+        target、sccache、pkg-config、CMake、Ninja、LLVM補助tool、cargo補助toolをversioned共有tool
+        storeへ一度だけ導入し、profileから全projectへ提供する。
+      </li>
+      <li>
+        <code>foundry rust cache status / prune</code>：download、sccache、project
+        targetを別categoryとして表示する。pruneはdry-runを既定とし、project / checkout / age /
+        sizeで対象を限定する。
+      </li>
+      <li>
+        immutable profile manifest、native artifact checksum、license / provenance、診断schema
+        versionの管理。個人情報を含むabsolute checkout pathはlocal indexだけに保存する。
+      </li>
+    </ul>
+    <h3>非責務</h3>
+    <ul>
+      <li>
+        Cargo dependency解決、Cargo.lock更新、Cargo featureの一方的変更、repositoryのbuild
+        commandの置換。
+      </li>
+      <li>
+        SAAAのCodex runtimeやWebFetch sidecar、Tauri resource、icon、署名、notarization、最終app
+        bundleの共有。
+      </li>
+      <li>全repositoryへ同一のRUSTFLAGS、linker、deployment targetを強制すること。</li>
+      <li>
+        Homebrew全体のupgrade、ユーザーのshell
+        rcや<code>~/.cargo/config.toml</code>の無断編集。
+      </li>
+      <li>
+        targetをcross-project artifact storeとして扱うこと、またはcache
+        hitをbuild成功の代用にすること。
+      </li>
+    </ul>
+  </section>
+  <section id="profile-contract">
+    <h2>環境profile contract</h2>
+    <p>
+      profile revisionはimmutableとし、最低限次を保持する：schema version、host triple、許可target
+      triple、Rust channel / version / components、Apple clang / SDK制約、linker、managed native
+      dependencyのname / version / checksum / link mode、sccache version /
+      namespace、既定cache上限、環境変数allowlist。生成したprofileを上書きせず、新revisionを作って<code
+        >current</code
+      >
+      pointerをatomicに切り替える。
+    </p>
+    <p>
+      環境変数はdeny-by-defaultのallowlistとする。<code>RUSTC_WRAPPER</code>、<code>SCCACHE_DIR</code>、<code>CARGO_INCREMENTAL</code>、必要な<code>PKG_CONFIG_PATH</code>、<code>CMAKE_PREFIX_PATH</code>、dependency固有変数、target固有linkerだけを生成する。credential、PATH全体、ユーザーの汎用<code
+        >CPPFLAGS</code
+      >
+      /
+      <code>LDFLAGS</code
+      >をprofileへ記録しない。実行時には環境fingerprintをsecret除外済みJSONで保存する。
+    </p>
+  </section>
+  <section id="migration">
+    <h2>段階的移行計画</h2>
+    <ol>
+      <li>
+        <strong>Milestone 0 — 完了。</strong> 3repositoryでtoolchain、Cargo.lock hash、build
+        command、SDK、target容量、clean / warm
+        build時間を採取する。既存targetを削除せず、一時的なtarget
+        directoryで測る。SAAAはsrc-tauriと4 packageを別build unitとして記録する。
+      </li>
+      <li>
+        <strong>Milestone 1 — 完了。</strong> 読み取り専用doctorとJSON
+        schemaを先に実装し、現在判明している<code>pkg-config</code> /
+        sccache不在、contextStillのdefault cargo不調、toolchain / CI差分、SDK fingerprint、SAAA
+        target容量を再現できるようにする。この段階ではsetup、env注入、cache削除を行わない。
+      </li>
+      <li>
+        <strong>Milestone 2 — 初期版完了。</strong> Rust 1.92.0を最初のmacOS arm64
+        profile候補とし、required component、sccache、pkg-config、CMake、Ninja、C / C++ compiler
+        設定を準備した。profileをversioned directoryへ作り、setupを冪等化した。toolの独自immutable
+        store、profile pointer、rollbackコマンドは後続とする。XcodeとHomebrewは自動upgradeしない。
+      </li>
+      <li>
+        <strong>Milestone 3 — 完了。</strong> build
+        graphが小さいcontextStillへ共有sccacheを導入し、<code>rust-toolchain.toml</code>を1.92.0へ固定した。SQLiteとsqlite-vecはbundledのまま、Cargo.lockとbuild.rsは変更しない。clean
+        / warm / no-op結果が同一であることを確認後、project-scoped external
+        targetを標準配置へ切り替え、targetの容量管理もFoundryへ集約する。
+      </li>
+      <li>
+        <strong>Milestone 4 — build完了、test差分を記録。</strong>
+        src-tauriをwrapperへ移す。build.rsがBunとnode_modulesを参照しresourceを生成するため、Rust
+        cache hit時にもsidecar更新契約が保たれることを重点検証する。既存約112 GiB
+        targetは新laneのcheck完了後、ディスク残量が208
+        MiBまで低下したため、Cargoのunit単位cleanで削除した。新しい外部targetでdesktop
+        checkは成功したが、全testは現在の作業ツリー由来の5件の期待値差分を残した。
+      </li>
+      <li>
+        <strong>Milestone 5 — 完了。</strong> 4つの独立Cargo.lock / targetをbuild
+        unitとして個別登録する。単一workspace /
+        Cargo.lockへの統合はこの環境基盤の前提にしない。後日SAAA内部の依存管理として検討する場合も別設計・別検証とする。
+      </li>
+      <li>
+        <strong>Milestone 6 — native managed prefix。</strong> 実際にsystem native
+        dependencyを要求するprojectが現れた時点で、最初の1依存だけをcanary化する。SQLite /
+        libwebpを実験台にせず、明示的にsystem
+        linkを要求するFFmpeg等でABI、配布、license、rollbackを検証してから拡張する。
+      </li>
+    </ol>
+    <p>
+      各Milestoneはopt-inで、従来の直接<code>cargo</code>実行をfallbackとして残す。Foundry
+      wrapperが壊れてもrepositoryのCargo.toml、Cargo.lock、build.rsだけでbuild可能であることを恒久contractとする。
+    </p>
+  </section>
+  <section id="failure-update-rollback">
+    <h2>破損、更新、OS更新、rollback</h2>
+    <table>
+      <caption>
+        障害単位と復旧方法
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">事象</th>
+          <th scope="col">検出</th>
+          <th scope="col">処置</th>
+          <th scope="col">影響範囲</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">crates.io archive / source破損</th>
+          <td>Cargo checksum失敗、doctorの限定verify</td>
+          <td>
+            該当package / versionだけquarantineし、online時に再取得する。Cargo.lockは変更しない。
+          </td>
+          <td>単一source artifact</td>
+        </tr>
+        <tr>
+          <th scope="row">Git cache破損</th>
+          <td>commit checkout失敗、locked / frozen build失敗</td>
+          <td>URLとcommitで対象を特定し、該当checkout / databaseだけquarantineして再取得する。</td>
+          <td>単一Git source</td>
+        </tr>
+        <tr>
+          <th scope="row">sccache不整合</th>
+          <td>cache read error、再buildとの差分</td>
+          <td>wrapperを外して再buildする。namespaceをbumpし、旧namespaceは後でpruneする。</td>
+          <td>cache namespace。targetとsourceは無傷。</td>
+        </tr>
+        <tr>
+          <th scope="row">target破損</th>
+          <td>Cargo fingerprint / linker error、clean targetで成功</td>
+          <td>該当project / checkout / unit keyだけを削除して再buildする。</td>
+          <td>単一build unit</td>
+        </tr>
+        <tr>
+          <th scope="row">native prefix破損 / ABI不一致</th>
+          <td>checksum、architecture、pkg-config、compile / link smoke</td>
+          <td>prefix revisionをquarantineし、直前のimmutable revisionへpointerを戻す。</td>
+          <td>そのprefixをpinしたprojectだけ</td>
+        </tr>
+        <tr>
+          <th scope="row">Rust / dependency更新</th>
+          <td>toolchainまたはCargo.lock hash変更</td>
+          <td>
+            新profile / cache keyでcanary
+            buildし、旧profileを保持する。lock更新と環境更新を同一変更に混ぜない。
+          </td>
+          <td>明示的に移行したproject</td>
+        </tr>
+        <tr>
+          <th scope="row">macOS / Xcode / SDK更新</th>
+          <td>doctor fingerprint drift</td>
+          <td>
+            旧profileを不適合として表示し、新SDK fingerprintのprofileとtarget
+            namespaceで再検証する。既存cacheは即時削除しない。
+          </td>
+          <td>host ABI / SDKに依存するbuild</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      rollbackはprofile pointerとrepository側profile pinを戻すだけで成立させる。setupがshell
+      rc、<code>~/.cargo/config.toml</code>、Homebrew global
+      stateを恒久変更しなければ、rollbackは局所的である。旧profileは最低1世代または定義した保持期間を残す。容量不足時も、まずproject
+      targetと旧sccache namespaceを候補にし、Cargo downloadとrustup toolchainを無条件削除しない。
+    </p>
+  </section>
+  <section id="measurement">
+    <h2>実測計画と受入基準</h2>
+    <table>
+      <caption>
+        各repository / build unitで採取するlane
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">lane</th>
+          <th scope="col">初期状態</th>
+          <th scope="col">測るもの</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">A: dependency cold</th>
+          <td>一時CARGO_HOME、一時target、sccache無効</td>
+          <td>取得時間、取得bytes、compile時間、失敗dependency。通常環境を削除して作らない。</td>
+        </tr>
+        <tr>
+          <th scope="row">B: download warm / compile cold</th>
+          <td>共有CARGO_HOME、一時target、空のsccache namespace</td>
+          <td>初回compile時間、最大RSS、target増分、sccache write量。</td>
+        </tr>
+        <tr>
+          <th scope="row">C: cross-project cache warm</th>
+          <td>共有CARGO_HOME、新しい一時target、warm sccache</td>
+          <td>再build時間、hit / miss / error、target増分。共有効果の主指標。</td>
+        </tr>
+        <tr>
+          <th scope="row">D: same checkout rebuild</th>
+          <td>既存target、1つのRust sourceだけ変更</td>
+          <td>incremental有効 / 無効の時間、再compile数、target増分。</td>
+        </tr>
+        <tr>
+          <th scope="row">E: no-op</th>
+          <td>変更なし</td>
+          <td>
+            build.rs再実行、link有無、終了時間。SAAA sidecarが不要に毎回buildされるかも確認する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">F: reproduction</th>
+          <td>新規macOS user相当、宣言とlockだけ</td>
+          <td>
+            setupから<code>--locked</code>
+            build完了までの手順数、対話、network artifact hash、成果物hash / 挙動。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      command、Git commit、Cargo.lock hash、profile revision、host / target triple、SDK / clang /
+      rustc / Cargo / sccache version、開始 / 終了時刻、wall / user / sys、最大RSS、download
+      bytes、target / Cargo cache / sccacheの前後容量、sccache統計、成果物path /
+      hashをJSONで保存する。各laneは最低3回実施し中央値と範囲を示す。
+    </p>
+    <p>
+      受入条件は、全repositoryが従来commandとFoundry wrapperの双方で<code
+        >--locked</code
+      >
+      build / testに成功すること、cross-projectでtarget
+      pathが重複しないこと、同一profileの再現手順が無対話または明示されたOS手順だけで完了すること、cache無効化時にも正しいbuildへfallbackすること、SAAAのTauri
+      resourceとsidecarが欠落しないことである。性能目標値はbaseline採取後に設定し、先に「何%以上速い」と固定しない。
+    </p>
+    <h3>今回のcanary実測</h3>
+    <table>
+      <caption>
+        共有環境を使った初回実行結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">結果</th>
+          <th scope="col">wall time</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Foundry workspace test</th>
+          <td>13件成功。外部targetで初回約19.65秒、変更なし再実行約2.31秒。</td>
+          <td>19.65秒 / 2.31秒</td>
+        </tr>
+        <tr>
+          <th scope="row">contextStill check</th>
+          <td>workspace、lockedで成功。</td>
+          <td>19.66秒</td>
+        </tr>
+        <tr>
+          <th scope="row">contextStill test</th>
+          <td>491件成功、5件ignore。</td>
+          <td>69.54秒</td>
+        </tr>
+        <tr>
+          <th scope="row">SAAA subpackages</th>
+          <td>
+            4 unitすべて成功。personal-state 50件、reasoning-contract 3件、larm-session
+            15件以上、reasoning-mcp全件。
+          </td>
+          <td>約8.07〜43.73秒 / unit</td>
+        </tr>
+        <tr>
+          <th scope="row">SAAA desktop check</th>
+          <td>lockedで成功。現在の作業ツリーによる既存warningは99件。</td>
+          <td>約149秒</td>
+        </tr>
+        <tr>
+          <th scope="row">SAAA desktop test</th>
+          <td>
+            1194件成功、5件失敗、17件ignore。失敗はfixtureと現在の契約期待値の不一致で、compile環境障害ではない。
+          </td>
+          <td>304.43秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      旧SAAA targetをunit単位でcleanした結果、Cargo報告の論理削除量は合計約408.7
+      GiB、filesystem空き容量は208 MiBから約149 GiBへ回復した。sccache
+      directory作成後の再検証ではwrite error 0、cache error
+      0となり、同じcrateをclean後に再compileしてRust cache
+      hitを確認した。今後の正式な性能比較では各laneを3回以上実行し、今回の単発canaryと分けて扱う。
+    </p>
+  </section>
+  <section id="risks">
+    <h2>明示的に採用しない案</h2>
+    <ul>
+      <li>
+        全repositoryのCargo.lockを1つにする。製品ごとの更新周期とdependency
+        graphを結合するため採用しない。
+      </li>
+      <li>
+        全repositoryまたは全worktreeで単一<code>CARGO_TARGET_DIR</code>を使う。衝突、lock競合、障害半径が大きいため採用しない。
+      </li>
+      <li>
+        Homebrewの最新SQLite、OpenSSL、FFmpeg、libwebpを全buildへ自動注入する。versionとABIがprofile外で変化するため採用しない。
+      </li>
+      <li>
+        グローバル<code>~/.cargo/config.toml</code>でlinker、rustflags、wrapperを強制する。対象外repositoryまで変更するため採用しない。
+      </li>
+      <li>
+        FoundryがCargo.lockやproject build.rsを生成・更新する。製品source of
+        truthを奪うため採用しない。
+      </li>
+      <li>
+        現在の巨大targetを無条件に一括削除する。baselineを採取し、新laneのbuildを確認したunitだけを明示的にcleanする。
+      </li>
+    </ul>
+  </section>
+  <section id="next">
+    <h2>残る拡張項目</h2>
+    <p>
+      初期移行は完了した。次の拡張は、profile revisionのatomicなpointer切替、project
+      key単位の安全なprune、doctorの期待値比較とremediation code、測定JSONの永続化、system native
+      dependencyが必要になった場合のimmutable
+      prefixである。現時点の各repositoryはFoundryがなくても通常のCargo
+      buildへ戻せるため、これらは初期運用の必須条件ではない。
+    </p>
+  </section>
+</article>

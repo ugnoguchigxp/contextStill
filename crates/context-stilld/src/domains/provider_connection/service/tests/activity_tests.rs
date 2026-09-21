@@ -145,12 +145,12 @@ fn service_activity_preserves_retryable_http_error_classification() {
 }
 
 #[test]
-fn service_activity_sends_bearer_only_when_configured() {
+fn service_activity_requires_bearer_and_attaches_it_when_configured() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let (requests_tx, requests_rx) = mpsc::channel();
     let server = std::thread::spawn(move || {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().unwrap();
             requests_tx.send(read_request(&mut stream)).unwrap();
             let response = json_response(
@@ -171,12 +171,16 @@ fn service_activity_sends_bearer_only_when_configured() {
         }
     });
 
-    LarmControlClient::new(config(&format!("http://{address}")))
+    let mut missing = config(&format!("http://{address}"));
+    missing.control_bearer_token = None;
+    let missing_error = LarmControlClient::new(missing)
         .unwrap()
         .service_activity()
-        .unwrap();
-    let mut authenticated = config(&format!("http://{address}"));
-    authenticated.control_bearer_token = Some(Zeroizing::new("activity-secret".to_string()));
+        .unwrap_err();
+    assert_eq!(missing_error.kind, "credential_missing");
+    assert!(!missing_error.retryable);
+
+    let authenticated = config(&format!("http://{address}"));
     LarmControlClient::new(authenticated)
         .unwrap()
         .service_activity()
@@ -190,10 +194,10 @@ fn service_activity_sends_bearer_only_when_configured() {
     assert!(requests.iter().all(|request| request
         .to_ascii_lowercase()
         .contains("cache-control: no-cache")));
-    assert!(!requests[0].to_ascii_lowercase().contains("authorization:"));
-    assert!(requests[1]
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0]
         .to_ascii_lowercase()
-        .contains("authorization: bearer activity-secret"));
+        .contains("authorization: bearer test-control-credential"));
 }
 
 #[test]

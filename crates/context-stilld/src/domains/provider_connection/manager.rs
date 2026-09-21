@@ -511,7 +511,7 @@ mod tests {
         let requests = request_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(requests.len(), 2);
         assert!(requests[0].starts_with("GET /v1/activity HTTP/1.1"));
-        assert!(requests[1].starts_with("GET /v2/agent-profiles HTTP/1.1"));
+        assert!(requests[1].starts_with("GET /v3/agent-profiles HTTP/1.1"));
     }
 
     #[test]
@@ -595,8 +595,8 @@ mod tests {
         server.join().unwrap();
 
         let requests = request_rx.try_iter().collect::<Vec<_>>();
-        assert!(requests[0].starts_with("GET /v2/agent-profiles HTTP/1.1"));
-        assert!(requests[2].starts_with("GET /v2/agent-profiles HTTP/1.1"));
+        assert!(requests[0].starts_with("GET /v3/agent-profiles HTTP/1.1"));
+        assert!(requests[2].starts_with("GET /v3/agent-profiles HTTP/1.1"));
         let first_key = header_value(&requests[1], "idempotency-key").unwrap();
         let second_key = header_value(&requests[3], "idempotency-key").unwrap();
         assert_eq!(first_key, second_key);
@@ -771,7 +771,7 @@ mod tests {
         assert!(requests[0].starts_with("GET /v1/activity HTTP/1.1"));
         assert!(!requests[0].contains('?'));
         assert!(requests[1].starts_with("DELETE /v1/agent-connections/aconn_epoch_1"));
-        assert!(requests[2].starts_with("GET /v2/agent-profiles HTTP/1.1"));
+        assert!(requests[2].starts_with("GET /v3/agent-profiles HTTP/1.1"));
         assert!(requests[3].starts_with("POST /v1/agent-connections"));
         assert!(requests[4].contains("/claim HTTP/1.1"));
         server.join().unwrap();
@@ -789,7 +789,7 @@ mod tests {
             ready_timeout_ms: 180_000,
             ttl_seconds: 900,
             request_timeout_ms: 300_000,
-            control_bearer_token: None,
+            control_bearer_token: Some(Zeroizing::new("test-control-credential".to_string())),
         }
     }
 
@@ -833,7 +833,7 @@ mod tests {
 
     fn profile_catalog_json(revision: &str) -> serde_json::Value {
         serde_json::json!({
-            "contractVersion": "agent-connection.v2",
+            "contractVersion": "agent-connection.v3",
             "catalogRevision": revision,
             "defaultAgentProfile": "contextstill-background",
             "profiles": [{

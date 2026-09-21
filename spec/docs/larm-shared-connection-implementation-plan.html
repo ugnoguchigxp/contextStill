@@ -1,0 +1,715 @@
+<article lang="ja">
+  <h1>LARM共有connection統合の実装計画：Terra引き継ぎ用</h1>
+  <p>
+    2026年9月21日。状態：実装計画、製品実装は未着手。作業対象は
+    /Users/y.noguchi/Code/contextStill。公開契約の証拠は<a
+      href="larm-shared-connection-contract-audit.html"
+      >契約調査</a
+    >と<a href="assets/larm-shared-connection-contract-audit/source-evidence.json">source抜粋</a
+    >を参照する。本書が後続実装の作業順と完了条件を定める。過去のUI案は採用しない。
+  </p>
+  <section id="handoff">
+    <h2>着手する担当者への指示</h2>
+    <ol>
+      <li>
+        AGENTS.mdを読み、当該タスクで未実行ならinitial_instructionsを1回実行する。git
+        statusと対象ファイルの差分を保存し、既存未commit変更を上書きしない。新しい担当タスクでは本書をgoalにcontext_compileを行う。
+      </li>
+      <li>
+        P0とP2は後掲の実装実績で完了済み。やり直さず、まず「P2完了後の再開手順」に従う。P3の契約非依存な試験基盤は先行できる。並列requestとtier選択は別々の契約ゲートを持ち、全契約が揃うまで全作業を一括停止しない。
+      </li>
+      <li>
+        各作業を「未着手／作業中／完了／契約待ち」で記録し、変更ファイル・試験コマンド・結果を本書末尾の実績へ追記する。単なる型追加やmock成功を、本番統合完了にしない。
+      </li>
+      <li>
+        LARM内部設定、モデル名、添付にある3や64K・64K・256KからHTTP契約を推測しない。LARMの正式なsourceとレスポンスfixtureが更新されるまで、未知fieldはdeny_unknown_fieldsで拒否する。
+      </li>
+      <li>
+        別Codexタスクへの連絡、LARMへのデプロイ、実データのQueue一括再投入はこの実装計画の対象外。ホスト／API／秘密情報の変更を作業に混ぜない。
+      </li>
+    </ol>
+  </section>
+  <section id="resume-after-p2">
+    <h2>P2完了後の再開手順</h2>
+    <p>
+      TerraがP2後に停止した判断は正しい。旧計画は未提供の外部契約を依存条件としながら、その提供作業を誰が完了させるかを実装作業に含めていなかった。推測禁止を外すのではなく、LARM側の契約提供とContextStill側の統合を別の担当作業にする。本節は旧来の「C1〜C4すべてがない限り後続全体を止める」という解釈に優先する。
+    </p>
+    <p>
+      現時点の引き継ぎ状態：P0・P2完了、P3一部完了、P4以降は未実装。共有manager・fail-closed
+      cleanupは保持する。全Rust試験491 passed／5
+      ignoredは既存の実績記録であり、今回の計画修正で再実行した結果ではない。
+    </p>
+    <table>
+      <caption>
+        再開する作業と担当の成果物
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">作業</th>
+          <th scope="col">担当</th>
+          <th scope="col">具体的な成果物・終了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">R1 公開契約の提供</th>
+          <td>LARM担当</td>
+          <td>
+            C1〜C4を満たす公開schema、レスポンス生成、契約テスト、秘密情報を除いたfixture、source
+            revision、配備状況を一式で渡す。未対応の機能は未対応と明記
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">R2 P3の残作業</th>
+          <td>ContextStill担当</td>
+          <td>
+            HTTP受信通知、任意順序の応答解放、切断・失敗注入、呼び出し記録を行う汎用fake
+            serverを作る。LARMの新fieldや未知の受付仕様は定義しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">R3 契約差分の受入</th>
+          <td>ContextStill担当</td>
+          <td>
+            提供されたsourceとfixtureを現監査と比較し、各C項目の根拠・version・対応endpoint・型・意味を記録。新fieldを推測せずdeny_unknown_fields付き型へ取り込む
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">R4 request共有の統合</th>
+          <td>ContextStill担当</td>
+          <td>
+            G-request合格後にP4・P5・P7のrequest共有部分、P8の上限設定部分を実装。tier選択の完了は待たない。既存profile・既存body生成を維持して並行性を検証
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">R5 tier選択の統合</th>
+          <td>ContextStill担当</td>
+          <td>
+            G-context合格後にP6、P7の最終body照合部分、P8のprofile候補部分を実装。実効capacity=1のままでも検証可能
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      G-request：C1・C2・C4のschemaと意味が公開され、source/fixtureが同じrevisionを参照すること。3を広告しない場合は広告された上限内で実装し、「3並行対応済み」とは報告しない。異常終了時の終了照合が未確定ならその経路をfail
+      closedで停止できることを明記し、安全な再利用を推測しない。
+    </p>
+    <p>
+      G-context：C3の公開広告とclaim
+      descriptorの対応が確認できること。64K／128K／256Kなどの数値は広告を読み、実装に固定しない。session
+      tierと単なるprofile別context上限が異なるなら、その区別を契約に記録する。
+    </p>
+    <p>
+      コード統合は公開sourceと正式fixtureがあれば開始できる。live配備はコード統合の着手条件ではなく、実機有効化の条件とする。未配備の新契約を旧liveへ強制適用せず、旧APIは既存1枠か明示的な機能未対応として扱う。これにより「コード準備済み・live未配備」と「契約自体がない」を区別する。
+    </p>
+    <p>
+      R2が終わってR1未提供なら、ContextStill担当は完了分と不足成果物を報告して待機する。この状態を追加の推測コードで埋めない。P2を繰り返し作り直す必要はない。残作業が進まない原因は担当者の実装能力ではなく外部契約の未提供である。
+    </p>
+    <details>
+      <summary>LARM担当へ渡す依頼文（この文書では送信しない）</summary>
+      <p>
+        ContextStill側では共有managerとfail-closed
+        cleanupのP2、および全Rust試験が完了しています。次はLARMの公開契約の提供が必要です。内部設定や提案文だけでなく、consumerが実APIから取得できる形にしてください。
+      </p>
+      <ol>
+        <li>
+          単一Provider
+          descriptorの同時request上限と共有範囲、queue/retry条件を公開してください。実際に保証できる値を返し、3を保証できなければその値と制約を示してください。
+        </li>
+        <li>
+          既存connectionへの追加requestで自身のworkloadを誤って拒否せず、他サービス優先・drainingを守るadmission契約を定義してください。自他の件数をContextStillが差し引いて推測する方式にはしないでください。
+        </li>
+        <li>
+          request終了・cancel・timeout・通信断・renewで、使用枠とcredentialがどう扱われるかを定義してください。上流終了を確認する必要がある場合は、その公開手段を示してください。
+        </li>
+        <li>
+          選択可能なprofile/providerのcontext上限・出力上限またはreserve・safety
+          marginを公開し、claim結果との対応を示してください。固定3slot案と最新64K／128K案の相違を解消し、未受入のtierは広告しないでください。
+        </li>
+        <li>
+          公開schema、実レスポンス生成、契約テスト、認証情報を除いた成功・満杯・draining・期限切れ等のfixture、source
+          revision、配備済みversionを渡してください。request共有とcontext
+          tierは独立して提供できます。
+        </li>
+      </ol>
+    </details>
+    <details>
+      <summary>ContextStill担当へ渡す再開指示</summary>
+      <p>
+        P2完了の実装を維持し、本書のR2から進めてください。P3の汎用fake
+        HTTP基盤を完成させてください。LARMの未公開fieldや3並行の実契約を独自に定義しないでください。LARMからR1の成果物が届いたらR3で検証し、G-requestを満たした分はR4、G-contextを満たした分はR5へ進んでください。両機能を一括で待たせないでください。公開契約が届いていない機能は、何の成果物が不足しているかを明示して待機してください。実装結果は既存実績へ追記し、P2と既存テスト成功を未完了へ戻さないでください。
+      </p>
+    </details>
+  </section>
+  <section id="scope">
+    <h2>期待する動作と固定しない値</h2>
+    <p>
+      ContextStillは単一connectionIdに対応するAgent Connectionとclaim
+      descriptorを共有する。実効request
+      capacityは、LARMの広告値とContextStill設定上限の小さい方。既定設定は1。広告が3かつ設定が3なら同一baseURL・model・credentialへ3件を並行送信し、4件目は未claimのpendingに残す。広告が1なら1件とする。物理slot、id_slot、KV、continuous
+      batching、推論daemonの起動数はLARM所有である。
+    </p>
+    <p>
+      対象は現在のRust dynamic
+      LARM経路が実行できるQueue。Findingのsource/vibe、Episode、Landscapeから始める。他のQueueやCompileのLARM対応追加、LARM混在static
+      Pool、通常Local LLM／Azureのインターバル機能は今回に含めない。既存static Poolの1
+      lease/targetとLandscapeのqueue concurrency=1を維持する。
+    </p>
+    <p>
+      セッション型APIとChat Completionsを混同しない。今回のshared descriptorはrequest
+      permitを管理する。/v1/agents/sessionsのsession
+      releaseを代用しない。リクエストが終わっても他のpermitがあればAgent Connectionをreleaseしない。
+    </p>
+  </section>
+  <section id="dependencies">
+    <h2>P1で確定させる外部依存</h2>
+    <table>
+      <caption>
+        契約ゲート。すべて確認するまで新モードを有効化しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID</th>
+          <th scope="col">必要な公開情報</th>
+          <th scope="col">合格条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">C1</th>
+          <td>同時request上限、共有単位、queue/retry情報</td>
+          <td>
+            どのconnection/provider/revisionへ適用する値か、1と3のfixture、4件目の応答を特定できる
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">C2</th>
+          <td>追加requestのadmission</td>
+          <td>
+            自身の稼働中requestが存在しても受け付けられる条件と、他サービス優先・draining・revision変更時の拒否が明文化されている
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">C3</th>
+          <td>context window、出力上限／reserve、安全margin、選択可能profile</td>
+          <td>
+            内部YAMLではなく公開catalog等から選択前に取得でき、claimしたdescriptorと照合できる
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">C4</th>
+          <td>request終了・cancel・timeout・credential更新</td>
+          <td>
+            通信断時に上流の実行枠が空いたと判断できる条件、および更新時に既存requestのcredentialが失効するかを確定できる
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      調査時点ではC1〜C4は未充足。healthのactiveRequestsは上限ではない。contextWindowは最新内部設定にはあるが公開profile/claimにはない。activityは自他のworkloadを区別しない。最新LARM文書は固定3
+      slot案不採用、64K／128K、256K未受入であり、添付の数値と競合する。最新API契約を取り直して判断する。
+    </p>
+    <p>
+      C1/C2が欠ける場合は3並行の実API統合・有効化をしない。C3が欠ける場合は新しいtier自動選択を有効化しない。C4が欠ける場合は不明な終了状態を空きとして再利用しない。契約非依存な試験基盤は作成してよいが、仮のHTTP
+      fieldを正式fixtureとして追加しない。既存1枠モードは維持できるが、契約不足を3枠に読み替えない。LARMから契約を受け取ったらsource
+      revision・fixture・field名・意味・配備状況の対応表を本書に追記する。
+    </p>
+  </section>
+  <section id="internal-design">
+    <h2>ContextStill内部の設計方針</h2>
+    <p>
+      以下の型名は新設する内部型の案であり、LARMのJSON
+      field名ではない。既存の命名に合わせた変更は許容するが、責務は維持する。
+    </p>
+    <ul>
+      <li>
+        SharedLarmConnection：registryに常駐するArc。短時間のMutexで状態・generation・active
+        permit数・drain状態だけを保護する。DBパスの異なるテスト／residentが同じ設定IDで衝突しないようregistry
+        keyはruntime scopeとconnectionIdの組にする。
+      </li>
+      <li>
+        ConnectionSnapshot：検証済みdescriptor、契約revision、実効capacity、window情報を持つ不変snapshot。credentialはZeroizing等で保護したメモリ内だけに保持し、Debug・ログ・DBへ出さない。
+      </li>
+      <li>
+        LarmRequestPermit：generationとrequest相関IDを持つRAII
+        guard。成功・失敗・panicでローカル所有権を一度だけ返す。上流終了が不明なら、その枠は状態照合待ちとして別途占有を残す。
+      </li>
+      <li>
+        PreparedLarmRequest：実際に送る最終body、token見積り方式・必要量、出力予約、選択tier、入力revisionを持つ。bodyはメモリ内だけ。計測後にbodyを書き換えた場合は必ず再計測する。
+      </li>
+      <li>
+        AdmissionOutcome：Ready、CapacityWait、ContextUnsupported、Draining、ContractUnavailable、ReconcileRequiredを区別する内部enum。待機はsemantic
+        attemptではない。
+      </li>
+    </ul>
+    <p>
+      lockを取ってCreating/Renewing等へ遷移し、その所有者だけがlockを外してHTTPを実行する。完了後はgenerationを比較して結果を適用し、待機者へ通知する。HTTP待機中やSQLite
+      writer待ち中にregistry／manager lockを保持しない。全connectionを1つのHTTP待機で止めない。
+    </p>
+    <p>
+      設定変更・bootEpoch/configRevision変更・renew失敗は新規admissionを停止し、古いgenerationをdrainする。旧requestが有効な間に別managerを作らない。既存credentialを更新してよい条件がC4で確認できない場合、active=0までrenewを待ち、新規requestを止める。
+    </p>
+  </section>
+  <section id="work-items">
+    <h2>実装作業一覧</h2>
+    <table>
+      <caption>
+        作業単位と依存。各項目は独立してレビューできる差分にする
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">作業</th>
+          <th scope="col">依存</th>
+          <th scope="col">主な変更先</th>
+          <th scope="col">完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">P0 ベースライン</th>
+          <td>なし</td>
+          <td>本書の実績欄</td>
+          <td>既存差分、対象試験結果、実際に使える検証scriptを記録</td>
+        </tr>
+        <tr>
+          <th scope="row">P1 公開契約固定</th>
+          <td>P0・LARM提供</td>
+          <td>provider_connection/service.rs、契約fixture</td>
+          <td>C1〜C4の証拠とmissing/invalidの扱いが確定</td>
+        </tr>
+        <tr>
+          <th scope="row">P2 manager重複防止</th>
+          <td>P0</td>
+          <td>queue_lifecycle/dynamic_provider.rs、新規共有manager module</td>
+          <td>従来1枠でも同一connectionIdの二重createが発生しない</td>
+        </tr>
+        <tr>
+          <th scope="row">P3 決定的試験基盤</th>
+          <td>P0</td>
+          <td>provider_connection・queue_lifecycleのtest support</td>
+          <td>HTTPの到達・応答・失敗をchannelで操作できる</td>
+        </tr>
+        <tr>
+          <th scope="row">P4 negotiation・admission</th>
+          <td>G-request・P2・P3</td>
+          <td>provider_connection/service.rs、manager.rs、新規共有manager</td>
+          <td>広告値の検証、single-flight、共有permit、drainが試験で成立</td>
+        </tr>
+        <tr>
+          <th scope="row">P5 target capacity lease</th>
+          <td>P4</td>
+          <td>queue_lifecycle/types.rs、provider_lease.rs、provider_lease_tests.rs</td>
+          <td>dynamic同一targetに3lease、4件目pending、static回帰なし</td>
+        </tr>
+        <tr>
+          <th scope="row">P6 context照合</th>
+          <td>G-context・P3</td>
+          <td>target_chat.rs、各executorのrequest組立、新規context admission module</td>
+          <td>最終bodyの計測と最小適合tier、超過時未送信が成立</td>
+        </tr>
+        <tr>
+          <th scope="row">P7 executor統合</th>
+          <td>共有部分：P4・P5。tier部分：P6。別々に統合可能</td>
+          <td>dynamic_provider.rs、executor.rs、provider_execution.rs</td>
+          <td>単一descriptorで3request、writer非占有、永続化相関・fencing維持</td>
+        </tr>
+        <tr>
+          <th scope="row">P8 設定・表示</th>
+          <td>上限設定：G-requestとP7共有部分。profile選択：G-contextとP7 tier部分</td>
+          <td>settings.types.ts、settings.defaults.ts、settings.runtime-cache.ts、設定UI</td>
+          <td>既定1・上限交渉・profile互換・待機理由を保持／表示</td>
+        </tr>
+        <tr>
+          <th scope="row">P9 総合検証・移行</th>
+          <td>P2〜P8</td>
+          <td>統合試験、本書、現行LARM設計文書</td>
+          <td>16試験・型検査・文書検証、rollback手順、未検証事項が揃う</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="p0-p3">
+    <h2>P0〜P3：前提と先行可能作業</h2>
+    <p>
+      P0ではgit
+      diffを確認し、特にqueue_lifecycle/mod.rs、target_chat.rs、larm_e2e_tests.rs、package.jsonの既存変更を記録する。変更前にprovider_connection、dynamic_provider、provider_lease、executor_poolの既存試験を実行する。失敗した試験は出力を保存し、今回の差分による失敗と混同しない。
+    </p>
+    <p>
+      P1では現物レスポンスを秘密情報除去済みfixtureにし、契約source
+      revisionと対応させる。実credentialをfixtureへコピーしない。capacityの0・負値・非整数・過大値、未知field、window欠落、profile/claim不一致を拒否する。LARM側のfieldをこちらで新設したfixtureで「確認済み」にしない。
+    </p>
+    <p>
+      P2ではLarmManagerCheckout::takeでregistry.removeする構造を廃止し、実行中のconnectionもregistryに残す。まずcapacity=1のまま「使用中なので未claim」を返せるようにする。設定変更・参照削除・shutdownはdrain要求を付け、使用中のmanagerを削除しない。DropからHTTPを直接実行せず、終了通知を管理側へ渡す。副作用のない単体試験で、同時取得時のcreate1回、使用中のrelease0回、drain後のrelease1回を検証する。
+    </p>
+    <p>
+      P3ではTcpListener等の既存fake
+      HTTPを拡張し、3requestの受信通知と各応答解放をchannelで制御する。create/claim/renew/releaseの呼び出し回数と順序を記録し、別jobのmarkerを応答へ返す。barrierは最大待機時間を設けるがsleepを成立条件に使わない。testごとにDB・registry
+      scope・portを独立させる。
+    </p>
+  </section>
+  <section id="p4-p5">
+    <h2>P4〜P5：共有接続とlease</h2>
+    <p>
+      P4の初回接続は既存Service Activityのfail-closed
+      gateを使う。確立後はC2の公開admissionに従い、自身のactive
+      workloadを理由にreleaseしない。advisory healthで空きと判定しても、実request受付時のretryable
+      overloadを最終判断として扱う。実効capacity低下時は稼働中requestを勝手に切らず、新規permitを停止する。
+    </p>
+    <p>
+      permit取得はactive数の比較と増分を同じcritical sectionで行う。connectionId・generation・job
+      correlationを結び、credentialはcloneする場合も保護型を維持する。create・ready
+      poll・claim・renew・releaseのそれぞれでsingle-flightを試験する。registry
+      lock下でHTTPを送らないことを、無関係なconnectionが進める試験で確認する。
+    </p>
+    <p>
+      P5ではProviderPoolClaimConfigのtarget一覧とtargetごとのrequest容量を分ける。内部の明示的capacity
+      policyを導入し、未指定static
+      targetは常に1にする。文字列prefixやpool.max_concurrentだけでdynamic多重leaseを許可しない。検証済みnegotiationからのみdynamic
+      policyを構築する。
+    </p>
+    <p>
+      claim transaction内でpool active数とtarget
+      active数を確認してleaseを挿入する。pool上限とtarget上限の双方を満たすこと。target使用数は別Poolからのactive
+      leaseも数える。既存fencing、stale
+      heartbeat、cooldown、quota、Landscape上限1を維持する。SQL変更が必要なら既存schema・migration登録を追跡し、場当たり的な起動時DDLは追加しない。
+    </p>
+    <p>
+      permitを先に取得し、その後SQLite
+      writerでjob/leaseをclaimする。jobが取れない／writerが失敗したら、まだHTTP未送信のpermitを即返す。permit待ちの間にQueue
+      jobをrunningへしない。送信済みのtimeoutは未送信permitの返却と同じ扱いにしない。
+    </p>
+  </section>
+  <section id="p6">
+    <h2>P6：context照合とtier選択</h2>
+    <ol>
+      <li>
+        Finding・Episode・Landscapeについて、最終request
+        bodyの組立箇所を特定する。target_chat.rsだけに上限チェックを足して、上流の固定128K前提や証拠の切り捨てが残らないよう、定数・token
+        budget・max_tokensの全呼び出し経路を検索し一覧にする。
+      </li>
+      <li>
+        prompt計測と実送信で同じPreparedLarmRequestを使用する。system、messages、tool
+        schema、retrievalを含める。モデル依存の正確なtokenizerを使用できる場合はそのrevisionも記録する。使えない場合は安全側の見積りをfixtureで検証し、推定であることを記録する。安全性を説明できない見積りで上限近くを送らない。
+      </li>
+      <li>
+        prompt + requested output + advertised safety
+        marginがwindow以下、かつ広告されたoutput条件を満たす候補を選ぶ。outputReserveTokensの意味はC3で確定し、requested
+        outputと二重加算しない。
+      </li>
+      <li>
+        最小の適合tierを優先する。大きいtierにしか入らないjobが待っている場合、小jobがそのtierを取り続けないようbounded
+        agingを設ける。既存aging設定を再利用できるか確認し、初期値・時間の起点・公平性を試験で固定する。
+      </li>
+      <li>
+        request作成前にtierを決める必要があるので、read-onlyにjob候補を取得してbodyを準備し、claim
+        transactionでjobがまだpendingかつ入力revisionが同一か再検証する。変更があれば準備結果を捨てる。複数workerが同じjobを準備してもclaimは1件だけにする。準備段階で外部LLM呼び出しを行わない。
+      </li>
+      <li>
+        証拠取得等で実行中にbodyが増える経路は、送信直前にも再照合する。不適合なら送信せず、現在のleaseとpermitを適切に返して型付き待機へ移す。途中の成果を重複適用しないため既存永続化境界を確認する。
+      </li>
+    </ol>
+    <p>
+      候補tierなし、広告なし、capacity待ちはsemantic
+      failureにしない。必要token数・上限・profile・推定方式・retry条件だけをeventへ残す。本文・プロンプト・credentialは残さない。暗黙のtruncateや新しいcompactionを追加せず、既存の明示policyを使う場合は適用後に再計測する。
+    </p>
+    <p>
+      64K・64K・256Kの要求例は一般化した境界試験に用いてよいが、本番field・設定へ固定しない。実fixtureが64K／128Kならその組合せを契約試験に使う。広告集合が変わっても選択ロジックが成立することを確認する。
+    </p>
+  </section>
+  <section id="p7-p8">
+    <h2>P7〜P8：実行・設定への接続</h2>
+    <p>
+      P7ではrun_split_provider_executor_tick_for_pathのworker算出へ動的容量を加える。descriptor未取得時は制御処理を1本で進め、negotiation後に実効値を反映する。実効値を上回る送信はpermitが防ぐ。既存worker上限32とtick
+      max_claimsを保持し、max_claims=1なら広告3でも同一tickで3件を送らない。
+    </p>
+    <p>
+      各workerはPrepared request→permit→atomic job/lease claim→HTTP→fenced
+      persistenceの順で処理する。HTTP待機中に別のSQLite
+      writer操作が完了することを試験する。queue待機に戻す経路ではattemptの増減が既存ロジックと二重適用されないよう追跡する。保存失敗・所有権喪失時にcompletedへ遷移させない。
+    </p>
+    <p>
+      P8ではLarmConnectionConfigとTypeScript側のLARM connection型／Zod
+      schema／normalizationに上限を追加する案を採る。maxConcurrentRequestsはContextStillの希望上限であってLARM広告ではない。省略時1、旧agentProfileはそのまま読み込み可能とする。allowedAgentProfilesはC3に基づいて選択可能な場合のみ導入し、省略時は既存agentProfileを単一候補とする。
+    </p>
+    <p>
+      src/modules/settings/settings.defaults.tsのtarget数によるclampはstatic
+      Poolについて維持する。LARM
+      connectionのrequest容量をそのclampへ通さない。settings.runtime-cache.tsには設定上限と実効上限を区別した安全な表示情報を渡す。動的credentialやlive
+      descriptorを設定値へ永続化しない。
+    </p>
+    <p>
+      web/src/modules/admin/components/settings/provider-endpoints-panel.tsxと関連controllerで上限とprofile候補を編集する。API広告が未取得なら実効値を「未確認」とし、設定3だけで「3並行」と表示しない。状態は広告上限／設定上限／実効上限／利用中permit／待機理由を分ける。UI全体の刷新は行わない。
+    </p>
+  </section>
+  <section id="failures">
+    <h2>終了・失敗時の扱い</h2>
+    <table>
+      <caption>
+        lease、permit、connectionを別々に扱う
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">状況</th>
+          <th scope="col">必須動作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">未送信・claim失敗</th>
+          <td>permitを即返す。jobは未claim。作成したleaseがあればtransactionで整合性を保つ</td>
+        </tr>
+        <tr>
+          <th scope="row">正常応答・保存成功</th>
+          <td>
+            fencing確認後にjobを完了しlease解放。request終了条件を満たしたpermitだけを返す。他のactive
+            permitのconnectionは保持
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">capacity/tier不足・retryable overload</th>
+          <td>
+            semantic attemptを消費せずpendingへ戻すかclaim前に待機。retry条件と型付き理由を残す
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">timeout・cancel・通信断</th>
+          <td>
+            jobの実行所有権を整理し、上流終了が不明なら枠は照合待ちに残す。C4に従う確認なしで追加requestを送らない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">panic・保存失敗</th>
+          <td>
+            RAIIでローカルguardを片付ける。DB解放失敗は再照合対象として保持し、新規claimで上限を超えない。completed扱いにしない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">renew失敗・revision変更・shutdown</th>
+          <td>
+            新規admission停止。既存requestをdrainし、終了確認後release。新旧generationを混ぜない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">stale heartbeat・再起動</th>
+          <td>
+            stale
+            lease回収と上流request終了を同一視しない。LARM状態と照合し、所有権不明の枠を即再利用しない
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="tests">
+    <h2>決定的テストと実装担当項目</h2>
+    <table>
+      <caption>
+        添付の最低16項目に対応する受入試験
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID</th>
+          <th scope="col">担当</th>
+          <th scope="col">Arrange / Assert</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">T01</th>
+          <td>P2/P4</td>
+          <td>同じIDを3threadで取得。create回数1、manager identity同一</td>
+        </tr>
+        <tr>
+          <th scope="row">T02</th>
+          <td>P4</td>
+          <td>各制御HTTPを停止して競合取得。ready/claim/renewは各single-flight</td>
+        </tr>
+        <tr>
+          <th scope="row">T03</th>
+          <td>P7</td>
+          <td>
+            応答をchannelで止めたまま同じdescriptorへ3request到達。connection/daemonを増やさない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">T04</th>
+          <td>P7</td>
+          <td>3markerへ逆順に応答。各jobの保存結果が自身のmarkerと一致</td>
+        </tr>
+        <tr>
+          <th scope="row">T05</th>
+          <td>P5</td>
+          <td>同じpool/targetに異なるjob/lease IDが3件active</td>
+        </tr>
+        <tr>
+          <th scope="row">T06</th>
+          <td>P5/P7</td>
+          <td>4件目pending、create追加なし、attempt不変。1件終了後に1件だけ進む</td>
+        </tr>
+        <tr>
+          <th scope="row">T07</th>
+          <td>P4/P7</td>
+          <td>1応答だけ解放。残る2requestのconnection/tokenが有効</td>
+        </tr>
+        <tr>
+          <th scope="row">T08</th>
+          <td>P7</td>
+          <td>
+            cancel/timeout/panic/HTTP error/persistence
+            errorを個別注入。ローカルguard回収、DB整合、終了不明枠の再利用禁止
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">T09</th>
+          <td>P4</td>
+          <td>queue idleでもactive&gt;0ならrelease0回。active=0でrelease1回</td>
+        </tr>
+        <tr>
+          <th scope="row">T10</th>
+          <td>P5</td>
+          <td>static targetへ2lease不可、別targetは並列可、Landscapeは1</td>
+        </tr>
+        <tr>
+          <th scope="row">T11</th>
+          <td>P6</td>
+          <td>広告fixtureの小windowに収まるjobは最小tier、超えるjobは適合する大tier</td>
+        </tr>
+        <tr>
+          <th scope="row">T12</th>
+          <td>P6</td>
+          <td>prompt+output+marginがlimit-1、limit、limit+1。加算overflowも拒否</td>
+        </tr>
+        <tr>
+          <th scope="row">T13</th>
+          <td>P6/P7</td>
+          <td>大jobを小tierに送らない。計測後に入力revision変更なら再準備</td>
+        </tr>
+        <tr>
+          <th scope="row">T14</th>
+          <td>P6</td>
+          <td>全広告window超過でProvider HTTP0回、本文切り捨てなし、attempt不変</td>
+        </tr>
+        <tr>
+          <th scope="row">T15</th>
+          <td>P1/P8</td>
+          <td>広告欠落・旧設定は1枠互換または明示待機。未知fieldは拒否。設定3/広告2なら実効2</td>
+        </tr>
+        <tr>
+          <th scope="row">T16</th>
+          <td>P3/P9</td>
+          <td>並行試験はbarrier/channel、時刻は注入時計。sleepで成功させない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      追加試験：HTTP停止中のSQLite writer応答、無関係connectionの進行、draining中の新規拒否、self
+      activityによる誤releaseなし、capacity縮小、再起動照合、bounded
+      aging、秘密情報非出力を含める。実providerを必要とする試験は通常unit testから分離する。
+    </p>
+  </section>
+  <section id="commands">
+    <h2>検証コマンド</h2>
+    <p>
+      repository rootから実行する。調査時点ではbun run
+      checkとdocs:check:fixは存在しないため、下記の実在scriptを使う。担当開始時にpackage.jsonを再確認する。Rustのtest
+      filterが0件なら合格とせず、名前を確認して修正する。
+    </p>
+    <pre><code>git status --short
+git diff --check
+cargo test -p context-stilld provider_connection::
+cargo test -p context-stilld dynamic_provider::
+cargo test -p context-stilld provider_lease_tests::
+cargo test -p context-stilld executor_pool_tests::
+bunx vitest run test/settings-runtime-cache.test.ts test/provider-pool-routing.test.ts test/queue-provider-pool-scheduler.test.ts test/provider-lease-route-context.test.ts
+cargo fmt --all -- --check
+cargo check -p context-stilld
+cargo test -p context-stilld
+bun run typecheck
+bun run boundary:check
+bun run maintainability:check
+bun run spec:fix
+bun run spec:check
+git diff --check</code></pre>
+    <p>
+      P3で新規追加した共有manager・context
+      admissionのテストも個別に実行する。UI変更がある場合は該当component
+      testとbuild:webを追加する。整形は変更ファイルだけを対象にし、他タスクの差分を一括整形しない。ツールが起動しない場合は実行コマンドと失敗を記録し、未実行を合格としない。
+    </p>
+  </section>
+  <section id="rollout">
+    <h2>P9：移行・canary・rollback</h2>
+    <p>
+      通常設定の既定1を維持してコードを検証し、fake試験が通った後に対象connectionだけ設定上限を広告値以内へ引き上げる。実機ではAPI契約versionとprofile一覧を読み取り確認し、他サービスを妨げない試験用3jobで相関とactive数を観測する。未契約のhealth
+      pollingがsemantic probeを走らせる場合、その負荷を通常の状態監視に混ぜない。
+    </p>
+    <p>
+      live canary用に、P3のfixture試験とは別のignored test
+      shared_connection_live_canaryを追加する場合の実行形は cargo test -p context-stilld
+      shared_connection_live_canary -- --ignored --nocapture
+      とする。これは新設予定であり現在存在するコマンドではない。URL・profile・認証の入力方法はP1の実契約と既存secret
+      storeへ合わせて、その時点で正確な実行方法を文書化する。未配備契約ならliveは未検証として残す。
+    </p>
+    <p>
+      rollbackは新規admission停止→active requestの終了照合→旧connection
+      release→上限1と旧単一profileへ復帰の順。active requestが残る間にcredentialを破棄しない。DB
+      migrationが必要になった場合は旧binaryが新schemaを読めるかを試験し、互換でなければコードrollbackを禁止して設定rollbackだけを案内する。
+    </p>
+    <p>
+      現行 larm-dynamic-provider-contextstill-implementation-plan.html
+      の「各job前にidle確認」は、実装が完成した時点で初回gate＋共有connection追加admissionへ更新する。本書作成だけでは現行契約を置換しない。
+    </p>
+  </section>
+  <section id="completion">
+    <h2>完了判定と実績</h2>
+    <p>
+      完了はP1の公開契約、P2〜P8の製品統合、T01〜T16と追加試験、設定互換、migration/rollback文書が揃った状態。live未検証なら「コード検証済み・live未検証」と明示し、実機動作済みとは書かない。契約不足のままP2/P3だけ終わった場合は「準備完了・統合は契約待ち」と報告する。
+    </p>
+    <p>
+      最終報告には原因、ownership/admission、確認した公開field、変更ファイル、移行・rollback、試験結果、live未検証事項を含める。
+    </p>
+    <p>
+      計画作成時点：P0〜P9は未着手。契約監査と作業分割のみ完了。製品コード・実設定の変更なし。他タスクへの送信なし。後続担当者はこの段落の後へ、作業IDごとの結果を追記する。
+    </p>
+    <section id="implementation-results-2026-09-21">
+      <h2>実装実績：2026年9月21日</h2>
+      <p>
+        P0を実施し、開始時点の未commit変更は契約監査・settings文書と本書であり、製品コードには変更を加えていなかった。P2を完了した。dynamic_providerのLARM
+        manager registryを、connectionIdだけではなくSQLite runtime
+        scopeとconnectionIdで識別する常駐entryへ変更した。checkout中にもentryをregistryに残し、同一scope/connectionの後続取得は未claimとして扱う。このため、実行中managerがregistryから外れて二重createされる従来の経路はない。
+      </p>
+      <p>
+        config変更または参照解除では新規checkoutを止めてdrainする。idle managerは直ちに、active
+        checkoutは返却後の次回取得時に旧connectionをreleaseしてから新managerを構成する。release失敗はcleanup未確認として新manager作成をfail-closedで拒否する。registryとentryのlockをHTTP中に保持しない。claimで必要なtargetはcheckout所有のmanagerからsnapshotとして複製し、credentialは既存のZeroizing型のまま保持する。Dropはcheckout状態の返却だけを行い、HTTPを実行しない。
+      </p>
+      <p>
+        P3は既存のTCP fake HTTP
+        canaryを用いて単一connectionのclaim済みtargetとreleaseを回帰確認した。新規unit
+        testは同一scope/connectionの同時checkoutが2件目を拒否し、返却後には同じregistry
+        entryを再利用することを確認する。3並行requestのchannel制御fixture、capacity
+        negotiation、targetごとの複数lease、context tier
+        admission、設定UIはP1のC1〜C4公開契約が未提供のため未実装・契約待ちとする。推測したfieldや固定capacityで有効化していない。
+      </p>
+      <p>
+        変更ファイル：crates/context-stilld/src/domains/queue_lifecycle/dynamic_provider.rs、crates/context-stilld/src/domains/provider_connection/service.rs。本実装の検証結果：rustup
+        run 1.98.0-aarch64-apple-darwin cargo check -p context-stilld、cargo test -p context-stilld
+        manager_checkout_keeps_one_manager_per_runtime_connection -- --nocapture、cargo test -p
+        context-stilld dynamic_larm_canary -- --nocapture、cargo test -p context-stilld（491
+        passed、5 ignored）、git diff --check は成功した。rustup defaultのstable
+        cargoは環境上適用不能だったため、導入済み1.98 toolchainを明示した。live LARMは未検証である。
+      </p>
+      <p>
+        追試としてgnosis上の認証不要な公開APIを実測した。<code>GET /v1/activity</code>
+        は200でidle、activeWorkloads=0、reservationGuaranteed=false、bootEpoch、configRevisionを返したが、request
+        capacityや追加admissionは返さなかった。<code>GET /v2/agent-profiles</code>
+        は200でcontextstill-backgroundとqwen-agent-workerを返したが、context window、output
+        reserve、安全marginは返さなかった。<code>GET /v1/agent-connections</code> と<code
+          >GET /openapi.json</code
+        >
+        はともに401でbearer tokenを要求した。token探索・connection作成・claim・Chat
+        Completions送信は行っていない。詳細と不足項目は<a
+          href="larm-shared-connection-contract-audit.html#live-public-api-check-2026-09-21"
+          >実API確認</a
+        >を参照する。よってP1のC1〜C4は依然契約待ちである。
+      </p>
+    </section>
+  </section>
+</article>

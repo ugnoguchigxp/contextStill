@@ -195,7 +195,7 @@
         errorとして拒否する。
       </li>
       <li>
-        <code>CONTEXT_STILL_LARM_API_TOKEN</code>が設定されている場合だけ、activityを含むLARM
+        <code>LARM_API_TOKEN</code>が設定されている場合だけ、activityを含むLARM
         control requestへBearerを送る。未設定時はAuthorization header自体を送らない。
       </li>
       <li>401はidleへ変換せず、static Providerへfallbackしない。</li>

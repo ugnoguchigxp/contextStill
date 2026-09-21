@@ -21,9 +21,9 @@ const MAX_CLOCK_FUTURE_SKEW_MS: u64 = 5_000;
 const REQUEST_CLEANUP_MARGIN_MS: u64 = 30_000;
 const AGENT_CONNECTION_CONTRACT: &str = "openai-provider-v1";
 const SERVICE_ACTIVITY_CONTRACT: &str = "larm-service-activity.v1";
-const AGENT_PROFILE_CATALOG_CONTRACT: &str = "agent-connection.v2";
+const AGENT_PROFILE_CATALOG_CONTRACT: &str = "agent-connection.v3";
 const OPENAI_PROTOCOL: &str = "openai.chat-completions.v1";
-const LARM_API_TOKEN_ENV: &str = "CONTEXT_STILL_LARM_API_TOKEN";
+const LARM_API_TOKEN_ENV: &str = "LARM_API_TOKEN";
 const LEGACY_STATIC_LLM_PORT: u16 = 44_448;
 
 #[derive(Clone, Eq, PartialEq, Deserialize)]
@@ -108,11 +108,8 @@ impl LarmConnectionConfig {
                     "invalid LARM connection configuration for {connection_id}: {error}"
                 ))
             })?;
-        config.control_bearer_token = std::env::var(LARM_API_TOKEN_ENV).ok().and_then(|token| {
-            let token = Zeroizing::new(token);
-            let trimmed = token.trim();
-            (!trimmed.is_empty()).then(|| Zeroizing::new(trimmed.to_string()))
-        });
+        config.control_bearer_token =
+            control_bearer_token_from_environment(|name| std::env::var(name));
         config.validate()?;
         Ok(Some(config))
     }
@@ -201,6 +198,7 @@ struct LarmAgentProfile {
     description: String,
     selection_policy: String,
     deprecated: bool,
+    scheduling_priority: Option<u64>,
     providers: Vec<LarmAgentProfileProvider>,
 }
 
@@ -264,7 +262,27 @@ pub struct PublicLarmConnection {
     pub error: Option<PublicLarmConnectionError>,
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LarmConnectionHealth {
+    pub id: String,
+    pub status: LarmConnectionStatus,
+    pub ready: bool,
+    pub accepting_requests: bool,
+    pub checked_at: String,
+    pub providers: Vec<LarmConnectionProviderHealth>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LarmConnectionProviderHealth {
+    pub name: String,
+    pub capability: String,
+    pub ready: bool,
+    pub accepting_requests: bool,
+}
+
+#[derive(Clone, Eq, PartialEq)]
 pub struct ClaimedLarmTarget {
     pub connection_id: String,
     pub allocation_id: String,
@@ -377,6 +395,15 @@ pub struct LarmControlError {
 }
 
 impl LarmControlError {
+    pub(crate) fn credential_missing() -> Self {
+        Self {
+            kind: "credential_missing",
+            message: "LARM control credential is not configured".to_string(),
+            retryable: false,
+            http_status: None,
+        }
+    }
+
     pub(crate) fn configuration(message: impl Into<String>) -> Self {
         Self {
             kind: "configuration",
@@ -468,9 +495,18 @@ impl LarmControlClient {
         &self.config
     }
 
+    /// Safe-to-observe credential metadata. The token itself is never exposed.
+    pub fn credential_configured(&self) -> bool {
+        self.config.control_bearer_token.is_some()
+    }
+
+    pub fn credential_source(&self) -> &'static str {
+        LARM_API_TOKEN_ENV
+    }
+
     pub fn service_activity(&self) -> Result<LarmServiceActivity, LarmControlError> {
         let response = self
-            .authorized(self.client.get(self.endpoint("/v1/activity")?))
+            .authorized(self.client.get(self.endpoint("/v1/activity")?))?
             .header(ACCEPT, "application/json")
             .header(CACHE_CONTROL, "no-cache")
             .timeout(Duration::from_millis(self.config.availability_timeout_ms))
@@ -486,7 +522,7 @@ impl LarmControlClient {
         expected_config_revision: &str,
     ) -> Result<(), LarmControlError> {
         let response = self
-            .authorized(self.client.get(self.endpoint("/v2/agent-profiles")?))
+            .authorized(self.client.get(self.endpoint("/v3/agent-profiles")?))?
             .send()
             .map_err(|error| {
                 LarmControlError::transport(format!("agent profile discovery failed: {error}"))
@@ -509,7 +545,7 @@ impl LarmControlClient {
             deployment_policy: &'static str,
         }
         let response = self
-            .authorized(self.client.post(self.endpoint("/v1/agent-connections")?))
+            .authorized(self.client.post(self.endpoint("/v1/agent-connections")?))?
             .header("idempotency-key", idempotency_key)
             .json(&CreateRequest {
                 agent_profile: &self.config.agent_profile,
@@ -535,6 +571,24 @@ impl LarmControlClient {
         )
     }
 
+    pub fn health(&self, connection_id: &str) -> Result<LarmConnectionHealth, LarmControlError> {
+        validate_identifier("connection id", connection_id)?;
+        let response = self
+            .authorized(self.client.get(self.endpoint(&format!(
+                "/v1/agent-connections/{}/health",
+                encode_segment(connection_id)
+            ))?))?
+            .send()
+            .map_err(|error| LarmControlError::transport(format!("health failed: {error}")))?;
+        let health: LarmConnectionHealth = parse_json_response(response, StatusCode::OK)?;
+        if health.id != connection_id {
+            return Err(LarmControlError::protocol(
+                "LARM health response connection id mismatch",
+            ));
+        }
+        Ok(health)
+    }
+
     fn get_with_timeout(
         &self,
         connection_id: &str,
@@ -545,7 +599,7 @@ impl LarmControlClient {
             .authorized(self.client.get(self.endpoint(&format!(
                 "/v1/agent-connections/{}",
                 encode_segment(connection_id)
-            ))?))
+            ))?))?
             .timeout(timeout)
             .send()
             .map_err(|error| LarmControlError::transport(format!("status failed: {error}")))?;
@@ -618,7 +672,7 @@ impl LarmControlClient {
             .authorized(self.client.post(self.endpoint(&format!(
                 "/v1/agent-connections/{}/claim",
                 encode_segment(&connection.id)
-            ))?))
+            ))?))?
             .json(&ClaimRequest {
                 format: AGENT_CONNECTION_CONTRACT,
             })
@@ -644,7 +698,7 @@ impl LarmControlClient {
             .authorized(self.client.post(self.endpoint(&format!(
                 "/v1/agent-connections/{}/renew",
                 encode_segment(connection_id)
-            ))?))
+            ))?))?
             .header("idempotency-key", idempotency_key)
             .json(&RenewRequest {
                 ttl_seconds: self.config.ttl_seconds,
@@ -667,7 +721,7 @@ impl LarmControlClient {
             .authorized(self.client.delete(self.endpoint(&format!(
                 "/v1/agent-connections/{}",
                 encode_segment(connection_id)
-            ))?))
+            ))?))?
             .send()
             .map_err(|error| LarmControlError::transport(format!("release failed: {error}")))?;
         if response.status() != StatusCode::NO_CONTENT {
@@ -714,10 +768,10 @@ impl LarmControlClient {
             .map_err(|error| LarmControlError::configuration(format!("invalid LARM path: {error}")))
     }
 
-    fn authorized(&self, request: RequestBuilder) -> RequestBuilder {
+    fn authorized(&self, request: RequestBuilder) -> Result<RequestBuilder, LarmControlError> {
         match self.config.control_bearer_token.as_ref() {
-            Some(token) => request.bearer_auth(token.as_str()),
-            None => request,
+            Some(token) => Ok(request.bearer_auth(token.as_str())),
+            None => Err(LarmControlError::credential_missing()),
         }
     }
 
@@ -1384,6 +1438,14 @@ fn validate_identifier(label: &str, value: &str) -> Result<(), LarmControlError>
     Ok(())
 }
 
+fn control_bearer_token_from_environment(
+    read_environment: impl FnOnce(&str) -> Result<String, std::env::VarError>,
+) -> Option<Zeroizing<String>> {
+    let token = Zeroizing::new(read_environment(LARM_API_TOKEN_ENV).ok()?);
+    let trimmed = token.trim();
+    (!trimmed.is_empty()).then(|| Zeroizing::new(trimmed.to_string()))
+}
+
 fn is_valid_identifier(value: &str) -> bool {
     !value.is_empty()
         && value != "."
@@ -1458,6 +1520,22 @@ mod tests {
                 ),
                 json_response(200, profile_catalog_json("catalog-1")),
                 json_response(201, connection_json.clone()),
+                json_response(
+                    200,
+                    serde_json::json!({
+                        "id": "aconn_epoch_1",
+                        "status": "ready",
+                        "ready": true,
+                        "acceptingRequests": true,
+                        "checkedAt": current_rfc3339_for_test(),
+                        "providers": [{
+                            "name": "llm",
+                            "capability": "chat-completions",
+                            "ready": true,
+                            "acceptingRequests": true
+                        }]
+                    }),
+                ),
                 json_response(200, claim_json),
                 json_response(200, connection_json),
                 "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -1479,6 +1557,9 @@ mod tests {
             .unwrap();
         let created = client.create("contextstill:create:test-1").unwrap();
         assert_eq!(created.status, LarmConnectionStatus::Ready);
+        let health = client.health(&created.id).unwrap();
+        assert!(health.ready);
+        assert!(health.accepting_requests);
         let target = client.claim(&created).unwrap();
         assert_eq!(target.api_base_url, format!("{origin}/v1"));
         assert_eq!(target.model, "contextstill-background");
@@ -1491,19 +1572,23 @@ mod tests {
         server.join().unwrap();
 
         let requests = requests_rx.try_iter().collect::<Vec<_>>();
+        assert!(requests.iter().all(|request| request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer test-control-credential")));
         assert!(requests[0].starts_with("GET /v1/activity HTTP/1.1\r\n"));
         assert!(!requests[0].contains("GET /v1/activity?"));
         assert!(!requests[0].to_ascii_lowercase().contains("content-length:"));
-        assert!(requests[1].starts_with("GET /v2/agent-profiles HTTP/1.1\r\n"));
+        assert!(requests[1].starts_with("GET /v3/agent-profiles HTTP/1.1\r\n"));
         assert!(requests[2].contains("POST /v1/agent-connections HTTP/1.1"));
         assert!(requests[2]
             .to_ascii_lowercase()
             .contains("idempotency-key: contextstill:create:test-1"));
         assert!(requests[2].contains("\"allowFallback\":false"));
         assert!(requests[2].contains("\"deploymentPolicy\":\"existing-only\""));
-        assert!(requests[3].contains("/claim HTTP/1.1"));
-        assert!(requests[4].contains("/renew HTTP/1.1"));
-        assert!(requests[5].starts_with("DELETE /v1/agent-connections/"));
+        assert!(requests[3].contains("/health HTTP/1.1"));
+        assert!(requests[4].contains("/claim HTTP/1.1"));
+        assert!(requests[5].contains("/renew HTTP/1.1"));
+        assert!(requests[6].starts_with("DELETE /v1/agent-connections/"));
     }
 
     #[test]
@@ -1606,6 +1691,39 @@ mod tests {
         assert!(!client.target_requires_renewal(&sufficient).unwrap());
     }
 
+    #[test]
+    fn control_credential_uses_only_larm_api_token_and_rejects_blank_values() {
+        let token = control_bearer_token_from_environment(|name| {
+            assert_eq!(name, "LARM_API_TOKEN");
+            Ok("  test-control-credential  ".to_string())
+        })
+        .expect("nonblank credential must be retained");
+        assert_eq!(token.as_str(), "test-control-credential");
+
+        for blank in ["", " \t\n "] {
+            assert!(control_bearer_token_from_environment(|name| {
+                assert_eq!(name, "LARM_API_TOKEN");
+                Ok(blank.to_string())
+            })
+            .is_none());
+        }
+        assert!(control_bearer_token_from_environment(|name| {
+            assert_eq!(name, "LARM_API_TOKEN");
+            Err(std::env::VarError::NotPresent)
+        })
+        .is_none());
+    }
+
+    #[test]
+    fn credential_observability_and_debug_output_do_not_expose_its_value() {
+        let client = LarmControlClient::new(config("http://127.0.0.1:9810")).unwrap();
+        assert!(client.credential_configured());
+        assert_eq!(client.credential_source(), "LARM_API_TOKEN");
+        let debug = format!("{client:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("test-control-credential"));
+    }
+
     fn config(origin: &str) -> LarmConnectionConfig {
         LarmConnectionConfig {
             id: "contextstill-background".to_string(),
@@ -1618,7 +1736,7 @@ mod tests {
             ready_timeout_ms: 180_000,
             ttl_seconds: 900,
             request_timeout_ms: 300_000,
-            control_bearer_token: None,
+            control_bearer_token: Some(Zeroizing::new("test-control-credential".to_string())),
         }
     }
 

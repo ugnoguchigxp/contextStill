@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::sync::{Mutex, OnceLock};
+use std::path::Path;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension};
@@ -66,48 +67,125 @@ pub(crate) struct DynamicProviderClaim {
     _manager: LarmManagerCheckout,
 }
 
-static LARM_CONNECTION_MANAGERS: OnceLock<Mutex<BTreeMap<String, LarmConnectionManager>>> =
-    OnceLock::new();
+// The registry is intentionally scoped to a SQLite runtime.  Tests and residents can
+// legitimately use the same configured connection id against different databases.
+// Keeping the manager in the registry while it is checked out prevents a second
+// control-plane connection from being created for the same runtime/connection pair.
+type LarmManagerRegistry = BTreeMap<LarmManagerRegistryKey, Arc<Mutex<LarmManagerEntry>>>;
+
+static LARM_CONNECTION_MANAGERS: OnceLock<Mutex<LarmManagerRegistry>> = OnceLock::new();
+
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
+struct LarmManagerRegistryKey {
+    runtime_scope: String,
+    connection_id: String,
+}
+
+struct LarmManagerEntry {
+    manager: Option<LarmConnectionManager>,
+    checked_out: bool,
+    draining: bool,
+    cleanup_failed: bool,
+}
 
 struct LarmManagerCheckout {
-    connection_id: String,
+    entry: Arc<Mutex<LarmManagerEntry>>,
     manager: Option<LarmConnectionManager>,
 }
 
 impl LarmManagerCheckout {
-    fn take(config: &LarmConnectionConfig) -> Result<Self, CliError> {
+    fn take(sqlite_path: &Path, config: &LarmConnectionConfig) -> Result<Option<Self>, CliError> {
         let registry = LARM_CONNECTION_MANAGERS.get_or_init(|| Mutex::new(BTreeMap::new()));
-        let mut registry = registry
-            .lock()
-            .map_err(|_| CliError::runtime("LARM connection manager registry is poisoned"))?;
-        let mut manager = registry.remove(&config.id);
-        if manager
-            .as_ref()
-            .is_some_and(|manager| manager.config() != config)
-        {
-            if let Some(mut stale) = manager.take() {
-                let _ = stale.release();
-            }
-        }
-        let manager = match manager {
-            Some(manager) => manager,
-            None => LarmConnectionManager::new(config.clone()).map_err(|error| {
-                CliError::io(format!(
-                    "failed to initialize LARM connection {}: {error}",
-                    config.id
-                ))
-            })?,
+        let key = larm_manager_registry_key(sqlite_path, &config.id);
+        let new_manager = LarmConnectionManager::new(config.clone()).map_err(|error| {
+            CliError::io(format!(
+                "failed to initialize LARM connection {}: {error}",
+                config.id
+            ))
+        })?;
+        let entry_handle = {
+            let mut registry = registry
+                .lock()
+                .map_err(|_| CliError::runtime("LARM connection manager registry is poisoned"))?;
+            registry
+                .entry(key)
+                .or_insert_with(|| {
+                    Arc::new(Mutex::new(LarmManagerEntry {
+                        manager: Some(new_manager),
+                        checked_out: false,
+                        draining: false,
+                        cleanup_failed: false,
+                    }))
+                })
+                .clone()
         };
-        Ok(Self {
-            connection_id: config.id.clone(),
+        let mut entry = entry_handle
+            .lock()
+            .map_err(|_| CliError::runtime("LARM connection manager entry is poisoned"))?;
+        if entry.checked_out {
+            return Ok(None);
+        }
+        if entry.cleanup_failed {
+            return Err(CliError::runtime(format!(
+                "LARM connection {} has an unconfirmed remote cleanup; refusing a new manager",
+                config.id
+            )));
+        }
+        let mut manager = entry
+            .manager
+            .take()
+            .ok_or_else(|| CliError::runtime("available LARM manager entry has no manager"))?;
+        entry.checked_out = true;
+        drop(entry);
+
+        if manager.config() != config || manager_needs_drain(&entry_handle) {
+            if let Err(error) = manager.release() {
+                restore_failed_manager(&entry_handle, manager);
+                return Err(CliError::io(format!(
+                    "failed to release reconfigured LARM connection {}: {error}",
+                    config.id
+                )));
+            }
+            if manager.config() != config {
+                manager = LarmConnectionManager::new(config.clone()).map_err(|error| {
+                    restore_failed_manager(&entry_handle, manager);
+                    CliError::io(format!(
+                        "failed to reinitialize LARM connection {}: {error}",
+                        config.id
+                    ))
+                })?;
+            }
+            let mut entry = entry_handle
+                .lock()
+                .map_err(|_| CliError::runtime("LARM connection manager entry is poisoned"))?;
+            entry.draining = false;
+        }
+        Ok(Some(Self {
+            entry: entry_handle,
             manager: Some(manager),
-        })
+        }))
     }
 
-    fn manager_mut(&mut self) -> &mut LarmConnectionManager {
-        self.manager
+    fn reconcile(
+        &mut self,
+        due_job_exists: bool,
+    ) -> Result<
+        (
+            crate::domains::provider_connection::LarmReconcileResult,
+            Option<crate::domains::provider_connection::ClaimedLarmTarget>,
+        ),
+        CliError,
+    > {
+        let manager = self
+            .manager
             .as_mut()
-            .expect("checked-out LARM manager must exist")
+            .expect("checked-out LARM manager must exist");
+        // Reconciliation performs control-plane HTTP.  The registry entry is not
+        // locked here, so unrelated connections and drain requests can progress.
+        let reconciled = manager.reconcile(due_job_exists).map_err(|error| {
+            CliError::io(format!("LARM control-plane reconciliation failed: {error}"))
+        })?;
+        Ok((reconciled, manager.target().cloned()))
     }
 }
 
@@ -116,34 +194,86 @@ impl Drop for LarmManagerCheckout {
         let Some(manager) = self.manager.take() else {
             return;
         };
-        let registry = LARM_CONNECTION_MANAGERS.get_or_init(|| Mutex::new(BTreeMap::new()));
-        if let Ok(mut registry) = registry.lock() {
-            registry.insert(self.connection_id.clone(), manager);
+        if let Ok(mut entry) = self.entry.lock() {
+            entry.manager = Some(manager);
+            entry.checked_out = false;
         }
     }
 }
 
-fn release_unreferenced_larm_managers(active_connection_ids: &BTreeSet<String>) {
+fn manager_needs_drain(entry: &Arc<Mutex<LarmManagerEntry>>) -> bool {
+    entry.lock().map(|entry| entry.draining).unwrap_or(true)
+}
+
+fn restore_failed_manager(entry: &Arc<Mutex<LarmManagerEntry>>, manager: LarmConnectionManager) {
+    if let Ok(mut entry) = entry.lock() {
+        entry.manager = Some(manager);
+        entry.checked_out = false;
+        entry.draining = true;
+        entry.cleanup_failed = true;
+    }
+}
+
+fn larm_manager_registry_key(sqlite_path: &Path, connection_id: &str) -> LarmManagerRegistryKey {
+    LarmManagerRegistryKey {
+        runtime_scope: sqlite_path.to_string_lossy().into_owned(),
+        connection_id: connection_id.to_string(),
+    }
+}
+
+fn release_unreferenced_larm_managers(
+    runtime_scope: Option<&Path>,
+    active_connection_ids: &BTreeSet<String>,
+) {
     let Some(registry) = LARM_CONNECTION_MANAGERS.get() else {
         return;
     };
-    let Ok(mut registry) = registry.lock() else {
+    let Ok(registry) = registry.lock() else {
         return;
     };
-    let stale_ids = registry
-        .keys()
-        .filter(|connection_id| !active_connection_ids.contains(*connection_id))
-        .cloned()
+    let scope = runtime_scope.map(|path| path.to_string_lossy().into_owned());
+    let stale_entries = registry
+        .iter()
+        .filter(|(key, _)| {
+            scope
+                .as_ref()
+                .is_none_or(|scope| key.runtime_scope == *scope)
+                && !active_connection_ids.contains(&key.connection_id)
+        })
+        .map(|(key, entry)| (key.clone(), entry.clone()))
         .collect::<Vec<_>>();
-    for connection_id in stale_ids {
-        if let Some(mut manager) = registry.remove(&connection_id) {
-            let _ = manager.release();
+    drop(registry);
+
+    for (_, entry_handle) in stale_entries {
+        let mut manager = {
+            let Ok(mut entry) = entry_handle.lock() else {
+                continue;
+            };
+            entry.draining = true;
+            if entry.checked_out {
+                // The active request owns the connection.  Its checkout will put
+                // the manager back; the next maintenance pass can release it.
+                continue;
+            }
+            let Some(manager) = entry.manager.take() else {
+                continue;
+            };
+            entry.checked_out = true;
+            manager
+        };
+
+        // Remote cleanup must not hold either the registry lock or an entry lock.
+        let release_result = manager.release();
+        if let Ok(mut entry) = entry_handle.lock() {
+            entry.manager = Some(manager);
+            entry.checked_out = false;
+            entry.cleanup_failed = release_result.is_err();
         }
     }
 }
 
 pub(crate) fn release_dynamic_provider_connections() {
-    release_unreferenced_larm_managers(&BTreeSet::new());
+    release_unreferenced_larm_managers(None, &BTreeSet::new());
 }
 
 pub(crate) fn log_provider_startup_selection_for_path(sqlite_path: &std::path::Path) {
@@ -259,7 +389,7 @@ pub(crate) fn dynamic_provider_routes_configured(
             .into_iter()
             .any(is_larm_route);
     if !configured {
-        release_unreferenced_larm_managers(&BTreeSet::new());
+        release_unreferenced_larm_managers(Some(sqlite_path), &BTreeSet::new());
     }
     Ok(configured)
 }
@@ -278,13 +408,15 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
         .iter()
         .map(|plan| plan.connection.id.clone())
         .collect::<BTreeSet<_>>();
-    release_unreferenced_larm_managers(&active_connection_ids);
+    release_unreferenced_larm_managers(Some(sqlite_path), &active_connection_ids);
 
     for plan in plans {
         let due_job_exists = dynamic_plan_has_runnable_job(&reader, &plan)?;
-        let mut manager = LarmManagerCheckout::take(&plan.connection)?;
-        let reconciled = match manager.manager_mut().reconcile(due_job_exists) {
-            Ok(reconciled) => reconciled,
+        let Some(mut manager) = LarmManagerCheckout::take(sqlite_path, &plan.connection)? else {
+            continue;
+        };
+        let (reconciled, claimed_target) = match manager.reconcile(due_job_exists) {
+            Ok(result) => result,
             Err(error) => {
                 eprintln!(
                     "LARM connection {} is unavailable; queue remains unclaimed: {error}",
@@ -296,9 +428,8 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
         if !due_job_exists || !reconciled.ready {
             continue;
         }
-        let claimed_target = manager
-            .manager_mut()
-            .target()
+        let claimed_target = claimed_target
+            .as_ref()
             .ok_or_else(|| CliError::runtime("ready LARM manager has no claimed target"))?;
         let target = LocalLlmTargetConfig {
             codex: false,
@@ -711,6 +842,50 @@ fn unique_suffix() -> String {
 mod tests {
     use super::super::executor::{executor_priority_queues_for_pool, provider_pools};
     use super::*;
+
+    fn larm_connection_config(id: &str) -> LarmConnectionConfig {
+        let settings = json!({
+            "providers": {
+                "larm-agent-connection": {
+                    "enabled": true,
+                    "connections": [{
+                        "id": id,
+                        "controlBaseUrl": "http://127.0.0.1:9810",
+                        "agentProfile": "contextstill-background",
+                        "audience": "saaa-desktop",
+                        "availabilityPollMs": 5000,
+                        "availabilityTimeoutMs": 2000,
+                        "controlTimeoutMs": 5000,
+                        "readyTimeoutMs": 180000,
+                        "ttlSeconds": 900,
+                        "requestTimeoutMs": 300000
+                    }]
+                }
+            }
+        });
+        LarmConnectionConfig::from_settings(&settings, id)
+            .unwrap()
+            .expect("enabled test LARM connection must be present")
+    }
+
+    #[test]
+    fn manager_checkout_keeps_one_manager_per_runtime_connection() {
+        let config = larm_connection_config("checkout-registry-test");
+        let scope_path = std::env::temp_dir().join(format!(
+            "context-stilld-checkout-registry-test-{}.sqlite",
+            unique_suffix()
+        ));
+        let scope = scope_path.as_path();
+
+        let first = LarmManagerCheckout::take(scope, &config).unwrap().unwrap();
+        assert!(LarmManagerCheckout::take(scope, &config).unwrap().is_none());
+
+        let first_entry = first.entry.clone();
+        drop(first);
+
+        let second = LarmManagerCheckout::take(scope, &config).unwrap().unwrap();
+        assert!(Arc::ptr_eq(&first_entry, &second.entry));
+    }
 
     #[test]
     fn builds_row_aware_larm_claim_plan() {

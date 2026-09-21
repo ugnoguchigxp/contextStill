@@ -1,59 +1,297 @@
 <article lang="ja">
   <h1>LARM共有connection統合：公開契約の照合と不足事項</h1>
-  <p>2026年9月21日。添付された単一connection・最大3並行request統合指示の前提調査。期待する動作は、ContextStillがLARMへ要求し、その公開レスポンスが保証する実行先・capacity・context上限・admission条件に従うことである。ContextStillが物理slot、KV、daemon数を管理しない。</p>
+  <p>
+    後続作業は<a href="larm-shared-connection-implementation-plan.html">Terra引き継ぎ用の実装計画</a
+    >に分割した。本書は契約調査の証拠として維持し、実装の順序・依存・受入試験は計画書を参照する。
+  </p>
+  <p>
+    2026年9月21日。添付された単一connection・最大3並行request統合指示の前提調査。期待する動作は、ContextStillがLARMへ要求し、その公開レスポンスが保証する実行先・capacity・context上限・admission条件に従うことである。ContextStillが物理slot、KV、daemon数を管理しない。
+  </p>
   <section id="status">
     <h2>判定：公開契約の追加が必要</h2>
-    <p>今回確認した配備releaseと最新作業ツリーの公開schemaには、同時request上限およびcontext windowの広告が揃っていない。添付指示の「現行contractに必要情報がなければ、推測や非公開設定参照で実装せず」に従い、3並行・tier自動選択の有効化は行っていない。製品コード、設定、LARM配備は変更していない。統合完了ではない。</p>
-    <p>調査対象はgnosis上の配備先 /srv/ai/apps/larm-releases/beee10b6c622 と /srv/ai/apps/local-LLM-harness の作業ツリー。後者のHEADはa92d4ab8a3ad6a120b2b008a8a36013ec3a3195fで、未commitの変更を含む。公開schema・文書の抜粋とファイルSHA256を<a href="assets/larm-shared-connection-contract-audit/source-evidence.json">調査証拠</a>として保存した。実APIの認証情報や設定ファイルは採取していない。</p>
-    <p>添付の対象パスは /srv/ai/apps/contextStill だが、今回の作業対象はこのタスクの /Users/y.noguchi/Code/contextStill。リモートはLARM sourceの読み取りだけに使用し、双方の既存未commit変更を保持した。</p>
+    <p>
+      今回確認した配備releaseと最新作業ツリーの公開schemaには、同時request上限およびcontext
+      windowの広告が揃っていない。添付指示の「現行contractに必要情報がなければ、推測や非公開設定参照で実装せず」に従い、3並行・tier自動選択の有効化は行っていない。製品コード、設定、LARM配備は変更していない。統合完了ではない。
+    </p>
+    <p>
+      調査対象はgnosis上の配備先 /srv/ai/apps/larm-releases/beee10b6c622 と
+      /srv/ai/apps/local-LLM-harness
+      の作業ツリー。後者のHEADはa92d4ab8a3ad6a120b2b008a8a36013ec3a3195fで、未commitの変更を含む。公開schema・文書の抜粋とファイルSHA256を<a
+        href="assets/larm-shared-connection-contract-audit/source-evidence.json"
+        >調査証拠</a
+      >として保存した。実APIの認証情報や設定ファイルは採取していない。
+    </p>
+    <p>
+      添付の対象パスは /srv/ai/apps/contextStill だが、今回の作業対象はこのタスクの
+      /Users/y.noguchi/Code/contextStill。リモートはLARM
+      sourceの読み取りだけに使用し、双方の既存未commit変更を保持した。
+    </p>
   </section>
   <section id="contract">
     <h2>公開契約として確認できた範囲</h2>
     <table>
-      <caption>LARM sourceとの照合</caption>
-      <thead><tr><th scope="col">対象</th><th scope="col">確認結果</th><th scope="col">不足</th></tr></thead>
+      <caption>
+        LARM sourceとの照合
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">確認結果</th>
+          <th scope="col">不足</th>
+        </tr>
+      </thead>
       <tbody>
-        <tr><th scope="row">Provider descriptor</th><td>baseUrl、model、protocol、health、credential、configurationを公開</td><td>同時request上限、session上限、context windowを公開していない</td></tr>
-        <tr><th scope="row">Provider health</th><td>ready、acceptingRequests、reason、任意capacity。capacityはready、activeRequests、queueDepth、maxQueuedRequests、retryAfterMs</td><td>activeRequestsは現在数であり上限ではない。maxConcurrentRequestsがない。追加request時の他サービス優先保証も要確認</td></tr>
-        <tr><th scope="row">公開profile一覧</th><td>agent-connection.v2、catalogRevision、profile、providerのmodel・protocol・capability等</td><td>contextWindowを含まない</td></tr>
-        <tr><th scope="row">最新内部profile設定</th><td>contextWindow.maxTokens、outputReserveTokens、safetyMarginTokensと最小tier選択関数が追加されている</td><td>内部YAMLとcore関数だけではHTTP consumerが広告を取得できない</td></tr>
-        <tr><th scope="row">Service Activity</th><td>larm-service-activity.v1、state、activeWorkloads、bootEpoch、configRevision、retryAfterMs。reservationGuaranteed=false</td><td>自身のconnection由来か、他サービス由来かを区別しない。activeWorkloadsから自身の件数を差し引く推測は採用しない</td></tr>
+        <tr>
+          <th scope="row">Provider descriptor</th>
+          <td>baseUrl、model、protocol、health、credential、configurationを公開</td>
+          <td>同時request上限、session上限、context windowを公開していない</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider health</th>
+          <td>
+            ready、acceptingRequests、reason、任意capacity。capacityはready、activeRequests、queueDepth、maxQueuedRequests、retryAfterMs
+          </td>
+          <td>
+            activeRequestsは現在数であり上限ではない。maxConcurrentRequestsがない。追加request時の他サービス優先保証も要確認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">公開profile一覧</th>
+          <td>
+            agent-connection.v2、catalogRevision、profile、providerのmodel・protocol・capability等
+          </td>
+          <td>contextWindowを含まない</td>
+        </tr>
+        <tr>
+          <th scope="row">最新内部profile設定</th>
+          <td>
+            contextWindow.maxTokens、outputReserveTokens、safetyMarginTokensと最小tier選択関数が追加されている
+          </td>
+          <td>内部YAMLとcore関数だけではHTTP consumerが広告を取得できない</td>
+        </tr>
+        <tr>
+          <th scope="row">Service Activity</th>
+          <td>
+            larm-service-activity.v1、state、activeWorkloads、bootEpoch、configRevision、retryAfterMs。reservationGuaranteed=false
+          </td>
+          <td>
+            自身のconnection由来か、他サービス由来かを区別しない。activeWorkloadsから自身の件数を差し引く推測は採用しない
+          </td>
+        </tr>
       </tbody>
     </table>
-    <p>根拠は packages/core/src/agent-connection.ts と service-activity.ts。capacityという名称の存在だけで3並行対応と判断しない。内部resources.maxConcurrentRequestsも公開広告の代用にしない。</p>
+    <p>
+      根拠は packages/core/src/agent-connection.ts と
+      service-activity.ts。capacityという名称の存在だけで3並行対応と判断しない。内部resources.maxConcurrentRequestsも公開広告の代用にしない。
+    </p>
+  </section>
+  <section id="live-public-api-check-2026-09-21">
+    <h2>実API確認：2026年9月21日</h2>
+    <p>
+      gnosis上でLARMのloopback公開APIへ読み取り要求を送った。ContextStillの現在の実行環境には
+      <code>LARM_API_TOKEN</code>
+      が設定されていないため、認証情報の探索、connection作成、claim、Chat
+      Completions送信は行っていない。以下は認証不要の応答と、認証必須であることの確認だけである。
+    </p>
+    <table>
+      <caption>
+        実測したHTTP応答。時刻・secret・接続IDは記録しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求先</th>
+          <th scope="col">HTTP結果</th>
+          <th scope="col">確認できた値</th>
+          <th scope="col">不足</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>GET /v1/activity</code></th>
+          <td>200</td>
+          <td>
+            <code>contractVersion=larm-service-activity.v1</code
+            >、<code>state=idle</code>、<code>activeWorkloads=0</code>、<code>reservationGuaranteed=false</code>、<code>bootEpoch</code>、<code>configRevision</code>、<code
+              >retryAfterMs=0</code
+            >
+          </td>
+          <td>
+            connectionごとの同時request上限、self/other
+            workloadの区別、追加requestの受付保証、終了・cancelの照合条件
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /v2/agent-profiles</code></th>
+          <td>200</td>
+          <td>
+            <code>contractVersion=agent-connection.v2</code>、catalog revision、<code
+              >contextstill-background</code
+            >
+            profileとその<code>model=qwen-agent-worker</code>、protocol、capability
+          </td>
+          <td>
+            profile/providerごとのcontext window、output上限またはreserve、安全margin、request
+            capacity、claim済みdescriptorとのrevision対応
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /v1/agent-connections</code></th>
+          <td>401</td>
+          <td>有効なbearer tokenが必須</td>
+          <td>
+            実connection/claimから得られる公開descriptorとadmissionの確認。tokenなしでcreateやclaimを試行していない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /openapi.json</code></th>
+          <td>401</td>
+          <td>有効なbearer tokenが必須</td>
+          <td>認証済みAPI schema。unauthenticatedな仕様代替として推測しない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この実測により、現在の<code>activeWorkloads=0</code>はcapacityではなく瞬間的な全体workload数に過ぎないことを再確認した。公開profileに128K相当の説明があっても数値化されたwindow
+      fieldはない。したがってC1〜C4は未充足であり、広告なしの3並行・tier選択・終了不明requestの再利用は有効化しない。
+    </p>
+  </section>
+  <section id="release-463d199-follow-up-2026-09-21">
+    <h2>release 463d199以降の追試：2026年9月21日</h2>
+    <p>
+      gnosis上の<code>/srv/ai/apps/local-LLM-harness</code>で、現在のHEADがrelease
+      <code>463d199</code
+      >をancestorとして含むことを確認した。credentialの値は探索・表示・保存せず、現在の安全な実行コンテキストに注入済みcredentialがあるかだけを真偽値で確認した結果、利用不可だった。このため認証が必要なAgent
+      Connectionの作成、claim、provider health取得は実行していない。
+    </p>
+    <table>
+      <caption>
+        release後の認証不要API実測
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求先</th>
+          <th scope="col">HTTP結果</th>
+          <th scope="col">確認結果</th>
+          <th scope="col">未充足項目</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>GET /v3/agent-profiles</code></th>
+          <td>200</td>
+          <td>
+            <code>contractVersion=agent-connection.v3</code
+            >。<code>contextstill-background-64k</code>と<code>contextstill-background-128k</code>はcatalogに存在しない。既存の<code>contextstill-background</code>を含む全profile/providerに<code>contextWindow</code>およびcapacity
+            fieldはない。
+          </td>
+          <td>指定2 profileのwindow、output reserve、安全margin、capacity</td>
+        </tr>
+        <tr>
+          <th scope="row">Agent Connection create/claim/provider health</th>
+          <td>未実行</td>
+          <td>安全に注入済みBearer credentialがこの実行コンテキストにない</td>
+          <td>
+            <code>capacity.maxConcurrentRequests</code
+            >、<code>activeRequests</code>、<code>maxQueuedRequests</code>、<code>queueDepth</code>、<code>queueTimeoutMs</code>、<code>retryAfterMs</code>、<code>completionGuaranteed</code>、<code
+              >acceptingRequests</code
+            >
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      capacityを広告するclaim済みprovider healthが未確認なので、ContextStillのdynamic
+      connectionは既存の1 checkout / 1
+      leaseのままとする。共有3並行は実装・有効化しない。真の3並行を必要とする場合は、公開契約とcredential注入済み検証環境に加え、別runtime/slot追加および実機memory・latency試験を別変更として要求する。
+    </p>
   </section>
   <section id="source-conflict">
     <h2>添付指示と最新LARM文書の相違</h2>
-    <p>最新作業ツリーの specs/contextstill-context-window-tiering.html は固定3 slot案を不採用とし、64K・128Kの最小tier選択を記載する。256Kはproduction tierとして未受入である。同じswap groupのruntimeは同時loadされないとも記載されている。これは添付の64K・64K・256K想定と異なるため、いずれの数値もContextStillへ固定しない。未配備の内部設定をliveの広告として扱わない。</p>
+    <p>
+      最新作業ツリーの specs/contextstill-context-window-tiering.html は固定3
+      slot案を不採用とし、64K・128Kの最小tier選択を記載する。256Kはproduction
+      tierとして未受入である。同じswap
+      groupのruntimeは同時loadされないとも記載されている。これは添付の64K・64K・256K想定と異なるため、いずれの数値もContextStillへ固定しない。未配備の内部設定をliveの広告として扱わない。
+    </p>
   </section>
   <section id="changes-required">
     <h2>ContextStill側の変更箇所と所有権</h2>
     <ul>
-      <li>dynamic_provider.rs：max_concurrent=1固定、registryからmanagerをremoveするcheckout、1ジョブがmanager全体を保持する構造。並行checkout時には同じconnectionIdのmanagerが重複生成され得る。</li>
-      <li>provider_lease.rs：Pool容量をtarget数までに丸め、使用中targetを一律除外する。staticの既存排他は維持し、契約確認済みdynamic targetだけrequest枠を別計算する必要がある。</li>
-      <li>executor.rs：worker数に動的capacityを反映し、max_claimsと並列数を区別する。Provider HTTP待機はSQLite writerの外で行う。</li>
-      <li>provider_connection/manager.rs：各job前にactivityを確認しactiveならreleaseする。共有connectionの追加admissionに同じ判定は使えない。初回確立のfail-closed gateと追加requestのadmissionを分離する必要がある。</li>
+      <li>
+        dynamic_provider.rs：max_concurrent=1固定、registryからmanagerをremoveするcheckout、1ジョブがmanager全体を保持する構造。並行checkout時には同じconnectionIdのmanagerが重複生成され得る。
+      </li>
+      <li>
+        provider_lease.rs：Pool容量をtarget数までに丸め、使用中targetを一律除外する。staticの既存排他は維持し、契約確認済みdynamic
+        targetだけrequest枠を別計算する必要がある。
+      </li>
+      <li>
+        executor.rs：worker数に動的capacityを反映し、max_claimsと並列数を区別する。Provider
+        HTTP待機はSQLite writerの外で行う。
+      </li>
+      <li>
+        provider_connection/manager.rs：各job前にactivityを確認しactiveならreleaseする。共有connectionの追加admissionに同じ判定は使えない。初回確立のfail-closed
+        gateと追加requestのadmissionを分離する必要がある。
+      </li>
     </ul>
-    <p>採用予定のownershipはconnectionIdごとに共有managerを1つ、各requestにはpermitを1つとする。create・ready・claim・renew・releaseはsingle-flightとし、request全体をmutexで覆わない。1件終了はpermit返却でありconnection releaseではない。queue idleかつactive permit 0でのみreleaseする。credentialはメモリ内だけに保持する。</p>
-    <p>直前の設定提案に記載した「session IDの終了追跡」は /v1/agents/sessions 接続用であり、この共有Chat Completions descriptorと同一ではない。本統合で返すのはrequest permitである。通信断で上流実行が継続している可能性を、ローカルHTTPの終了だけで解消したとみなさない。LARM側のadmission・cancel・終了保証に従う。</p>
+    <p>
+      採用予定のownershipはconnectionIdごとに共有managerを1つ、各requestにはpermitを1つとする。create・ready・claim・renew・releaseはsingle-flightとし、request全体をmutexで覆わない。1件終了はpermit返却でありconnection
+      releaseではない。queue idleかつactive permit
+      0でのみreleaseする。credentialはメモリ内だけに保持する。
+    </p>
+    <p>
+      直前の設定提案に記載した「session IDの終了追跡」は /v1/agents/sessions
+      接続用であり、この共有Chat Completions descriptorと同一ではない。本統合で返すのはrequest
+      permitである。通信断で上流実行が継続している可能性を、ローカルHTTPの終了だけで解消したとみなさない。LARM側のadmission・cancel・終了保証に従う。
+    </p>
   </section>
   <section id="larm-request">
     <h2>LARMへ追加を依頼する公開契約</h2>
-    <p>以下は要求事項であり、存在を確認したfield名ではない。正式なAPI型とfixtureが確定した後、そのfieldだけをContextStillのdeny_unknown_fields付き型に追加する。</p>
+    <p>
+      以下は要求事項であり、存在を確認したfield名ではない。正式なAPI型とfixtureが確定した後、そのfieldだけをContextStillのdeny_unknown_fields付き型に追加する。
+    </p>
     <ol>
-      <li>descriptorまたはそれに紐づく公開応答で、同時request上限、必要ならsession上限、それぞれの共有範囲と単位を広告する。catalog・connection・claim・health間のidentity/revision対応を定義する。</li>
-      <li>追加requestを同じconnectionへ送れる条件を公開する。自身のworkloadと他サービス優先・drainingを扱うadmission契約を定義する。healthのacceptingRequestsが何を保証し、競合した際にどのretryable応答になるかをfixtureで示す。</li>
-      <li>選択可能なprofile/providerのcontext上限、output上限またはreserveの意味、安全marginを公開HTTP応答へ含める。最小tier選択後、実際にclaimしたdescriptorと同じwindowであることを照合できるようにする。</li>
-      <li>capacity不足・tier不足・429・timeout・cancelの型付き応答、retry時刻、request終了の意味を定義する。通信断や再起動時に上流処理の終了をどう確認するかを示す。</li>
-      <li>単一connectionへ3requestが許可されるfixtureと4件目の拒否またはqueue応答を提供する。現行が1のみなら1を広告する。64K・128K・256Kも実際に受入済みの値だけを返す。</li>
+      <li>
+        descriptorまたはそれに紐づく公開応答で、同時request上限、必要ならsession上限、それぞれの共有範囲と単位を広告する。catalog・connection・claim・health間のidentity/revision対応を定義する。
+      </li>
+      <li>
+        追加requestを同じconnectionへ送れる条件を公開する。自身のworkloadと他サービス優先・drainingを扱うadmission契約を定義する。healthのacceptingRequestsが何を保証し、競合した際にどのretryable応答になるかをfixtureで示す。
+      </li>
+      <li>
+        選択可能なprofile/providerのcontext上限、output上限またはreserveの意味、安全marginを公開HTTP応答へ含める。最小tier選択後、実際にclaimしたdescriptorと同じwindowであることを照合できるようにする。
+      </li>
+      <li>
+        capacity不足・tier不足・429・timeout・cancelの型付き応答、retry時刻、request終了の意味を定義する。通信断や再起動時に上流処理の終了をどう確認するかを示す。
+      </li>
+      <li>
+        単一connectionへ3requestが許可されるfixtureと4件目の拒否またはqueue応答を提供する。現行が1のみなら1を広告する。64K・128K・256Kも実際に受入済みの値だけを返す。
+      </li>
     </ol>
   </section>
   <section id="migration-validation">
     <h2>移行・検証・rollback</h2>
-    <p>公開契約が揃った後の実効capacityは広告値とContextStill上限の小さい方とする。旧設定の既定値は1。情報なしの場合は従来1枠を維持するか、window検証が必須の新モードではclaim前に明示的に待機させる。未知fieldを黙って無視する移行はしない。現行checkout競合があるため、現在の実装が並行呼び出しに対して安全な1枠を保証するとの主張はしない。</p>
-    <p>最終messages・system・tools・retrievalを含むtoken見積り、出力予約、広告marginの合計がwindow以下の候補だけを使う。候補なしは本文を切り捨てず、semantic attemptを消費しない型付き待機にする。3枠広告時は4件目をpendingに残す。値が1なら1、別tier集合ならその集合に従う。</p>
-    <p>実装後は添付の16項目をfake HTTPとbarrier/channelで検証する。single-flight、3件の到達とresponse相関、4件目未claim、全終了経路のlease/permit返却、static排他、token境界を含む。今回製品変更を行っていないため、これらの新動作テストおよび実機canaryは未実施。巨大モデルでの試験で不足契約を代用しない。</p>
-    <p>今回のrollbackは不要で、既存実行方式を変更していない。将来は新規admissionを止めてactive permitをdrainした後、上限1と従来profileへ戻す。稼働中requestのcredentialを即時破棄する設定切替は行わない。実装時の検証コマンドはcargo fmt --check、cargo check -p context-stilld、cargo test -p context-stilld、対応するTypeScript settings test、bun run check、bun run spec:fix、bun run spec:checkを使用する。</p>
-    <p>今回の文書検証ではbun run spec:fixが出力を返さず停止したため終了させた。spec:checkも別途起動したが完了を確認できていない。標準HTML parserで2文書の単一article・lang・h1・section ID・th scope・タグ対応を確認したが、これはSpec HTMLチェックの代替合格とはしない。調査時のpackage.jsonには添付指示のdocs:check:fixとcheck scriptが存在しないため、実装再開時にその時点の検証scriptを確認する。</p>
+    <p>
+      公開契約が揃った後の実効capacityは広告値とContextStill上限の小さい方とする。旧設定の既定値は1。情報なしの場合は従来1枠を維持するか、window検証が必須の新モードではclaim前に明示的に待機させる。未知fieldを黙って無視する移行はしない。現行checkout競合があるため、現在の実装が並行呼び出しに対して安全な1枠を保証するとの主張はしない。
+    </p>
+    <p>
+      最終messages・system・tools・retrievalを含むtoken見積り、出力予約、広告marginの合計がwindow以下の候補だけを使う。候補なしは本文を切り捨てず、semantic
+      attemptを消費しない型付き待機にする。3枠広告時は4件目をpendingに残す。値が1なら1、別tier集合ならその集合に従う。
+    </p>
+    <p>
+      実装後は添付の16項目をfake
+      HTTPとbarrier/channelで検証する。single-flight、3件の到達とresponse相関、4件目未claim、全終了経路のlease/permit返却、static排他、token境界を含む。今回製品変更を行っていないため、これらの新動作テストおよび実機canaryは未実施。巨大モデルでの試験で不足契約を代用しない。
+    </p>
+    <p>
+      今回のrollbackは不要で、既存実行方式を変更していない。将来は新規admissionを止めてactive
+      permitをdrainした後、上限1と従来profileへ戻す。稼働中requestのcredentialを即時破棄する設定切替は行わない。実装時の検証コマンドはcargo
+      fmt --check、cargo check -p context-stilld、cargo test -p context-stilld、対応するTypeScript
+      settings test、bun run check、bun run spec:fix、bun run spec:checkを使用する。
+    </p>
+    <p>
+      今回の文書検証ではbun run
+      spec:fixが出力を返さず停止したため終了させた。spec:checkも別途起動したが完了を確認できていない。標準HTML
+      parserで2文書の単一article・lang・h1・section ID・th scope・タグ対応を確認したが、これはSpec
+      HTMLチェックの代替合格とはしない。調査時のpackage.jsonには添付指示のdocs:check:fixとcheck
+      scriptが存在しないため、実装再開時にその時点の検証scriptを確認する。
+    </p>
   </section>
 </article>

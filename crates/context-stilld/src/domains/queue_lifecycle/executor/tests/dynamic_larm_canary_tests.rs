@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex, MutexGuard, OnceLock};
 use std::thread;
 
 fn read_request(stream: &mut TcpStream) -> String {
@@ -69,7 +69,7 @@ fn profile_response() -> String {
     json_response(
         200,
         json!({
-            "contractVersion": "agent-connection.v2",
+            "contractVersion": "agent-connection.v3",
             "catalogRevision": "catalog-canary",
             "defaultAgentProfile": "coding-default",
             "profiles": [{
@@ -163,8 +163,40 @@ fn claim_response(provider_origin: &str, provider_port: u16) -> String {
     )
 }
 
+static LARM_TOKEN_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+struct ScopedLarmTokenEnvironment {
+    _lock: MutexGuard<'static, ()>,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl ScopedLarmTokenEnvironment {
+    fn set_for_test() -> Self {
+        let lock = LARM_TOKEN_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap();
+        let previous = std::env::var_os("LARM_API_TOKEN");
+        std::env::set_var("LARM_API_TOKEN", "control-test-credential");
+        Self {
+            _lock: lock,
+            previous,
+        }
+    }
+}
+
+impl Drop for ScopedLarmTokenEnvironment {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => std::env::set_var("LARM_API_TOKEN", value),
+            None => std::env::remove_var("LARM_API_TOKEN"),
+        }
+    }
+}
+
 #[test]
 fn dynamic_larm_canary_uses_claimed_json_target_and_releases_connection() {
+    let _token_environment = ScopedLarmTokenEnvironment::set_for_test();
     let provider_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let provider_address = provider_listener.local_addr().unwrap();
     let provider_origin = format!("http://{provider_address}");
@@ -276,9 +308,9 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_connection() {
     assert_eq!(second.status, "waiting_for_dynamic_provider");
     let provider_request = provider_request_rx.recv().unwrap();
     assert!(provider_request.starts_with("POST /v1/chat/completions HTTP/1.1"));
-    assert!(provider_request
-        .to_ascii_lowercase()
-        .contains("authorization: bearer larm_conn_v1.canary"));
+    let provider_headers = provider_request.to_ascii_lowercase();
+    assert!(provider_headers.contains("authorization: bearer "));
+    assert!(!provider_headers.contains("control-test-credential"));
     let provider_json: Value =
         serde_json::from_str(provider_request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
     assert_eq!(provider_json["model"], "qwen-agent-worker");
@@ -297,13 +329,16 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_connection() {
     let control_requests = control_requests_rx.try_iter().collect::<Vec<_>>();
     assert_eq!(control_requests.len(), 5);
     assert!(control_requests[0].starts_with("GET /v1/activity HTTP/1.1"));
-    assert!(control_requests[1].starts_with("GET /v2/agent-profiles HTTP/1.1"));
+    assert!(control_requests[1].starts_with("GET /v3/agent-profiles HTTP/1.1"));
     assert!(control_requests[2].starts_with("POST /v1/agent-connections HTTP/1.1"));
     assert!(control_requests[3].contains("/claim HTTP/1.1"));
     assert!(control_requests[4].starts_with("DELETE /v1/agent-connections/aconn_canary"));
     assert!(control_requests
         .iter()
         .all(|request| !request.contains("44448")));
+    assert!(control_requests.iter().all(|request| request
+        .to_ascii_lowercase()
+        .contains("authorization: bearer control-test-credential")));
 
     let connection = Connection::open(&sqlite_path).unwrap();
     let status: String = connection
