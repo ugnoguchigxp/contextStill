@@ -1,3 +1,4 @@
+use super::super::inference_preemption::{InferencePauseKind, InferencePreemption};
 use super::super::types::ProviderLeaseAssignment;
 use super::*;
 
@@ -420,6 +421,64 @@ fn identityless_repo_jobs_finish_in_preflight_without_attempt_or_provider() {
         )
         .unwrap();
     assert_eq!(outcome, "needs_evidence");
+}
+
+#[test]
+fn foreground_preemption_requeues_curation_without_consuming_attempt() {
+    let (mut connection, job, snapshot) = setup();
+
+    assert!(!persist(
+        &mut connection,
+        &job,
+        &snapshot,
+        Err(InferenceRequestError::Preempted(InferencePreemption {
+            kind: InferencePauseKind::ForegroundPreempted,
+            retry_after_floor_ms: 1_000,
+            message: Some("foreground won".into()),
+        })),
+    )
+    .unwrap());
+
+    let state: (String, i64, String, Option<String>, i64) = connection
+        .query_row(
+            "select status, attempt_count, last_outcome_kind, last_error,
+                    next_run_at is not null
+             from landscape_curation_queue where id=?1",
+            [&job.id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(state.0, "pending");
+    assert_eq!(state.1, 0);
+    assert_eq!(state.2, "inference_preempted");
+    assert_eq!(state.3, None);
+    assert_eq!(state.4, 1);
+    let preemption_events: i64 = connection
+        .query_row(
+            "select count(*) from distillation_queue_events
+             where queue_name='landscapeCuration' and queue_job_id=?1
+               and json_extract(metadata, '$.event')='contextstill_inference_preempted'",
+            [&job.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(preemption_events, 1);
+    let release_reason: String = connection
+        .query_row(
+            "select release_reason from llm_provider_leases where id=?1",
+            [&job.provider_lease.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(release_reason, "foreground_preempted");
 }
 
 #[test]

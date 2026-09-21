@@ -1,4 +1,5 @@
 use super::*;
+use crate::domains::queue_lifecycle::inference_preemption::InferencePauseKind;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::mpsc;
@@ -19,6 +20,42 @@ fn treats_transport_and_server_failures_as_retryable() {
         "failed to read local-llm response: connection reset"
     ));
     assert!(!is_provider_unavailable("finding candidate parse failed"));
+}
+
+#[test]
+fn only_larm_connect_failures_use_attempt_free_resume_wait() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let base_target = LocalLlmTargetConfig {
+        codex: false,
+        quota_db: None,
+        target_id: "larm-agent-connection:offline-mac".to_string(),
+        api_base_url: format!("http://{address}"),
+        api_path: "/v1/chat/completions".to_string(),
+        model: "qwen".to_string(),
+    };
+
+    let larm_error = request_candidates(&base_target, None, 30, "source").unwrap_err();
+    assert!(matches!(
+        larm_error,
+        InferenceRequestError::Preempted(InferencePreemption {
+            kind: InferencePauseKind::ProviderUnreachable,
+            ..
+        })
+    ));
+
+    let non_larm_error = request_candidates(
+        &LocalLlmTargetConfig {
+            target_id: "ordinary-provider".to_string(),
+            ..base_target
+        },
+        None,
+        30,
+        "source",
+    )
+    .unwrap_err();
+    assert!(matches!(non_larm_error, InferenceRequestError::Other(_)));
 }
 
 #[test]
@@ -161,6 +198,150 @@ fn provider_unavailable_backoff_matches_queue_contract() {
     assert_eq!(provider_unavailable_backoff_seconds(4), 1_200);
     assert_eq!(provider_unavailable_backoff_seconds(5), 3_600);
     assert_eq!(provider_unavailable_backoff_seconds(500), 3_600);
+}
+
+#[test]
+fn unreachable_larm_requeues_finding_without_consuming_attempt() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    connection
+        .execute_batch(
+            r#"
+            create table finding_candidate_queue (
+              id text primary key, status text, attempt_count integer not null default 0,
+              locked_by text, locked_at text, heartbeat_at text, next_run_at text,
+              completed_at text, last_error text, last_outcome_kind text,
+              metadata text not null default '{}', updated_at text
+            );
+            create table llm_provider_leases (
+              id text primary key, pool_id text, target_id text, queue_name text,
+              queue_job_id text, worker_id text, status text, locked_at text,
+              heartbeat_at text, expires_at text, released_at text, release_reason text,
+              metadata text, created_at text, updated_at text
+            );
+            create table distillation_queue_events (
+              id text primary key, queue_name text, queue_job_id text, event_type text,
+              message text, metadata text not null default '{}', created_at text
+            );
+            insert into finding_candidate_queue (
+              id, status, attempt_count, locked_by, locked_at, heartbeat_at, metadata, updated_at
+            ) values (
+              'finding-job', 'running', 7, 'finding-worker', CURRENT_TIMESTAMP,
+              CURRENT_TIMESTAMP, '{}', CURRENT_TIMESTAMP
+            );
+            insert into llm_provider_leases (
+              id, pool_id, target_id, queue_name, queue_job_id, worker_id, status,
+              locked_at, heartbeat_at, expires_at, metadata, created_at, updated_at
+            ) values (
+              'finding-lease', 'pool', 'larm-agent-connection:background',
+              'findingCandidate', 'finding-job', 'finding-worker', 'active',
+              CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime(CURRENT_TIMESTAMP, '+120 seconds'),
+              '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            );
+            "#,
+        )
+        .unwrap();
+    let execution = FindingExecution {
+        job: FindingJob {
+            id: "finding-job".to_string(),
+            input_kind: "source_target".to_string(),
+            source_kind: "vibe_memory".to_string(),
+            source_key: "memory".to_string(),
+            source_uri: "vibe-memory://memory".to_string(),
+            distillation_version: "v1".to_string(),
+            priority: 1,
+            attempt_count: 7,
+            metadata: json!({}),
+        },
+        source: Some("source".to_string()),
+        self_ingestion_blocked: false,
+        provider_lease: ProviderLeaseAssignment {
+            id: "finding-lease".to_string(),
+            pool_id: "pool".to_string(),
+            target_id: "larm-agent-connection:background".to_string(),
+            queue_name: "findingCandidate".to_string(),
+            queue_job_id: "finding-job".to_string(),
+            worker_id: "finding-worker".to_string(),
+        },
+        target: LocalLlmTargetConfig {
+            codex: false,
+            quota_db: None,
+            target_id: "larm-agent-connection:background".to_string(),
+            api_base_url: "http://127.0.0.1:1".to_string(),
+            api_path: "/v1/chat/completions".to_string(),
+            model: "qwen".to_string(),
+        },
+        api_key: None,
+    };
+    let result = FindingWorkerResult::Preempted(InferencePreemption {
+        kind: InferencePauseKind::ProviderUnreachable,
+        retry_after_floor_ms: 1_000,
+        message: Some("connection refused".to_string()),
+    });
+
+    assert_eq!(
+        persist_finding_result(&mut connection, &execution, &result).unwrap(),
+        FindingPersistStatus::Retrying
+    );
+    let row: (String, i64, String, Option<String>, i64, String, String) = connection
+        .query_row(
+            "select q.status, q.attempt_count, q.last_outcome_kind, q.last_error,
+                    q.next_run_at is not null, q.metadata, l.release_reason
+             from finding_candidate_queue q
+             join llm_provider_leases l on l.queue_job_id=q.id
+             where q.id='finding-job'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(row.0, "pending");
+    assert_eq!(row.1, 7);
+    assert_eq!(row.2, "provider_unreachable");
+    assert_eq!(row.3, None);
+    assert_eq!(row.4, 1);
+    assert_eq!(row.6, "provider_unreachable");
+    assert_eq!(
+        serde_json::from_str::<Value>(&row.5)
+            .unwrap()
+            .pointer("/inferencePreemption/count"),
+        Some(&json!(1))
+    );
+
+    connection
+        .execute(
+            "update finding_candidate_queue set status='paused', next_run_at=null where id='finding-job'",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "update llm_provider_leases set status='active', released_at=null, release_reason=null
+             where id='finding-lease'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        persist_finding_result(&mut connection, &execution, &result).unwrap(),
+        FindingPersistStatus::Superseded
+    );
+    let cancelled_state: (String, Option<String>, i64) = connection
+        .query_row(
+            "select status, next_run_at, attempt_count from finding_candidate_queue
+             where id='finding-job'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(cancelled_state, ("paused".to_string(), None, 7));
 }
 
 #[test]

@@ -8,6 +8,10 @@ use serde_json::{json, Value};
 use crate::shared::agent_session::{is_agent_session_api_path, AgentSessionRequest};
 use crate::shared::errors::CliError;
 
+use super::super::inference_preemption::{
+    classify_larm_foreground_preemption, classify_larm_provider_unreachable,
+    classify_larm_provider_unreachable_message, InferenceRequestError,
+};
 use super::helpers::{
     is_nonworking_local_llm_error, is_provider_terminal_failure, parse_retry_after_seconds,
     truncate,
@@ -29,7 +33,7 @@ pub(super) fn distill_segment_with_retry(
     target: &LocalLlmTargetConfig,
     api_key: Option<&str>,
     timeout_seconds: u64,
-) -> Result<Vec<CanonicalEpisode>, CliError> {
+) -> Result<Vec<CanonicalEpisode>, InferenceRequestError> {
     let mut last_error = String::new();
     let deadline = Instant::now() + Duration::from_secs(segment_budget(segment, timeout_seconds).1);
     for _ in 0..2 {
@@ -38,22 +42,25 @@ pub(super) fn distill_segment_with_retry(
             .as_secs_f64()
             .ceil() as u64;
         if remaining < 30 {
-            return Err(CliError::io(
-                "local-llm request failed: episode segment deadline exceeded",
+            return Err(InferenceRequestError::Other(
+                "local-llm request failed: episode segment deadline exceeded".to_string(),
             ));
         }
         match distill_segment(segment, document, target, api_key, remaining) {
             Ok(items) => return Ok(items),
-            Err(error)
-                if is_provider_terminal_failure(&error.to_string())
-                    || is_nonworking_local_llm_error(&error.to_string()) =>
-            {
-                return Err(error);
+            Err(InferenceRequestError::Preempted(preemption)) => {
+                return Err(InferenceRequestError::Preempted(preemption));
             }
-            Err(error) => last_error = error.to_string(),
+            Err(InferenceRequestError::Other(error))
+                if is_provider_terminal_failure(&error)
+                    || is_nonworking_local_llm_error(&error) =>
+            {
+                return Err(InferenceRequestError::Other(error));
+            }
+            Err(InferenceRequestError::Other(error)) => last_error = error,
         }
     }
-    Err(CliError::io(if last_error.is_empty() {
+    Err(InferenceRequestError::Other(if last_error.is_empty() {
         "episode distiller parse failed".to_string()
     } else {
         last_error
@@ -66,13 +73,15 @@ pub(super) fn distill_segment(
     target: &LocalLlmTargetConfig,
     api_key: Option<&str>,
     timeout_seconds: u64,
-) -> Result<Vec<CanonicalEpisode>, CliError> {
+) -> Result<Vec<CanonicalEpisode>, InferenceRequestError> {
     let (max_tokens, deadline_seconds) = segment_budget(segment, timeout_seconds);
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(deadline_seconds))
         .build()
-        .map_err(|error| CliError::io(format!("failed to build local-llm client: {error}")))?;
+        .map_err(|error| {
+            InferenceRequestError::Other(format!("failed to build local-llm client: {error}"))
+        })?;
     let messages = build_messages(segment, document);
     if target.codex || is_agent_session_api_path(&target.api_path) {
         let content = target
@@ -89,8 +98,13 @@ pub(super) fn distill_segment(
                     json_response: true,
                 },
             )
-            .map_err(CliError::io)?;
-        return parse_canonical_array(&content);
+            .map_err(|error| {
+                classify_larm_provider_unreachable_message(&target.target_id, &error)
+                    .map(InferenceRequestError::Preempted)
+                    .unwrap_or(InferenceRequestError::Other(error))
+            })?;
+        return parse_canonical_array(&content)
+            .map_err(|error| InferenceRequestError::Other(error.to_string()));
     }
     let url = build_local_llm_chat_completions_url(&target.api_base_url, &target.api_path);
     let mut request_body = json!({
@@ -108,26 +122,37 @@ pub(super) fn distill_segment(
     if let Some(api_key) = api_key.map(str::trim).filter(|value| !value.is_empty()) {
         request = request.header(
             "authorization",
-            crate::domains::secret_store::header(api_key, true).map_err(CliError::io)?,
+            crate::domains::secret_store::header(api_key, true)
+                .map_err(InferenceRequestError::Other)?,
         );
     }
-    let response = request
-        .send()
-        .map_err(|error| CliError::io(format!("local-llm request failed: {error}")))?;
+    let response = request.send().map_err(|error| {
+        classify_larm_provider_unreachable(&target.target_id, &error)
+            .map(InferenceRequestError::Preempted)
+            .unwrap_or_else(|| {
+                InferenceRequestError::Other(format!("local-llm request failed: {error}"))
+            })
+    })?;
     let status = response.status();
+    let headers = response.headers().clone();
     let retry_after_seconds = response
         .headers()
         .get(RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
         .and_then(parse_retry_after_seconds);
-    let body = response
-        .text()
-        .map_err(|error| CliError::io(format!("failed to read local-llm response: {error}")))?;
+    let body = response.text().map_err(|error| {
+        InferenceRequestError::Other(format!("failed to read local-llm response: {error}"))
+    })?;
     if !status.is_success() {
+        if let Some(preemption) =
+            classify_larm_foreground_preemption(&target.target_id, status.as_u16(), &headers, &body)
+        {
+            return Err(InferenceRequestError::Preempted(preemption));
+        }
         let retry_after_message = retry_after_seconds
             .map(|seconds| format!(" retry_after_seconds={seconds}"))
             .unwrap_or_default();
-        return Err(CliError::io(format!(
+        return Err(InferenceRequestError::Other(format!(
             "local-llm HTTP {}{}: {}",
             status.as_u16(),
             retry_after_message,
@@ -135,10 +160,11 @@ pub(super) fn distill_segment(
         )));
     }
     let parsed: Value = serde_json::from_str(&body).map_err(|error| {
-        CliError::io(format!("failed to parse local-llm response JSON: {error}"))
+        InferenceRequestError::Other(format!("failed to parse local-llm response JSON: {error}"))
     })?;
-    let content = super::super::structured_output::content(&parsed).map_err(CliError::io)?;
-    parse_canonical_array(content)
+    let content =
+        super::super::structured_output::content(&parsed).map_err(InferenceRequestError::Other)?;
+    parse_canonical_array(content).map_err(|error| InferenceRequestError::Other(error.to_string()))
 }
 
 pub(super) fn build_messages(segment: &Segment, document: &SourceDocument) -> Value {

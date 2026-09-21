@@ -10,14 +10,17 @@ use super::super::events::append_queue_event_for_connection;
 use super::super::provider_execution::open_query_only_connection;
 use super::super::types::ClaimedProviderLeaseJob;
 
+use super::super::inference_preemption::log_preemption;
 use super::helpers::{is_provider_unavailable, pseudo_uuid, truncate};
 use super::lease::HeartbeatGuard;
 use super::processing::process_episode_distiller_job;
-use super::progress::{mark_failed, mark_provider_unavailable_retry};
+use super::progress::{
+    mark_failed, mark_inference_preempted_retry, mark_provider_unavailable_retry,
+};
 use super::source::load_job;
 use super::types::{
-    EpisodeExecutionStatus, EpisodeSplitStatus, EpisodeStore, LocalLlmTargetConfig,
-    EPISODE_EXECUTION_SUPERSEDED,
+    EpisodeExecutionStatus, EpisodeProcessError, EpisodeSplitStatus, EpisodeStore,
+    LocalLlmTargetConfig, EPISODE_EXECUTION_SUPERSEDED,
 };
 
 pub(crate) fn run_episode_distiller_job_for_connection(
@@ -34,7 +37,33 @@ pub(crate) fn run_episode_distiller_job_for_connection(
     let result = process_episode_distiller_job(&store, &job, target, api_key, timeout_seconds);
     match result {
         Ok(status) => Ok(status),
-        Err(error) if is_provider_unavailable(&error.to_string()) => {
+        Err(EpisodeProcessError::Preempted(preemption)) => {
+            let (attempt, retry_after_ms) =
+                mark_inference_preempted_retry(connection, &job, &preemption)?;
+            append_queue_event_for_connection(
+                connection,
+                &pseudo_uuid(),
+                "episodeDistiller",
+                &job.id,
+                "retried",
+                Some("episode inference paused; automatic retry scheduled"),
+                Some(
+                    &json!({
+                        "event": preemption.event(),
+                        "reason": preemption.reason(),
+                        "taskId": job.id,
+                        "attempt": attempt,
+                        "retryAfterMs": retry_after_ms,
+                        "targetId": target.target_id,
+                        "executor": "rust"
+                    })
+                    .to_string(),
+                ),
+            )?;
+            log_preemption(&preemption, &job.id, attempt, retry_after_ms);
+            Ok(EpisodeExecutionStatus::Retrying)
+        }
+        Err(EpisodeProcessError::Other(error)) if is_provider_unavailable(&error.to_string()) => {
             mark_provider_unavailable_retry(connection, &job, &error.to_string())?;
             append_queue_event_for_connection(
                 connection,
@@ -56,7 +85,7 @@ pub(crate) fn run_episode_distiller_job_for_connection(
             )?;
             Ok(EpisodeExecutionStatus::Retrying)
         }
-        Err(error) => {
+        Err(EpisodeProcessError::Other(error)) => {
             mark_failed(connection, &job, &error.to_string())?;
             append_queue_event_for_connection(
                 connection,
@@ -105,10 +134,17 @@ pub(crate) fn run_episode_distiller_job_for_path(
         Ok(EpisodeExecutionStatus::Skipped) => Ok(EpisodeSplitStatus::Skipped),
         Ok(EpisodeExecutionStatus::Failed) => Ok(EpisodeSplitStatus::Failed),
         Ok(EpisodeExecutionStatus::Retrying) => Ok(EpisodeSplitStatus::Retrying),
-        Err(error) if error.to_string().contains(EPISODE_EXECUTION_SUPERSEDED) => {
+        Err(EpisodeProcessError::Preempted(preemption)) => {
+            store.persist_preempted(&job, &target, &preemption)
+        }
+        Err(EpisodeProcessError::Other(error))
+            if error.to_string().contains(EPISODE_EXECUTION_SUPERSEDED) =>
+        {
             store.record_superseded(&job)?;
             Ok(EpisodeSplitStatus::Superseded)
         }
-        Err(error) => store.persist_error(&job, &target, &error.to_string()),
+        Err(EpisodeProcessError::Other(error)) => {
+            store.persist_error(&job, &target, &error.to_string())
+        }
     }
 }

@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 
 use crate::shared::errors::CliError;
 
+use super::super::inference_preemption::InferenceRequestError;
 use super::distillation::distill_segment_with_retry;
 use super::helpers::{
     estimate_token_count, is_nonworking_local_llm_error, is_provider_terminal_failure,
@@ -19,8 +20,8 @@ use super::quality::{
 };
 use super::source::{build_deterministic_segments, read_source_document};
 use super::types::{
-    EpisodeDistillerJobRow, EpisodeExecutionStatus, EpisodePersistOutcome, EpisodeStore,
-    LocalLlmTargetConfig, PendingEpisode,
+    EpisodeDistillerJobRow, EpisodeExecutionStatus, EpisodePersistOutcome, EpisodeProcessError,
+    EpisodeStore, LocalLlmTargetConfig, PendingEpisode,
 };
 
 pub(super) fn process_episode_distiller_job(
@@ -29,12 +30,12 @@ pub(super) fn process_episode_distiller_job(
     target: &LocalLlmTargetConfig,
     api_key: Option<&str>,
     timeout_seconds: u64,
-) -> Result<EpisodeExecutionStatus, CliError> {
+) -> Result<EpisodeExecutionStatus, EpisodeProcessError> {
     if job.source_kind != "vibe_memory" {
-        return Err(CliError::io(format!(
+        return Err(EpisodeProcessError::Other(CliError::io(format!(
             "unsupported episode source kind: {}",
             job.source_kind
-        )));
+        ))));
     }
     let document = read_source_document(store.reader(), &job.source_key)?;
     let write_identity = match resolve_episode_write_identity(&document.metadata) {
@@ -49,7 +50,7 @@ pub(super) fn process_episode_distiller_job(
                     "rejectionCode": error_text.split(':').next().unwrap_or(&error_text)
                 }),
             )?;
-            return Err(error);
+            return Err(error.into());
         }
     };
     let segments = build_deterministic_segments(&document);
@@ -156,8 +157,10 @@ pub(super) fn process_episode_distiller_job(
             timeout_seconds,
         ) {
             Ok(items) => items,
-            Err(error) => {
-                let error_text = error.to_string();
+            Err(InferenceRequestError::Preempted(preemption)) => {
+                return Err(EpisodeProcessError::Preempted(preemption));
+            }
+            Err(InferenceRequestError::Other(error_text)) => {
                 counters.failed_segments += 1;
                 last_segment_completed_at = Some(now_timestamp());
                 segment_errors.push(json!({
@@ -456,21 +459,24 @@ pub(super) fn process_episode_distiller_job(
             } else {
                 format!(": {sample_errors}")
             }
-        )));
+        ))
+        .into());
     }
 
     if let Some(error) = terminal_failed_error {
         return Err(CliError::io(format!(
             "episode distiller provider failed: {}",
             truncate(&error, 1000)
-        )));
+        ))
+        .into());
     }
 
     if let Some(error) = terminal_skip_error {
         return Err(CliError::io(format!(
             "episode distiller provider unavailable: {}",
             truncate(&error, 1000)
-        )));
+        ))
+        .into());
     }
 
     let outcome = if counters.generated > 0 || counters.deduped > 0 {

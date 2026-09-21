@@ -232,6 +232,32 @@ function statusTone(status: DistillationQueueStatus): string {
   }
 }
 
+const INFERENCE_PREEMPTED_MESSAGE =
+  "優先タスクの実行により一時停止しました。リソース解放後に自動再開します。";
+const PROVIDER_UNREACHABLE_MESSAGE =
+  "処理プロバイダーに接続できないため一時停止しました。接続回復後に自動再開します。";
+
+function isInferenceResumeWait(item: QueueListItemV2): boolean {
+  return (
+    item.status === "pending" &&
+    (item.lastOutcomeKind === "inference_preempted" ||
+      item.lastOutcomeKind === "provider_unreachable")
+  );
+}
+
+function queueItemStatusLabel(item: QueueListItemV2): string {
+  if (isInferenceResumeWait(item)) {
+    return "再開待ち";
+  }
+  if (
+    item.lastOutcomeKind === "identity_unavailable" ||
+    item.lastOutcomeKind === "identity_conflict"
+  ) {
+    return "needs_evidence";
+  }
+  return item.status;
+}
+
 function lastErrorTone(item: QueueListItemV2): string {
   if (
     item.status === "failed" ||
@@ -472,10 +498,7 @@ export function QueuePage() {
               </div>
               <div className="flex items-center gap-1">
                 <Badge variant="outline" className={statusTone(item.status)}>
-                  {item.lastOutcomeKind === "identity_unavailable" ||
-                  item.lastOutcomeKind === "identity_conflict"
-                    ? "needs_evidence"
-                    : item.status}
+                  {queueItemStatusLabel(item)}
                 </Badge>
                 <Badge variant="outline" className="text-[10px]">
                   {queueLabel[item.visibleQueueName ?? item.queueName]}
@@ -526,10 +549,7 @@ export function QueuePage() {
         header: "Status",
         cell: ({ row }) => (
           <Badge variant="outline" className={statusTone(row.original.status)}>
-            {row.original.lastOutcomeKind === "identity_unavailable" ||
-            row.original.lastOutcomeKind === "identity_conflict"
-              ? "needs_evidence"
-              : row.original.status}
+            {queueItemStatusLabel(row.original)}
           </Badge>
         ),
       },
@@ -560,6 +580,13 @@ export function QueuePage() {
               ) : null}
               {item.lastError ? (
                 <div className={`mt-1 text-xs ${lastErrorTone(item)}`}>{item.lastError}</div>
+              ) : null}
+              {isInferenceResumeWait(item) ? (
+                <div className="mt-1 text-xs text-sky-700">
+                  {item.lastOutcomeKind === "provider_unreachable"
+                    ? PROVIDER_UNREACHABLE_MESSAGE
+                    : INFERENCE_PREEMPTED_MESSAGE}
+                </div>
               ) : null}
             </div>
           );

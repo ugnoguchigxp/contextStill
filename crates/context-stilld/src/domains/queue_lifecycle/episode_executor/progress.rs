@@ -6,6 +6,10 @@ use sha2::{Digest, Sha256};
 
 use crate::shared::errors::CliError;
 
+use super::super::inference_preemption::{
+    preemption_count, preemption_metadata, preemption_retry_delay_ms, random_jitter_sample,
+    InferencePreemption,
+};
 use super::helpers::{
     metadata_i64_at, metadata_string_array_at, now_timestamp, provider_retry_after_seconds,
     truncate,
@@ -277,6 +281,58 @@ pub(super) fn mark_provider_unavailable_retry(
         )
         .map_err(|error| CliError::io(format!("failed to return provider-unavailable episode distiller job to queue: {error}")))?;
     Ok(())
+}
+
+pub(super) fn mark_inference_preempted_retry(
+    connection: &Connection,
+    job: &EpisodeDistillerJobRow,
+    preemption: &InferencePreemption,
+) -> Result<(u64, u64), CliError> {
+    let prior_count = preemption_count(&job.metadata);
+    let attempt = prior_count.saturating_add(1);
+    let retry_after_ms = preemption_retry_delay_ms(
+        prior_count,
+        preemption.retry_after_floor_ms,
+        random_jitter_sample(),
+    );
+    let retry_after_seconds = retry_after_ms.div_ceil(1_000);
+    let metadata = preemption_metadata(
+        preemption,
+        prior_count,
+        retry_after_ms,
+        &now_timestamp(),
+        preemption.message.as_deref(),
+    );
+    connection
+        .execute(
+            "
+            update episode_distiller_queue
+            set status = 'pending',
+                next_run_at = datetime(CURRENT_TIMESTAMP, '+' || ?1 || ' seconds'),
+                locked_by = null,
+                locked_at = null,
+                heartbeat_at = null,
+                completed_at = null,
+                last_error = null,
+                last_outcome_kind = ?2,
+                metadata = json_patch(coalesce(nullif(metadata, ''), '{}'), ?3),
+                updated_at = CURRENT_TIMESTAMP
+            where id = ?4
+              and status = 'running'
+            ",
+            params![
+                retry_after_seconds as i64,
+                preemption.outcome(),
+                metadata.to_string(),
+                job.id
+            ],
+        )
+        .map_err(|error| {
+            CliError::io(format!(
+                "failed to return preempted episode distiller job to queue: {error}"
+            ))
+        })?;
+    Ok((attempt, retry_after_ms))
 }
 
 pub(super) fn episode_source_fragment_key(

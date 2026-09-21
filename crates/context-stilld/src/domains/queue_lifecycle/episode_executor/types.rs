@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 use crate::domains::mcp_lifecycle::project_identity::ResolvedCompileProjectIdentity;
 
+use super::super::inference_preemption::InferencePreemption;
 use super::super::types::ProviderLeaseAssignment;
 
 use super::quality::{
@@ -52,6 +53,27 @@ pub(crate) enum EpisodeSplitStatus {
     Retrying,
     Paused,
     Superseded,
+}
+
+#[derive(Debug)]
+pub(super) enum EpisodeProcessError {
+    Preempted(InferencePreemption),
+    Other(crate::shared::errors::CliError),
+}
+
+impl std::fmt::Display for EpisodeProcessError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Preempted(_) => formatter.write_str("LARM foreground inference preempted"),
+            Self::Other(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl From<crate::shared::errors::CliError> for EpisodeProcessError {
+    fn from(value: crate::shared::errors::CliError) -> Self {
+        Self::Other(value)
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -196,6 +196,96 @@ describe("QueuePage v2", () => {
     expect(screen.getByText("wiki/page.md")).toBeInTheDocument();
   });
 
+  it("shows foreground preemption as an automatic resume wait, not a failure", async () => {
+    vi.mocked(adminRepository.fetchQueueItemsV2).mockResolvedValue({
+      queue: "findingCandidate",
+      items: [
+        {
+          queueName: "findingCandidate",
+          visibleQueueName: "findingCandidate",
+          backendKind: "finding_candidate_queue",
+          id: "job-preempted",
+          status: "pending",
+          priority: 50,
+          attemptCount: 0,
+          subjectTitle: "preempted source",
+          subjectDetail: "vibe_memory | memory-1",
+          provider: "local-llm",
+          model: "qwen-agent-worker",
+          lastError: null,
+          lastOutcomeKind: "inference_preempted",
+          lockedBy: null,
+          lockedAt: null,
+          heartbeatAt: null,
+          createdAt: "2026-05-25T11:58:00.000Z",
+          updatedAt: "2026-05-25T11:59:00.000Z",
+          completedAt: null,
+          nextRunAt: "2026-05-25T12:00:01.000Z",
+          metadataSummary: null,
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 20,
+    });
+
+    renderQueuePage();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByText("再開待ち")).toBeInTheDocument();
+    expect(
+      screen.getByText("優先タスクの実行により一時停止しました。リソース解放後に自動再開します。"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an unreachable provider as an automatic resume wait", async () => {
+    vi.mocked(adminRepository.fetchQueueItemsV2).mockResolvedValue({
+      queue: "findingCandidate",
+      items: [
+        {
+          queueName: "findingCandidate",
+          visibleQueueName: "findingCandidate",
+          backendKind: "finding_candidate_queue",
+          id: "job-provider-unreachable",
+          status: "pending",
+          priority: 50,
+          attemptCount: 4,
+          subjectTitle: "offline provider source",
+          subjectDetail: "vibe_memory | memory-2",
+          provider: "local-llm",
+          model: "qwen-agent-worker",
+          lastError: null,
+          lastOutcomeKind: "provider_unreachable",
+          lockedBy: null,
+          lockedAt: null,
+          heartbeatAt: null,
+          createdAt: "2026-05-25T11:58:00.000Z",
+          updatedAt: "2026-05-25T11:59:00.000Z",
+          completedAt: null,
+          nextRunAt: "2026-05-25T12:00:01.000Z",
+          metadataSummary: null,
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 20,
+    });
+
+    renderQueuePage();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByText("再開待ち")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "処理プロバイダーに接続できないため一時停止しました。接続回復後に自動再開します。",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows schema-not-ready state without retrying the stats poll", async () => {
     vi.mocked(adminRepository.fetchQueueDashboardStatsV2).mockRejectedValue(
       new adminRepository.AdminApiError(

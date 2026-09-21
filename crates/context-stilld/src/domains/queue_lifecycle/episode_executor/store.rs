@@ -4,6 +4,10 @@ use serde_json::{json, Value};
 use crate::shared::errors::CliError;
 
 use super::super::events::append_queue_event_for_connection;
+use super::super::inference_preemption::{
+    log_preemption, preemption_count, preemption_metadata, preemption_retry_delay_ms,
+    random_jitter_sample, InferencePreemption, InferenceRequestError,
+};
 use super::super::provider_execution::owns_provider_execution;
 
 use super::deduplication::{
@@ -23,8 +27,8 @@ use super::persistence::{
 };
 use super::progress::{mark_completed, patch_episode_progress};
 use super::types::{
-    EpisodeDistillerJobRow, EpisodePersistOutcome, EpisodeSplitStatus, EpisodeStore,
-    EpisodeWriteIdentity, LocalLlmTargetConfig, PendingEpisode, SourceDocument,
+    EpisodeDistillerJobRow, EpisodePersistOutcome, EpisodeProcessError, EpisodeSplitStatus,
+    EpisodeStore, EpisodeWriteIdentity, LocalLlmTargetConfig, PendingEpisode, SourceDocument,
     EPISODE_EXECUTION_SUPERSEDED,
 };
 
@@ -137,7 +141,7 @@ impl EpisodeStore<'_> {
         target: &LocalLlmTargetConfig,
         api_key: Option<&str>,
         timeout_seconds: u64,
-    ) -> Result<EpisodePersistOutcome, CliError> {
+    ) -> Result<EpisodePersistOutcome, EpisodeProcessError> {
         match self {
             Self::Legacy(connection) => create_episode_idempotently(
                 connection,
@@ -164,7 +168,15 @@ impl EpisodeStore<'_> {
                         target,
                         api_key,
                         timeout_seconds,
-                    )?;
+                    )
+                    .map_err(|error| match error {
+                        InferenceRequestError::Preempted(preemption) => {
+                            EpisodeProcessError::Preempted(preemption)
+                        }
+                        InferenceRequestError::Other(message) => {
+                            EpisodeProcessError::Other(CliError::io(message))
+                        }
+                    })?;
                     if !near_duplicate_review_allows_publish(&review, &candidates) {
                         return Ok(EpisodePersistOutcome::NearDuplicateSkipped(review));
                     }
@@ -173,7 +185,7 @@ impl EpisodeStore<'_> {
                 let document = document.clone();
                 let identity = identity.clone();
                 let provider_lease = provider_lease.clone();
-                crate::domains::sqlite_writer::execute_for_path(
+                Ok(crate::domains::sqlite_writer::execute_for_path(
                     sqlite_path,
                     "queue.episode_persist_item",
                     move |connection| {
@@ -195,7 +207,7 @@ impl EpisodeStore<'_> {
                         Ok(outcome)
                     },
                 )
-                .map_err(CliError::io)
+                .map_err(CliError::io)?)
             }
         }
     }
@@ -463,6 +475,119 @@ impl EpisodeStore<'_> {
             },
         )
         .map_err(CliError::io)
+    }
+
+    pub(super) fn persist_preempted(
+        &self,
+        job: &EpisodeDistillerJobRow,
+        target: &LocalLlmTargetConfig,
+        preemption: &InferencePreemption,
+    ) -> Result<EpisodeSplitStatus, CliError> {
+        let Self::Split {
+            sqlite_path,
+            provider_lease,
+            ..
+        } = self
+        else {
+            return Err(CliError::io(
+                "split episode store is required for preemption persistence",
+            ));
+        };
+        let job = job.clone();
+        let provider_lease = provider_lease.clone();
+        let target_id = target.target_id.clone();
+        let preemption = preemption.clone();
+        let logged_preemption = preemption.clone();
+        let result = crate::domains::sqlite_writer::execute_for_path(
+            sqlite_path,
+            "queue.episode_preempted_persist",
+            move |connection| {
+                let tx = connection.transaction().map_err(|error| {
+                    format!("failed to begin split episode preemption: {error}")
+                })?;
+                if !owns_provider_execution(&tx, &provider_lease)
+                    .map_err(|error| error.to_string())?
+                {
+                    append_episode_superseded_event(&tx, &job.id, &provider_lease)?;
+                    tx.commit().map_err(|error| {
+                        format!("failed to commit superseded episode preemption: {error}")
+                    })?;
+                    return Ok((EpisodeSplitStatus::Superseded, None));
+                }
+                let prior_count = preemption_count(&job.metadata);
+                let attempt = prior_count.saturating_add(1);
+                let retry_after_ms = preemption_retry_delay_ms(
+                    prior_count,
+                    preemption.retry_after_floor_ms,
+                    random_jitter_sample(),
+                );
+                let retry_after_seconds = retry_after_ms.div_ceil(1_000);
+                let metadata = preemption_metadata(
+                    &preemption,
+                    prior_count,
+                    retry_after_ms,
+                    &now_timestamp(),
+                    preemption.message.as_deref(),
+                );
+                let changed = tx
+                    .execute(
+                        "update episode_distiller_queue
+                         set status='pending',
+                             next_run_at=datetime(CURRENT_TIMESTAMP, '+' || ?1 || ' seconds'),
+                             locked_by=null, locked_at=null, heartbeat_at=null,
+                             completed_at=null, last_error=null,
+                             last_outcome_kind=?2,
+                             metadata=json_patch(coalesce(nullif(metadata, ''), '{}'), ?3),
+                             updated_at=CURRENT_TIMESTAMP
+                         where id=?4 and status='running' and locked_by=?5",
+                        params![
+                            retry_after_seconds as i64,
+                            preemption.outcome(),
+                            metadata.to_string(),
+                            job.id,
+                            provider_lease.worker_id
+                        ],
+                    )
+                    .map_err(|error| format!("failed to persist episode preemption: {error}"))?;
+                let lease_changed =
+                    release_split_episode_lease(&tx, &provider_lease, preemption.release_reason())?;
+                if changed != 1 || lease_changed != 1 {
+                    return Ok((EpisodeSplitStatus::Superseded, None));
+                }
+                append_queue_event_for_connection(
+                    &tx,
+                    &stable_episode_event_id(&job.id, &provider_lease.id, "preempted"),
+                    "episodeDistiller",
+                    &job.id,
+                    "retried",
+                    Some("episode inference paused; automatic retry scheduled"),
+                    Some(
+                        &json!({
+                            "event": preemption.event(),
+                            "reason": preemption.reason(),
+                            "taskId": job.id,
+                            "attempt": attempt,
+                            "retryAfterMs": retry_after_ms,
+                            "targetId": target_id,
+                            "executor": "rust"
+                        })
+                        .to_string(),
+                    ),
+                )
+                .map_err(|error| error.to_string())?;
+                tx.commit()
+                    .map_err(|error| format!("failed to commit episode preemption: {error}"))?;
+                Ok((
+                    EpisodeSplitStatus::Retrying,
+                    Some((job.id, attempt, retry_after_ms)),
+                ))
+            },
+        )
+        .map_err(CliError::io)?;
+        if let Some((task_id, attempt, retry_after_ms)) = result.1 {
+            log_preemption(&logged_preemption, &task_id, attempt, retry_after_ms);
+        }
+        Ok(result.0)
     }
 
     pub(super) fn record_superseded(&self, job: &EpisodeDistillerJobRow) -> Result<(), CliError> {

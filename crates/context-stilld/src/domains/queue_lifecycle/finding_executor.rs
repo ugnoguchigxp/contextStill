@@ -10,6 +10,12 @@ use crate::shared::errors::CliError;
 
 use super::episode_executor::LocalLlmTargetConfig;
 use super::events::append_queue_event_for_connection;
+use super::inference_preemption::{
+    classify_larm_foreground_preemption, classify_larm_provider_unreachable,
+    classify_larm_provider_unreachable_message, log_preemption, preemption_count,
+    preemption_metadata, preemption_retry_delay_ms, random_jitter_sample, InferencePreemption,
+    InferenceRequestError,
+};
 use super::provider_execution::owns_provider_execution;
 use super::types::{ClaimedProviderLeaseJob, ProviderLeaseAssignment};
 
@@ -61,6 +67,7 @@ pub(crate) enum FindingWorkerResult {
     Candidates(Vec<Candidate>),
     SelfIngestionBlocked,
     UnsupportedInput(String),
+    Preempted(InferencePreemption),
     ProviderUnavailable(String),
     Failed(String),
 }
@@ -131,10 +138,13 @@ pub(crate) fn execute_finding(
         source,
     ) {
         Ok(candidates) => FindingWorkerResult::Candidates(candidates),
-        Err(error) if is_provider_unavailable(&error.to_string()) => {
-            FindingWorkerResult::ProviderUnavailable(error.to_string())
+        Err(InferenceRequestError::Preempted(preemption)) => {
+            FindingWorkerResult::Preempted(preemption)
         }
-        Err(error) => FindingWorkerResult::Failed(error.to_string()),
+        Err(InferenceRequestError::Other(error)) if is_provider_unavailable(&error) => {
+            FindingWorkerResult::ProviderUnavailable(error)
+        }
+        Err(InferenceRequestError::Other(error)) => FindingWorkerResult::Failed(error),
     }
 }
 
@@ -195,94 +205,120 @@ pub(crate) fn persist_finding_result(
     }
 
     let next_attempt_count = execution.job.attempt_count + 1;
-    let (
-        persist_status,
-        queue_status,
-        outcome,
-        error,
-        next_run_seconds,
-        release_reason,
-        event_type,
-    ) = match result {
-        FindingWorkerResult::Candidates(candidates) => {
-            persist_candidates(&tx, &execution.job, candidates)?;
-            if candidates.is_empty() {
-                (
-                    FindingPersistStatus::Skipped,
-                    "skipped",
-                    "no_candidate",
-                    None,
-                    None,
-                    "worker_finished",
-                    "skipped",
-                )
-            } else {
-                (
-                    FindingPersistStatus::Completed,
-                    "completed",
-                    "completed",
-                    None,
-                    None,
-                    "worker_finished",
-                    "completed",
-                )
-            }
+    let preemption_plan = match result {
+        FindingWorkerResult::Preempted(preemption) => {
+            let prior_count = preemption_count(&execution.job.metadata);
+            let retry_after_ms = preemption_retry_delay_ms(
+                prior_count,
+                preemption.retry_after_floor_ms,
+                random_jitter_sample(),
+            );
+            Some((preemption.clone(), prior_count, retry_after_ms))
         }
-        FindingWorkerResult::SelfIngestionBlocked => (
-            FindingPersistStatus::Skipped,
-            "skipped",
-            "self_ingestion_blocked",
-            None,
-            None,
-            "worker_finished",
-            "skipped",
-        ),
-        FindingWorkerResult::UnsupportedInput(error) => (
-            FindingPersistStatus::Paused,
-            "paused",
-            "worker_capability_missing",
-            Some(error.as_str()),
-            None,
-            "worker_capability_missing",
-            "paused",
-        ),
-        FindingWorkerResult::ProviderUnavailable(error) if next_attempt_count >= 8 => (
-            FindingPersistStatus::Paused,
-            "paused",
-            "provider_unavailable_exhausted",
-            Some(error.as_str()),
-            None,
-            "provider_unavailable_retry",
-            "paused",
-        ),
-        FindingWorkerResult::ProviderUnavailable(error) => (
-            FindingPersistStatus::Retrying,
-            "pending",
-            "provider_unavailable_retry",
-            Some(error.as_str()),
-            Some(provider_unavailable_backoff_seconds(
-                execution.job.attempt_count,
-            )),
-            "provider_unavailable_retry",
-            "retried",
-        ),
-        FindingWorkerResult::Failed(error) => (
-            FindingPersistStatus::Failed,
-            "failed",
-            "failed",
-            Some(error.as_str()),
-            None,
-            "worker_failed",
-            "failed",
-        ),
+        _ => None,
     };
+    let (persist_status, queue_status, outcome, error, next_run_ms, release_reason, event_type) =
+        match result {
+            FindingWorkerResult::Candidates(candidates) => {
+                persist_candidates(&tx, &execution.job, candidates)?;
+                if candidates.is_empty() {
+                    (
+                        FindingPersistStatus::Skipped,
+                        "skipped",
+                        "no_candidate",
+                        None,
+                        None,
+                        "worker_finished",
+                        "skipped",
+                    )
+                } else {
+                    (
+                        FindingPersistStatus::Completed,
+                        "completed",
+                        "completed",
+                        None,
+                        None,
+                        "worker_finished",
+                        "completed",
+                    )
+                }
+            }
+            FindingWorkerResult::SelfIngestionBlocked => (
+                FindingPersistStatus::Skipped,
+                "skipped",
+                "self_ingestion_blocked",
+                None,
+                None,
+                "worker_finished",
+                "skipped",
+            ),
+            FindingWorkerResult::UnsupportedInput(error) => (
+                FindingPersistStatus::Paused,
+                "paused",
+                "worker_capability_missing",
+                Some(error.as_str()),
+                None,
+                "worker_capability_missing",
+                "paused",
+            ),
+            FindingWorkerResult::Preempted(_) => (
+                FindingPersistStatus::Retrying,
+                "pending",
+                preemption_plan
+                    .as_ref()
+                    .map(|(pause, _, _)| pause.outcome())
+                    .unwrap_or("inference_preempted"),
+                None,
+                preemption_plan
+                    .as_ref()
+                    .map(|(_, _, retry_after_ms)| *retry_after_ms),
+                preemption_plan
+                    .as_ref()
+                    .map(|(pause, _, _)| pause.release_reason())
+                    .unwrap_or("foreground_preempted"),
+                "retried",
+            ),
+            FindingWorkerResult::ProviderUnavailable(error) if next_attempt_count >= 8 => (
+                FindingPersistStatus::Paused,
+                "paused",
+                "provider_unavailable_exhausted",
+                Some(error.as_str()),
+                None,
+                "provider_unavailable_retry",
+                "paused",
+            ),
+            FindingWorkerResult::ProviderUnavailable(error) => (
+                FindingPersistStatus::Retrying,
+                "pending",
+                "provider_unavailable_retry",
+                Some(error.as_str()),
+                Some(
+                    provider_unavailable_backoff_seconds(execution.job.attempt_count)
+                        .saturating_mul(1_000),
+                ),
+                "provider_unavailable_retry",
+                "retried",
+            ),
+            FindingWorkerResult::Failed(error) => (
+                FindingPersistStatus::Failed,
+                "failed",
+                "failed",
+                Some(error.as_str()),
+                None,
+                "worker_failed",
+                "failed",
+            ),
+        };
     let completed_at = if matches!(queue_status, "completed" | "skipped" | "failed") {
         "CURRENT_TIMESTAMP"
     } else {
         "null"
     };
-    let next_run_at = next_run_seconds
-        .map(|seconds| format!("datetime(CURRENT_TIMESTAMP, '+{seconds} seconds')"))
+    let next_run_at = next_run_ms
+        .map(|milliseconds| {
+            let seconds = milliseconds.div_ceil(1_000);
+            format!("datetime(CURRENT_TIMESTAMP, '+{seconds} seconds')")
+        })
         .unwrap_or_else(|| "null".to_string());
     let candidate_count = match result {
         FindingWorkerResult::Candidates(candidates) => candidates.len(),
@@ -296,6 +332,18 @@ pub(crate) fn persist_finding_result(
     } else {
         execution.job.attempt_count
     };
+    let preemption_patch = preemption_plan
+        .as_ref()
+        .map(|(pause, prior_count, retry_after_ms)| {
+            preemption_metadata(
+                pause,
+                *prior_count,
+                *retry_after_ms,
+                &format!("unix-ms:{}", now_millis()),
+                pause.message.as_deref(),
+            )
+        })
+        .unwrap_or_else(|| json!({}));
     let queue_changed = tx
         .execute(
             &format!(
@@ -309,17 +357,20 @@ pub(crate) fn persist_finding_result(
                      completed_at = {completed_at},
                      last_error = ?3,
                      last_outcome_kind = ?4,
-                     metadata = json_set(
-                       case when json_valid(metadata) then metadata else '{{}}' end,
-                       '$.findingCandidate.executor', 'rust',
-                       '$.findingCandidate.candidateCount', ?5,
-                       '$.findingCandidate.version', ?6,
-                       '$.findingCandidate.providerRetryAfterSeconds', ?7
+                     metadata = json_patch(
+                       json_set(
+                         case when json_valid(metadata) then metadata else '{{}}' end,
+                         '$.findingCandidate.executor', 'rust',
+                         '$.findingCandidate.candidateCount', ?5,
+                         '$.findingCandidate.version', ?6,
+                         '$.findingCandidate.providerRetryAfterSeconds', ?7
+                       ),
+                       ?8
                      ),
                      updated_at = CURRENT_TIMESTAMP
-                 where id = ?8
+                 where id = ?9
                    and status = 'running'
-                   and locked_by = ?9"
+                   and locked_by = ?10"
             ),
             params![
                 queue_status,
@@ -328,7 +379,8 @@ pub(crate) fn persist_finding_result(
                 outcome,
                 candidate_count as i64,
                 FINDING_VERSION,
-                next_run_seconds.map(|value| value as i64),
+                next_run_ms.map(|value| value.div_ceil(1_000) as i64),
+                preemption_patch.to_string(),
                 execution.job.id,
                 execution.provider_lease.worker_id
             ],
@@ -377,20 +429,35 @@ pub(crate) fn persist_finding_result(
         "findingCandidate",
         &execution.job.id,
         event_type,
-        Some("finding candidate processed by Rust resident executor"),
+        Some(if matches!(result, FindingWorkerResult::Preempted(_)) {
+            "finding candidate inference paused; automatic retry scheduled"
+        } else {
+            "finding candidate processed by Rust resident executor"
+        }),
         Some(
             &json!({
                 "executor": "rust",
                 "targetId": execution.target.target_id,
                 "status": outcome,
                 "attemptCount": attempt_count,
-                "candidateCount": candidate_count
+                "candidateCount": candidate_count,
+                "event": preemption_plan.as_ref().map(|(pause, _, _)| pause.event()),
+                "reason": preemption_plan.as_ref().map(|(pause, _, _)| pause.reason()),
+                "retryAfterMs": preemption_plan.as_ref().map(|(_, _, retry_after_ms)| retry_after_ms)
             })
             .to_string(),
         ),
     )?;
     tx.commit()
         .map_err(|error| CliError::io(format!("failed to commit finding result: {error}")))?;
+    if let Some((pause, prior_count, retry_after_ms)) = preemption_plan {
+        log_preemption(
+            &pause,
+            &execution.job.id,
+            prior_count.saturating_add(1),
+            retry_after_ms,
+        );
+    }
     Ok(persist_status)
 }
 
@@ -487,7 +554,13 @@ fn process_job(
         return Ok(FindingExecutionStatus::Skipped);
     }
     let source = read_filtered_vibe_source(connection, &job.source_key)?;
-    let candidates = request_candidates(target, api_key, timeout_seconds, &source)?;
+    let candidates = match request_candidates(target, api_key, timeout_seconds, &source) {
+        Ok(candidates) => candidates,
+        Err(InferenceRequestError::Other(error)) => return Err(CliError::io(error)),
+        Err(InferenceRequestError::Preempted(_)) => {
+            return Err(CliError::io("LARM foreground inference preempted"));
+        }
+    };
     persist_result(connection, job, &candidates)?;
     let (status, outcome, message) = if candidates.is_empty() {
         (
@@ -724,13 +797,15 @@ fn request_candidates(
     api_key: Option<&str>,
     timeout_seconds: u64,
     source: &str,
-) -> Result<Vec<Candidate>, CliError> {
+) -> Result<Vec<Candidate>, InferenceRequestError> {
     let system = "あなたは ContextStill の findCandidate executor です。filtered vibe memory と agent diff の明示的な根拠だけから、将来再利用できる知識を抽出してください。進捗報告、未検証の仮説、単発の結果、prompt や schema 自体は候補にしません。1候補は1知識です。type は rule または procedure、polarity は positive または negative。procedure の polarity は必ず positive。negative は rule のみです。procedure の content には Use when: / Workflow: / Verification: / Avoid: をこの順で、それぞれ独立した行の先頭に置き、各節に空でない説明を含めます。Workflow: の次の行から番号付きの手順（1. と 2.）を最低2行記述してください。Workflow: と同じ行へ手順をまとめてはいけません。手順が2つ未満なら procedure にせず rule として表現してください。JSON文字列内の改行は \\n で表します。出力は type, polarity, title, content だけを持つ JSON 配列のみ。候補がなければ []。";
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(timeout_seconds.max(30)))
         .build()
-        .map_err(|error| CliError::io(format!("failed to build local-llm client: {error}")))?;
+        .map_err(|error| {
+            InferenceRequestError::Other(format!("failed to build local-llm client: {error}"))
+        })?;
     let messages = json!([
         {"role":"system","content":system},
         {"role":"user","content":format!("Source:\n{source}")}
@@ -750,8 +825,13 @@ fn request_candidates(
                     json_response: true,
                 },
             )
-            .map_err(CliError::io)?;
-        return parse_candidates(&content);
+            .map_err(|error| {
+                classify_larm_provider_unreachable_message(&target.target_id, &error)
+                    .map(InferenceRequestError::Preempted)
+                    .unwrap_or(InferenceRequestError::Other(error))
+            })?;
+        return parse_candidates(&content)
+            .map_err(|error| InferenceRequestError::Other(error.to_string()));
     }
     let url = chat_url(&target.api_base_url, &target.api_path);
     let mut request_body = json!({
@@ -769,33 +849,45 @@ fn request_candidates(
     if let Some(key) = api_key.map(str::trim).filter(|key| !key.is_empty()) {
         request = request.header(
             "authorization",
-            crate::domains::secret_store::header(key, true).map_err(CliError::io)?,
+            crate::domains::secret_store::header(key, true)
+                .map_err(InferenceRequestError::Other)?,
         );
     }
     let response = request.send().map_err(|error| {
-        CliError::io(format!(
-            "local-llm request failed (connect={}, timeout={}, request={}): {error:?}",
-            error.is_connect(),
-            error.is_timeout(),
-            error.is_request()
-        ))
+        classify_larm_provider_unreachable(&target.target_id, &error)
+            .map(InferenceRequestError::Preempted)
+            .unwrap_or_else(|| {
+                InferenceRequestError::Other(format!(
+                    "local-llm request failed (connect={}, timeout={}, request={}): {error:?}",
+                    error.is_connect(),
+                    error.is_timeout(),
+                    error.is_request()
+                ))
+            })
     })?;
     let status = response.status().as_u16();
-    let body = response
-        .text()
-        .map_err(|error| CliError::io(format!("failed to read local-llm response: {error}")))?;
+    let headers = response.headers().clone();
+    let body = response.text().map_err(|error| {
+        InferenceRequestError::Other(format!("failed to read local-llm response: {error}"))
+    })?;
     if !(200..300).contains(&status) {
-        return Err(CliError::io(format!(
+        if let Some(preemption) =
+            classify_larm_foreground_preemption(&target.target_id, status, &headers, &body)
+        {
+            return Err(InferenceRequestError::Preempted(preemption));
+        }
+        return Err(InferenceRequestError::Other(format!(
             "local-llm HTTP {}: {}",
             status,
             truncate(&body, 1000)
         )));
     }
     let payload: Value = serde_json::from_str(&body).map_err(|error| {
-        CliError::io(format!("failed to parse local-llm response JSON: {error}"))
+        InferenceRequestError::Other(format!("failed to parse local-llm response JSON: {error}"))
     })?;
-    let content = super::structured_output::content(&payload).map_err(CliError::io)?;
-    parse_candidates(content)
+    let content =
+        super::structured_output::content(&payload).map_err(InferenceRequestError::Other)?;
+    parse_candidates(content).map_err(|error| InferenceRequestError::Other(error.to_string()))
 }
 
 fn parse_candidates(content: &str) -> Result<Vec<Candidate>, CliError> {
@@ -1066,6 +1158,13 @@ fn event_id(prefix: &str, job_id: &str) -> String {
         .unwrap_or_default()
         .as_nanos();
     stable_id(prefix, &format!("{job_id}:{now}"), 0)
+}
+
+fn now_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {

@@ -380,6 +380,152 @@ fn rust_episode_distiller_retries_partial_output_when_provider_returns_503() {
 }
 
 #[test]
+fn foreground_preemption_requeues_episode_without_consuming_attempt_or_failing_segment() {
+    let connection = Connection::open_in_memory().unwrap();
+    create_episode_runtime_tables(&connection);
+    insert_two_segment_memory(&connection);
+    insert_episode_job(&connection, "job-1", json!({}));
+    let server = spawn_single_response_server(
+        409,
+        r#"{"error":{"code":"foreground_preempted","message":"request stopped because a higher-priority foreground task requires the provider"}}"#.to_string(),
+    );
+    let target = LocalLlmTargetConfig {
+        codex: false,
+        quota_db: None,
+        target_id: "larm-agent-connection:background".to_string(),
+        api_base_url: server,
+        api_path: "/v1/chat/completions".to_string(),
+        model: "qwen".to_string(),
+    };
+
+    let status = run_episode_distiller_job_for_connection(
+        &connection,
+        "job-1",
+        "worker-1",
+        &target,
+        Some("test-key"),
+        30,
+    )
+    .unwrap();
+
+    assert_eq!(status, EpisodeExecutionStatus::Retrying);
+    let row: (String, i64, String, Option<String>, i64, String) = connection
+        .query_row(
+            "select status, attempt_count, last_outcome_kind, last_error,
+                    next_run_at is not null, metadata
+             from episode_distiller_queue where id='job-1'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(row.0, "pending");
+    assert_eq!(row.1, 0);
+    assert_eq!(row.2, "inference_preempted");
+    assert_eq!(row.3, None);
+    assert_eq!(row.4, 1);
+    let metadata = parse_json_or_empty(&row.5);
+    assert_eq!(
+        metadata.pointer("/inferencePreemption/count"),
+        Some(&json!(1))
+    );
+    assert!(metadata
+        .pointer("/episodeDistiller/segmentResults/0/status")
+        .is_none());
+
+    connection
+        .execute(
+            "update episode_distiller_queue
+             set status='running', locked_by='worker-2', locked_at=CURRENT_TIMESTAMP,
+                 heartbeat_at=CURRENT_TIMESTAMP, next_run_at=null
+             where id='job-1'",
+            [],
+        )
+        .unwrap();
+    let second_preemption_server = spawn_single_response_server(
+        409,
+        r#"{"error":{"code":"foreground_preempted","message":"foreground still active"}}"#
+            .to_string(),
+    );
+    let second_preemption_target = LocalLlmTargetConfig {
+        api_base_url: second_preemption_server,
+        ..target.clone()
+    };
+    let second_preemption = run_episode_distiller_job_for_connection(
+        &connection,
+        "job-1",
+        "worker-2",
+        &second_preemption_target,
+        Some("test-key"),
+        30,
+    )
+    .unwrap();
+    assert_eq!(second_preemption, EpisodeExecutionStatus::Retrying);
+    let second_state: (i64, String) = connection
+        .query_row(
+            "select attempt_count, metadata from episode_distiller_queue where id='job-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(second_state.0, 0);
+    assert_eq!(
+        parse_json_or_empty(&second_state.1).pointer("/inferencePreemption/count"),
+        Some(&json!(2))
+    );
+
+    connection
+        .execute(
+            "update episode_distiller_queue
+             set status='running', locked_by='worker-3', locked_at=CURRENT_TIMESTAMP,
+                 heartbeat_at=CURRENT_TIMESTAMP, next_run_at=null
+             where id='job-1'",
+            [],
+        )
+        .unwrap();
+    let success_server = spawn_response_sequence_server(vec![
+        (
+            200,
+            llm_response_body("First resumed segment", "task_episode"),
+        ),
+        (
+            200,
+            llm_response_body("Second resumed segment", "decision_episode"),
+        ),
+    ]);
+    let success_target = LocalLlmTargetConfig {
+        api_base_url: success_server,
+        ..target
+    };
+    let completed = run_episode_distiller_job_for_connection(
+        &connection,
+        "job-1",
+        "worker-3",
+        &success_target,
+        Some("test-key"),
+        30,
+    )
+    .unwrap();
+    assert_eq!(completed, EpisodeExecutionStatus::Completed);
+    let completed_state: (String, i64) = connection
+        .query_row(
+            "select status, attempt_count from episode_distiller_queue where id='job-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(completed_state, ("completed".to_string(), 0));
+}
+
+#[test]
 fn rust_episode_distiller_resumes_after_saved_segment_metadata() {
     let connection = Connection::open_in_memory().unwrap();
     create_episode_runtime_tables(&connection);

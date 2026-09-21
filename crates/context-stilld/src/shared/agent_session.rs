@@ -49,7 +49,7 @@ pub(crate) fn run_agent_session_chat(
         request.api_key,
     )?
     .send()
-    .map_err(|error| format!("local-llm agent session create failed: {error}"))?;
+    .map_err(|error| transport_error("agent session create", &error))?;
     let session = parse_json_response(session_response, "agent session create")?;
     let session_id = session
         .get("id")
@@ -71,7 +71,7 @@ pub(crate) fn run_agent_session_chat(
         request.api_key,
     )?
     .send()
-    .map_err(|error| format!("local-llm agent session release failed: {error}"))
+    .map_err(|error| transport_error("agent session release", &error))
     .and_then(|response| ensure_success(response, "agent session release"));
     match (result, release) {
         (Ok(content), Ok(())) => Ok(content),
@@ -96,16 +96,25 @@ fn run_agent_session_turn(
         request.api_key,
     )?
     .send()
-    .map_err(|error| format!("local-llm agent session turn failed: {error}"))?;
+    .map_err(|error| transport_error("agent session turn", &error))?;
     ensure_success(turn_response, "agent session turn")?;
 
     let events_response = with_bearer(client.get(events_url), request.api_key)?
         .send()
-        .map_err(|error| format!("local-llm agent session events failed: {error}"))?;
+        .map_err(|error| transport_error("agent session events", &error))?;
     if !events_response.status().is_success() {
         return Err(http_error(events_response, "agent session events"));
     }
     read_events(events_response)
+}
+
+fn transport_error(label: &str, error: &reqwest::Error) -> String {
+    format!(
+        "local-llm {label} failed (connect={}, timeout={}, request={}): {error}",
+        error.is_connect(),
+        error.is_timeout(),
+        error.is_request()
+    )
 }
 
 fn with_bearer(request: RequestBuilder, api_key: Option<&str>) -> Result<RequestBuilder, String> {

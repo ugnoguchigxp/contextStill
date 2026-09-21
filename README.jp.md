@@ -159,7 +159,7 @@ MCP client には次のように登録します。
 
 `bun run setup:mcp-config` は Codex と Antigravity にこの URL 方式の登録を書き込みます。古い direct stdio MCP server と TypeScript MCP HTTP worker は削除済みで、新規 client registration として復元しません。endpoint と exposed tool handlers は `context-stilld` が所有します。
 
-接続後は、project session 開始時に `initial_instructions` を一度だけ呼びます。作業前に `context_compile`、作業後に `compile_eval` を使います。永続化したい知見は `register_candidates` で登録し、negative guardrail は `polarity: "negative"` と明示的な `technologies` / `changeTypes` / `domains` を指定します。
+接続後は、project session 開始時に `initial_instructions` を一度だけ呼びます。git commit、git push、verifyの実行だけなど、Planでも実装判断でもない単純な単タスクでは `context_compile` を省略します。Planまたは実装作業では、関連する設計書を読み、対象がどのような実装かを確認してから `context_compile` を呼び、作業後に `compile_eval` を使います。永続化したい知見は `register_candidates` で登録し、negative guardrail は `polarity: "negative"` と明示的な `technologies` / `changeTypes` / `domains` を指定します。
 
 MCP は agent integration surface です。local app を開くことや既存 knowledge を確認することの隠れた必須条件ではありません。
 

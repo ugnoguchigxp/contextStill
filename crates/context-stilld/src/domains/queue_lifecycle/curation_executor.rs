@@ -3,6 +3,11 @@ use super::episode_executor::LocalLlmTargetConfig;
 use super::finalize_executor::{
     embed_one, is_retryable_embedding_error, refresh_fts, upsert_embedding, FinalizeEmbeddingConfig,
 };
+use super::inference_preemption::{
+    classify_larm_foreground_preemption, classify_larm_provider_unreachable,
+    classify_larm_provider_unreachable_message, log_preemption, preemption_retry_delay_ms,
+    random_jitter_sample, InferenceRequestError,
+};
 use super::provider_execution::{
     open_query_only_connection, owns_provider_execution, ProviderExecutionHeartbeatGuard,
 };
@@ -214,30 +219,36 @@ fn request_decision(
     api_key: Option<&str>,
     timeout: u64,
     snapshot: &Value,
-) -> Result<Decision, String> {
+) -> Result<Decision, InferenceRequestError> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(timeout.max(30)))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| InferenceRequestError::Other(e.to_string()))?;
     let messages = json!([
         {"role":"system","content":format!("{}\n\n{}", managed_context("landscape.curationPlan")?, PLANNER_SYSTEM_CONTEXT)},
         {"role":"user","content":snapshot.to_string()}
     ]);
     let content = if target.codex || is_agent_session_api_path(&target.api_path) {
-        target.run_agent_chat(
-            &client,
-            timeout,
-            AgentSessionRequest {
-                api_base_url: &target.api_base_url,
-                api_path: &target.api_path,
-                api_key,
-                model: &target.model,
-                messages: &messages,
-                max_tokens: 12000,
-                json_response: true,
-            },
-        )?
+        target
+            .run_agent_chat(
+                &client,
+                timeout,
+                AgentSessionRequest {
+                    api_base_url: &target.api_base_url,
+                    api_path: &target.api_path,
+                    api_key,
+                    model: &target.model,
+                    messages: &messages,
+                    max_tokens: 12000,
+                    json_response: true,
+                },
+            )
+            .map_err(|error| {
+                classify_larm_provider_unreachable_message(&target.target_id, &error)
+                    .map(InferenceRequestError::Preempted)
+                    .unwrap_or(InferenceRequestError::Other(error))
+            })?
     } else {
         let base = target.api_base_url.trim_end_matches('/');
         let path = if target.api_path.trim().is_empty() {
@@ -254,10 +265,17 @@ fn request_decision(
         if let Some(key) = api_key.filter(|s| !s.is_empty()) {
             request = request.bearer_auth(key);
         }
-        let response = request
-            .send()
-            .map_err(|error| format!("curation provider request failed: {error}"))?;
+        let response = request.send().map_err(|error| {
+            classify_larm_provider_unreachable(&target.target_id, &error)
+                .map(InferenceRequestError::Preempted)
+                .unwrap_or_else(|| {
+                    InferenceRequestError::Other(format!(
+                        "curation provider request failed: {error}"
+                    ))
+                })
+        })?;
         let status = response.status();
+        let headers = response.headers().clone();
         if !status.is_success() {
             let retry_after = response
                 .headers()
@@ -265,19 +283,27 @@ fn request_decision(
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.parse::<i64>().ok());
             let body = response.text().unwrap_or_default();
-            return Err(format!(
+            if let Some(preemption) = classify_larm_foreground_preemption(
+                &target.target_id,
+                status.as_u16(),
+                &headers,
+                &body,
+            ) {
+                return Err(InferenceRequestError::Preempted(preemption));
+            }
+            return Err(InferenceRequestError::Other(format!(
                 "curation provider HTTP {status}: {body}{}",
                 retry_after
                     .map(|seconds| format!(" retry_after_seconds={seconds}"))
                     .unwrap_or_default()
-            ));
+            )));
         }
-        let payload: Value = response
-            .json()
-            .map_err(|_| "invalid curation provider response".to_string())?;
+        let payload: Value = response.json().map_err(|_| {
+            InferenceRequestError::Other("invalid curation provider response".to_string())
+        })?;
         super::structured_output::content(&payload)?.to_string()
     };
-    parse_decision(&content, snapshot)
+    parse_decision(&content, snapshot).map_err(InferenceRequestError::Other)
 }
 
 fn request_verification(
@@ -286,29 +312,35 @@ fn request_verification(
     timeout: u64,
     snapshot: &Value,
     decision: &Decision,
-) -> Result<Verification, String> {
+) -> Result<Verification, InferenceRequestError> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(timeout.max(30)))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| InferenceRequestError::Other(e.to_string()))?;
     let input_hash = repository::hash(&repository::canonical_json(snapshot));
     let input = json!({"inputHash":input_hash,"snapshot":snapshot,"proposal":decision});
     let messages = json!([{"role":"system","content":format!("{}\n\n{}", managed_context("landscape.curationVerify")?, VERIFIER_SYSTEM_CONTEXT_ARTIFACT)},{"role":"user","content":input.to_string()}]);
     let content = if target.codex || is_agent_session_api_path(&target.api_path) {
-        target.run_agent_chat(
-            &client,
-            timeout,
-            AgentSessionRequest {
-                api_base_url: &target.api_base_url,
-                api_path: &target.api_path,
-                api_key,
-                model: &target.model,
-                messages: &messages,
-                max_tokens: 12000,
-                json_response: true,
-            },
-        )?
+        target
+            .run_agent_chat(
+                &client,
+                timeout,
+                AgentSessionRequest {
+                    api_base_url: &target.api_base_url,
+                    api_path: &target.api_path,
+                    api_key,
+                    model: &target.model,
+                    messages: &messages,
+                    max_tokens: 12000,
+                    json_response: true,
+                },
+            )
+            .map_err(|error| {
+                classify_larm_provider_unreachable_message(&target.target_id, &error)
+                    .map(InferenceRequestError::Preempted)
+                    .unwrap_or(InferenceRequestError::Other(error))
+            })?
     } else {
         let base = target.api_base_url.trim_end_matches('/');
         let path = if target.api_path.trim().is_empty() {
@@ -325,10 +357,17 @@ fn request_verification(
         if let Some(key) = api_key.filter(|s| !s.is_empty()) {
             request = request.bearer_auth(key);
         }
-        let response = request
-            .send()
-            .map_err(|error| format!("curation verifier provider request failed: {error}"))?;
+        let response = request.send().map_err(|error| {
+            classify_larm_provider_unreachable(&target.target_id, &error)
+                .map(InferenceRequestError::Preempted)
+                .unwrap_or_else(|| {
+                    InferenceRequestError::Other(format!(
+                        "curation verifier provider request failed: {error}"
+                    ))
+                })
+        })?;
         let status = response.status();
+        let headers = response.headers().clone();
         if !status.is_success() {
             let retry_after = response
                 .headers()
@@ -336,16 +375,24 @@ fn request_verification(
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.parse::<i64>().ok());
             let body = response.text().unwrap_or_default();
-            return Err(format!(
+            if let Some(preemption) = classify_larm_foreground_preemption(
+                &target.target_id,
+                status.as_u16(),
+                &headers,
+                &body,
+            ) {
+                return Err(InferenceRequestError::Preempted(preemption));
+            }
+            return Err(InferenceRequestError::Other(format!(
                 "curation verifier provider HTTP {status}: {body}{}",
                 retry_after
                     .map(|seconds| format!(" retry_after_seconds={seconds}"))
                     .unwrap_or_default()
-            ));
+            )));
         }
-        let payload: Value = response
-            .json()
-            .map_err(|_| "invalid curation verifier provider response".to_string())?;
+        let payload: Value = response.json().map_err(|_| {
+            InferenceRequestError::Other("invalid curation verifier provider response".to_string())
+        })?;
         super::structured_output::content(&payload)?.to_string()
     };
     let cleaned = content
@@ -353,8 +400,9 @@ fn request_verification(
         .filter(|line| !line.trim_start().starts_with("```"))
         .collect::<Vec<_>>()
         .join("\n");
-    let result: Verification = serde_json::from_str(cleaned.trim())
-        .map_err(|e| format!("invalid curation verification JSON: {e}"))?;
+    let result: Verification = serde_json::from_str(cleaned.trim()).map_err(|e| {
+        InferenceRequestError::Other(format!("invalid curation verification JSON: {e}"))
+    })?;
     if result.schema_version != 2
         || !["supported", "rejected", "unknown"].contains(&result.verdict.as_str())
         || result.input_hash != input_hash
@@ -368,7 +416,9 @@ fn request_verification(
         .iter()
         .all(|v| ["preserved", "not_preserved", "unknown"].contains(v))
     {
-        return Err("invalid curation verification contract".into());
+        return Err(InferenceRequestError::Other(
+            "invalid curation verification contract".into(),
+        ));
     }
     Ok(result)
 }
@@ -543,7 +593,13 @@ pub(super) fn fail_for_path(
     reason: String,
 ) -> Result<(), CliError> {
     sqlite_writer::execute_for_path(path, "queue.curation_failure", move |connection| {
-        persist(connection, &job, &json!({}), Err(reason)).map(|_| ())
+        persist(
+            connection,
+            &job,
+            &json!({}),
+            Err(InferenceRequestError::Other(reason)),
+        )
+        .map(|_| ())
     })
     .map_err(CliError::io)
 }
@@ -677,7 +733,7 @@ pub(super) fn persist(
     connection: &mut Connection,
     job: &ClaimedProviderLeaseJob,
     snapshot: &Value,
-    result: Result<(Decision, Option<Vec<f64>>), String>,
+    result: Result<(Decision, Option<Vec<f64>>), InferenceRequestError>,
 ) -> Result<bool, String> {
     let tx = connection.transaction().map_err(|e| e.to_string())?;
     if !owns_provider_execution(&tx, &job.provider_lease).map_err(|e| e.to_string())? {
@@ -685,7 +741,75 @@ pub(super) fn persist(
     }
     let (decision, embedding) = match result {
         Ok(value) => value,
-        Err(error) => {
+        Err(InferenceRequestError::Preempted(preemption)) => {
+            let prior_count: u64 = tx
+                .query_row(
+                    "select count(*) from distillation_queue_events
+                     where queue_name=?1 and queue_job_id=?2
+                       and json_extract(metadata, '$.event')=?3",
+                    params![QUEUE, job.id, preemption.event()],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())?;
+            let attempt = prior_count.saturating_add(1);
+            let retry_after_ms = preemption_retry_delay_ms(
+                prior_count,
+                preemption.retry_after_floor_ms,
+                random_jitter_sample(),
+            );
+            let retry_after_seconds = retry_after_ms.div_ceil(1_000);
+            let now = crate::domains::process_lifecycle::service::now_timestamp();
+            let changed = tx
+                .execute(
+                    "update landscape_curation_queue
+                     set status='pending', next_run_at=datetime(CURRENT_TIMESTAMP, '+' || ?2 || ' seconds'),
+                         completed_at=null, locked_by=null, locked_at=null, heartbeat_at=null,
+                         last_error=null, last_outcome_kind=?3,
+                         updated_at=CURRENT_TIMESTAMP
+                     where id=?1 and status='running' and locked_by=?4",
+                    params![
+                        job.id,
+                        retry_after_seconds as i64,
+                        preemption.outcome(),
+                        job.provider_lease.worker_id
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+            if changed != 1 {
+                return Ok(false);
+            }
+            super::events::append_queue_event_for_connection(
+                &tx,
+                &format!("curation-preempted:{}:{now}", job.id),
+                QUEUE,
+                &job.id,
+                "retried",
+                Some("curation inference paused; automatic retry scheduled"),
+                Some(
+                    &json!({
+                        "event": preemption.event(),
+                        "reason": preemption.reason(),
+                        "taskId": job.id,
+                        "attempt": attempt,
+                        "retryAfterMs": retry_after_ms,
+                        "targetId": job.provider_lease.target_id,
+                        "attemptConsumed": false
+                    })
+                    .to_string(),
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+            release_provider_lease_for_connection(
+                &tx,
+                &job.provider_lease.id,
+                preemption.release_reason(),
+            )
+            .map_err(|error| error.to_string())?;
+            tx.commit().map_err(|error| error.to_string())?;
+            log_preemption(&preemption, &job.id, attempt, retry_after_ms);
+            return Ok(false);
+        }
+        Err(InferenceRequestError::Other(error)) => {
             let failure_kind = classify_curation_error(&error);
             let retryable = failure_kind.is_retryable();
             let now = crate::domains::process_lifecycle::service::now_timestamp();

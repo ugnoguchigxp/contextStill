@@ -3,6 +3,7 @@ use serde_json::json;
 
 use crate::shared::errors::CliError;
 
+use super::super::inference_preemption::InferenceRequestError;
 use super::deduplication::{
     find_near_duplicate_candidates, near_duplicate_review_allows_publish,
     review_near_duplicate_episode,
@@ -14,8 +15,8 @@ use super::quality::{
     normalize_outcome_kind, review_episode_value, scores_json, unique_strings, value_review_json,
 };
 use super::types::{
-    EpisodePersistOutcome, EpisodeWriteIdentity, LocalLlmTargetConfig, PendingEpisode,
-    SourceDocument, EPISODE_DISTILLATION_VERSION,
+    EpisodePersistOutcome, EpisodeProcessError, EpisodeWriteIdentity, LocalLlmTargetConfig,
+    PendingEpisode, SourceDocument, EPISODE_DISTILLATION_VERSION,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -27,14 +28,22 @@ pub(super) fn create_episode_idempotently(
     target: &LocalLlmTargetConfig,
     api_key: Option<&str>,
     timeout_seconds: u64,
-) -> Result<EpisodePersistOutcome, CliError> {
+) -> Result<EpisodePersistOutcome, EpisodeProcessError> {
     if let Some(existing) = existing_episode_id(connection, &item.source_key)? {
         return Ok(EpisodePersistOutcome::SourceDeduped(existing));
     }
     let candidates = find_near_duplicate_candidates(connection, item, document, identity)?;
     if !candidates.is_empty() {
         let review =
-            review_near_duplicate_episode(item, &candidates, target, api_key, timeout_seconds)?;
+            review_near_duplicate_episode(item, &candidates, target, api_key, timeout_seconds)
+                .map_err(|error| match error {
+                    InferenceRequestError::Preempted(preemption) => {
+                        EpisodeProcessError::Preempted(preemption)
+                    }
+                    InferenceRequestError::Other(message) => {
+                        EpisodeProcessError::Other(CliError::io(message))
+                    }
+                })?;
         if !near_duplicate_review_allows_publish(&review, &candidates) {
             return Ok(EpisodePersistOutcome::NearDuplicateSkipped(review));
         }
@@ -59,7 +68,7 @@ pub(super) fn create_episode_idempotently(
             if let Some(existing) = existing_episode_id(connection, &item.source_key)? {
                 Ok(EpisodePersistOutcome::SourceDeduped(existing))
             } else {
-                Err(error)
+                Err(error.into())
             }
         }
     }

@@ -81,6 +81,29 @@ fn test_handle_native_dispatch_initial_instructions_returns_text() {
     assert!(text.contains("initial_instructions"));
     assert!(text.contains("context_compile"));
     assert!(text.contains("compile_eval"));
+    assert!(
+        text.contains("Planでも実装判断でもない単純な単タスクでは `context_compile` を省略")
+            || text.contains("neither planning nor implementation decisions")
+    );
+    assert!(
+        text.contains("Planまたは実装判断を伴うタスクでは")
+            || text.contains("For planning or tasks that require implementation decisions")
+    );
+    assert!(
+        text.contains("関連する設計書を先に読み")
+            || text.contains("first read the relevant design documents")
+    );
+    assert!(
+        text.contains("対象がどのような実装かを確認してから `context_compile`")
+            || text.contains("confirm how the target is implemented, then call `context_compile`")
+    );
+    assert!(text.contains("search_knowledge"));
+    assert!(text.contains("search_episodes"));
+    assert!(text.contains("fetch_episode"));
+    assert!(
+        text.contains("最終判断はSAAAなどの呼出し元が行う")
+            || text.contains("The caller, such as SAAA, makes the final judgment")
+    );
     assert!(!text.contains("context_decision"));
     assert!(!text.contains("context_decision_feedback"));
     assert!(

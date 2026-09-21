@@ -99,7 +99,7 @@ Run `bun run setup:mcp-config` to update Codex and Antigravity config files. The
 
 The endpoint and exposed tool handlers are owned by the Rust resident process. Client registration is optional; the writer must be running for SQLite mutations.
 
-After connection, call `initial_instructions` once per project session, `context_compile` before task work, and `compile_eval` after the task.
+After connection, call `initial_instructions` once per project session. Skip `context_compile` for a simple single task that involves neither planning nor implementation decisions, such as only running git commit, git push, or verification. For planning or implementation work, read the relevant design documents and confirm how the target is implemented before calling `context_compile`, then call `compile_eval` after the task.
 
 ## First Review Loop
 

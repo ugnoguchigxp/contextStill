@@ -160,7 +160,7 @@ For an MCP client, use:
 
 `bun run setup:mcp-config` writes this URL-based registration for Codex and Antigravity. The old direct stdio context-still MCP server and TypeScript MCP HTTP worker have been removed and must not be restored for client registration. The endpoint and exposed tool handlers are owned by `context-stilld`.
 
-After connecting the MCP server, call `initial_instructions` once at the start of a project session. The primary workflow is `context_compile` before task work and `compile_eval` after task work. Other exposed tools remain available as supplemental diagnostics, lookup, or explicit knowledge-maintenance tools, but they are not part of the normal primary workflow.
+After connecting the MCP server, call `initial_instructions` once at the start of a project session. Skip `context_compile` for a simple single task that involves neither planning nor implementation decisions, such as only running git commit, git push, or verification. For planning or implementation work, read the relevant design documents and confirm how the target is implemented before calling `context_compile`; call `compile_eval` after the task. Other exposed tools remain available as supplemental diagnostics, lookup, or explicit knowledge-maintenance tools, but they are not part of the normal primary workflow.
 
 MCP is an agent integration surface. It is not a hidden requirement for opening the local app or inspecting existing knowledge.
 

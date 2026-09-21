@@ -120,6 +120,14 @@ describeDb("mcp contract", () => {
     expect(text).toContain("## 主要MCPツール");
     expect(text).toContain("initial_instructions");
     expect(text).toContain("context_compile");
+    expect(text).toContain("Planでも実装判断でもない単純な単タスクでは `context_compile` を省略");
+    expect(text).toContain("Planまたは実装判断を伴うタスクでは");
+    expect(text).toContain("関連する設計書を先に読み");
+    expect(text).toContain("対象がどのような実装かを確認してから `context_compile`");
+    expect(text).toContain("## SAAA・エージェントからの検索");
+    expect(text).toContain("`search_knowledge`: 特定の制約・ルール・再利用可能な手順");
+    expect(text).toContain("`search_episodes`: 類似した過去事例、その結果、教訓");
+    expect(text).toContain("最終判断はSAAAなどの呼出し元が行う");
     expect(text).not.toContain("context_decision");
     expect(text).not.toContain("context_decision_feedback");
     expect(text).not.toContain("`register_candidate`");

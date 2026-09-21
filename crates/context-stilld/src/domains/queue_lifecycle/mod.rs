@@ -10,6 +10,7 @@ mod events;
 mod executor;
 mod finalize_executor;
 mod finding_executor;
+mod inference_preemption;
 mod inspect;
 #[cfg(test)]
 mod larm_e2e_tests;

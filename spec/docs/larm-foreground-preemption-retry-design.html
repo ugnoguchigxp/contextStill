@@ -1,0 +1,364 @@
+<article lang="ja">
+  <h1>LARM foreground preemptionを失敗にしないQueue再試行設計</h1>
+
+  <section id="summary">
+    <h2>結論</h2>
+    <p>
+      実装済み。共通HTTP分類、Finding・Episode・Curationのattempt非消費再試行、構造化info log、Queue
+      UI表示、連続preemption・cancel fence・再試行成功の回帰testを追加した。
+    </p>
+    <p>
+      LARMへの推論要求がHTTP <code>409</code>かつJSON本文の
+      <code>error.code</code
+      >が厳密に<code>foreground_preempted</code>である場合、通常のProvider障害や
+      推論失敗とは別の<code>InferencePreempted</code>として分類する。対象jobは
+      <code>failed</code
+      >へ遷移させず、既存schemaの<code>pending</code>と
+      <code>next_run_at</code
+      >を使って再開待ちへ戻す。通常の<code>attempt_count</code>、 retry
+      budget、失敗回数は変更しない。
+    </p>
+    <p>
+      LARM targetへの接続確立前に名前解決、connection refused、connect
+      timeoutなどで到達不能になった場合も、 同じattempt非消費の再開待ちへ戻す。この場合は
+      <code>last_outcome_kind='provider_unreachable'</code>、
+      <code>event='contextstill_provider_unreachable'</code>としてpreemptionとは理由を区別する。
+    </p>
+    <p>
+      待機をworker内のsleepで実装してはならない。preemptionを永続化してProvider leaseを解放し、
+      resident schedulerに再claimさせる。これにより、待機中のユーザーpause、job削除、lane停止、
+      resident shutdownを既存の制御経路で処理できる。
+    </p>
+  </section>
+
+  <section id="scope">
+    <h2>対象範囲</h2>
+    <p>
+      現在のdirect LARM routeで実行される<code>findingCandidate</code>、
+      <code>episodeDistiller</code
+      >、<code>landscapeCuration</code>を実装対象とする。HTTP応答の分類器は
+      Queue共通部品にし、将来LARM routeが増えた場合も同じ契約を利用できるようにする。
+    </p>
+    <p>
+      現行のdirect LARM Chat
+      Completions要求は<code>stream: false</code>である。したがって初期実装は
+      非streaming JSON errorを必須範囲とする。streamingを有効化する将来変更では、明示的な
+      <code>foreground_preempted</code
+      >イベント、または切断直前に保持した同等のpreemption情報がある場合だけ
+      同じ分類にする。理由不明のEOF、timeout、connection resetはpreemptionへ昇格させない。
+    </p>
+    <p>
+      到達不能分類はLARM targetのtransport
+      errorで<code>is_connect()</code>が真の場合に限定する。
+      HTTP応答を受信した認証エラー、入力不正、429、5xx、応答本文の読み取り失敗、推論中の一般timeoutは
+      既存のエラー分類を維持する。
+    </p>
+  </section>
+
+  <section id="current-state">
+    <h2>現状との差分</h2>
+    <ul>
+      <li>
+        FindingとEpisodeのProvider
+        unavailable経路は<code>attempt_count</code>を増やし、連続時には
+        exhaustedとしてpauseする。foreground preemptionをこの経路へ流すと要件違反になる。
+      </li>
+      <li>
+        Curationの一部Provider unavailable経路はattemptを消費しないが、preemption専用の判定、表示、
+        1〜30秒のbackoff、構造化logを持たない。
+      </li>
+      <li>
+        HTTP失敗は現在、多くの呼び出し箇所で文字列化され、その後にstatus文字列を検索して分類される。
+        <code>error.code</code
+        >を主条件にするには、本文を文字列化する前のHTTP境界で型付き分類する必要がある。
+      </li>
+      <li>
+        Episodeはsegment失敗をprogressへ保存してから外側の失敗処理へ進む。preemptionでは現在のsegmentを
+        failedとして記録せず、未完了のまま残す専用伝播が必要である。
+      </li>
+    </ul>
+  </section>
+
+  <section id="classification">
+    <h2>HTTP応答の分類contract</h2>
+    <p>
+      共通分類器はstatus、headers、bounded body、対象targetがLARM direct routeかを受け取り、
+      次の条件をすべて満たしたときだけ<code>InferencePreempted</code>を返す。
+    </p>
+    <ol>
+      <li>対象target IDが<code>larm-agent-connection:</code>で始まる。</li>
+      <li>HTTP statusが<code>409</code>である。</li>
+      <li>本文がJSONとしてparseできる。</li>
+      <li>
+        <code>/error/code</code
+        >が文字列<code>foreground_preempted</code>と完全一致する。
+      </li>
+    </ol>
+    <p>
+      <code>X-LARM-Preemption-Reason: higher-priority-foreground-task</code>と
+      <code>Retry-After</code
+      >は補助情報であり、分類条件にはしない。headerがなくても上記4条件を満たせば
+      preemptionである。反対にheaderだけが一致する応答、409だけの応答、別のerror
+      code、parse不能な本文は
+      既存のエラー処理を維持する。message文言は診断用に保持できるが判定には使わない。
+    </p>
+    <p>
+      型は少なくとも<code>reason</code>、<code>retryAfterMs</code>、sanitized
+      messageを保持する。
+      <code>reason</code>は外部文言をそのまま採用せず、内部の固定値
+      <code>higher_priority_foreground_task</code>へ正規化する。
+    </p>
+  </section>
+
+  <section id="state-transition">
+    <h2>状態遷移と永続化</h2>
+    <pre><code>running
+  |  409 + error.code=foreground_preempted
+  v
+pending + next_run_at=future
+  |  dueかつlane/jobが有効
+  v
+running  -- success --&gt; completed/skipped
+
+pending(waiting)
+  +-- user pause --------&gt; paused + next_run_at=null
+  +-- job delete --------&gt; removed
+  +-- resident shutdown -&gt; DB上のwaitingを保持し、停止中は再claimしない</code></pre>
+    <p>preemption永続化では次をatomicに行う。</p>
+    <ul>
+      <li>
+        <code>status='pending'</code
+        >、<code>next_run_at</code>を計算済み時刻へ設定する。
+      </li>
+      <li><code>attempt_count</code>と通常retry budgetを変更しない。</li>
+      <li><code>completed_at=null</code>、lockとheartbeatを解除する。</li>
+      <li>
+        <code>last_error=null</code>とし、障害欄へpreemption messageを入れない。
+      </li>
+      <li><code>last_outcome_kind='inference_preempted'</code>とする。</li>
+      <li>
+        FindingとEpisodeはmetadataへ<code>reason</code>、<code>preemptionCount</code>、
+        <code>retryAfterMs</code
+        >、<code>preemptedAt</code>、必要ならsanitized messageを保存する。
+        metadata列を持たないCurationは同じ情報をqueue event ledgerへ保存する。
+      </li>
+      <li>Provider leaseを<code>foreground_preempted</code>理由で解放する。</li>
+      <li>
+        既存event schemaとの互換のためqueue event
+        typeは<code>retried</code>を使い、metadataの
+        <code>event</code
+        >を<code>contextstill_inference_preempted</code>とする。
+      </li>
+    </ul>
+    <p>
+      更新条件には既存のProvider lease ownership
+      fenceを必須とする。preemption応答の到着前にjobがpause、
+      delete、または別claimへ移った場合、古いworkerは状態を書き戻さず<code>Superseded</code>として終了する。
+    </p>
+  </section>
+
+  <section id="backoff">
+    <h2>Retry-After、指数backoff、jitter</h2>
+    <p>
+      通常の<code>attempt_count</code>とは別に、metadataの連続
+      <code>preemptionCount</code
+      >をbackoff指数として使う。成功時はこの連続回数を0へ戻すか履歴欄へ退避する。
+      待機時間は次の規則で決める。
+    </p>
+    <ol>
+      <li>
+        <code>Retry-After</code
+        >が正のdelta-secondsなら、それを再試行可能な最早時刻として使う。
+        欠落、不正、0以下なら1,000msを最小値にする。
+      </li>
+      <li>指数上限を<code>min(30,000ms, 1,000ms * 2^preemptionCount)</code>で求める。</li>
+      <li>
+        待機時間を、最小値から<code>max(最小値, 指数上限)</code>までの範囲でランダムに選ぶ。
+        これにより初回はheaderなしなら1秒、連続時は指数的に広がり、同時再開をjitterで分散できる。
+      </li>
+      <li>
+        最小値と上限は最終的に30,000msへclampする。30秒を超えるRetry-Afterも本機能の最大待機契約を優先して
+        30秒とする。
+      </li>
+    </ol>
+    <p>
+      <code>next_run_at</code>はミリ秒を保持できるUTC
+      timestampとして保存し、worker threadを占有しない。
+      テストでは乱数源とclockを注入し、境界値を決定的に検証する。
+    </p>
+  </section>
+
+  <section id="queue-integration">
+    <h2>Queue別の変更点</h2>
+    <table>
+      <caption>
+        LARM foreground preemptionを扱うQueueごとの伝播方法と重複防止策
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Queue</th>
+          <th scope="col">伝播</th>
+          <th scope="col">重複防止</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>findingCandidate</code></th>
+          <td>
+            <code>FindingWorkerResult::Preempted</code
+            >を追加し、ProviderUnavailableより先に永続化する。
+          </td>
+          <td>候補書き込み前の推論だけを再実行し、既存のtransactionとlease fenceを維持する。</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>episodeDistiller</code></th>
+          <td>
+            segment推論からentryまで型付きpreemptionを伝播し、segment error、failed segment
+            count、通常attemptを 増やさない。
+          </td>
+          <td>
+            保存済みsegment resultとepisodeのidempotent source
+            keyを維持し、未完了segmentだけを次回処理する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>landscapeCuration</code></th>
+          <td>
+            plannerとverifierの両HTTP境界から<code>CurationExecutionError::Preempted</code>を返し、文字列ベースの
+            ProviderUnavailable分類より先に処理する。
+          </td>
+          <td>
+            mutation phaseより前の推論だけを再実行する。既存のsnapshot検証とtransactional
+            mutationを維持する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      一つのjobで複数のLLM呼び出しがある場合もtask IDは維持する。Queueの再claimごとに新しいProvider
+      lease IDが
+      発行されるため、これを実行attemptのfenceとして使える。純粋な推論要求のためだけに永続的な別taskを作らない。
+      将来、推論要求自体が外部副作用を持つ場合はLLM呼び出し単位のrequest attempt IDを追加する。
+    </p>
+  </section>
+
+  <section id="observability">
+    <h2>ログ、API、UI</h2>
+    <p>
+      状態更新のcommit後に、error/warningではなくinfoレベルのJSON
+      logを1件出す。最低限のfieldは次のとおり。
+    </p>
+    <pre><code class="language-json">{
+  "level": "info",
+  "event": "contextstill_inference_preempted",
+  "reason": "higher_priority_foreground_task",
+  "taskId": "queue-job-id",
+  "attempt": 1,
+  "retryAfterMs": 1000
+}</code></pre>
+    <p>
+      <code>attempt</code
+      >は通常の<code>attempt_count</code>ではなく、今回の連続preemption内の1始まりの回数とする。
+      Provider token、request body、入力context、LARM credentialはlogへ含めない。
+    </p>
+    <p>
+      Queue APIは既存statusを<code>pending</code>のまま返し、
+      <code>lastOutcomeKind='inference_preempted'</code
+      >と<code>nextRunAt</code>で理由と再開予定を表現する。 Admin
+      UIはこの組合せをfailure色やerror文言にせず、次を表示する。
+    </p>
+    <p>優先タスクの実行により一時停止しました。リソース解放後に自動再開します。</p>
+    <p>到達不能時は<code>lastOutcomeKind='provider_unreachable'</code>を参照し、次を表示する。</p>
+    <p>処理プロバイダーに接続できないため一時停止しました。接続回復後に自動再開します。</p>
+    <p>
+      UI上のstatus
+      labelは<code>再開待ち</code>または<code>一時停止・自動再開</code>とし、通常の手動
+      <code>paused</code
+      >とは区別する。attempt列は増えないことが視覚上も確認できるようにする。
+    </p>
+  </section>
+
+  <section id="tests">
+    <h2>受入テスト</h2>
+    <ol>
+      <li>
+        共通分類器へ409と<code>error.code=foreground_preempted</code>を渡すとpreemptionになり、messageや補助headerが
+        なくても判定できる。
+      </li>
+      <li>
+        409でも別code、code欠落、JSON不正、headerだけ一致、非LARM
+        targetでは既存エラー分類を維持する。
+      </li>
+      <li>
+        各対象Queueでpreemption後にstatusが<code>pending</code>、<code>completed_at</code>がnull、
+        <code>last_error</code
+        >がnull、<code>last_outcome_kind</code>が<code>inference_preempted</code>になる。
+      </li>
+      <li>
+        preemption前後で通常の<code>attempt_count</code>とretry
+        budgetが不変である。
+      </li>
+      <li>
+        headerありではその時刻より前にclaimされず、headerなしの初回は1秒、連続時はjitter付き指数backoff、
+        全ケースで30秒以下になる。
+      </li>
+      <li>複数回連続preemptionしてもexhaustedやfailedへ遷移しない。</li>
+      <li>
+        LARMへのconnect
+        errorでは<code>provider_unreachable</code>としてattemptを消費せず再開待ちになり、
+        非LARM targetやHTTP応答を伴うエラーは既存処理を維持する。
+      </li>
+      <li>
+        待機中のjob pause、job削除、lane
+        pause、shutdownでは再claimしない。応答到着とpause/deleteが競合した場合は ownership
+        fenceにより古いworkerの書き戻しを破棄する。
+      </li>
+      <li>
+        Episodeではpreemptされたsegmentをfailedとして記録せず、完了済みsegmentと作成済みepisodeを重複させない。
+      </li>
+      <li>
+        preemptionを1回以上経た後に200応答を返すfixtureで、同じtask IDのjobが通常どおり完了する。
+      </li>
+      <li>
+        queue eventとinfo logに指定fieldが入り、warning/error countとProvider
+        failure集計が増えない。
+      </li>
+      <li>Admin UIが障害色やraw errorではなく、自動再開する一時停止文言を表示する。</li>
+      <li>streamingの理由不明切断をpreemptionにしない分類テストを追加する。</li>
+    </ol>
+  </section>
+
+  <section id="implementation-order">
+    <h2>推奨実装順</h2>
+    <ol>
+      <li>
+        bounded JSON bodyとheadersからpreemptionを厳密判定する共通型・分類器、Retry-After
+        parser、決定的backoff関数を 追加する。
+      </li>
+      <li>
+        Findingへ専用worker resultとattempt非消費の永続化を追加し、最小のend-to-end fixtureを通す。
+      </li>
+      <li>
+        Episodeのerror伝播を型付きにし、segment
+        progressを汚さないことと再開時のidempotencyを検証する。
+      </li>
+      <li>Curationのplanner/verifierへ同じ分類を適用する。</li>
+      <li>共通info log、queue event metadata、API/UI表示を追加する。</li>
+      <li>
+        対象Queueの回帰test、Rust全体test、Web component testを実行し、fake LARMによる
+        preempt-preempt-successとpreempt-cancelのcanaryを行う。
+      </li>
+    </ol>
+  </section>
+
+  <section id="non-goals">
+    <h2>今回変更しないもの</h2>
+    <ul>
+      <li>409全体をretryableにしない。</li>
+      <li>認証、入力不正、通常のallocation inactive、quota、503 busyの既存分類を変更しない。</li>
+      <li>新しいQueue status enumやDB migrationを追加しない。</li>
+      <li>preemptionを理由に別Providerへ暗黙fallbackしない。</li>
+      <li>worker内sleep、無制限retry、通常retry budgetの水増しを行わない。</li>
+    </ul>
+  </section>
+</article>

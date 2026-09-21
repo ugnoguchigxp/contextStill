@@ -5,6 +5,10 @@ use reqwest::header::RETRY_AFTER;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
+use super::super::inference_preemption::{
+    classify_larm_foreground_preemption, classify_larm_provider_unreachable,
+    classify_larm_provider_unreachable_message, InferenceRequestError,
+};
 use crate::shared::agent_session::{is_agent_session_api_path, AgentSessionRequest};
 use crate::shared::errors::CliError;
 
@@ -251,12 +255,14 @@ pub(super) fn review_near_duplicate_episode(
     target: &LocalLlmTargetConfig,
     api_key: Option<&str>,
     timeout_seconds: u64,
-) -> Result<NearDuplicateReview, CliError> {
+) -> Result<NearDuplicateReview, InferenceRequestError> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(timeout_seconds.clamp(30, 300)))
         .build()
-        .map_err(|error| CliError::io(format!("failed to build local-llm client: {error}")))?;
+        .map_err(|error| {
+            InferenceRequestError::Other(format!("failed to build local-llm client: {error}"))
+        })?;
     let messages = near_duplicate_review_messages(item, candidates);
     if target.codex || is_agent_session_api_path(&target.api_path) {
         let content = target
@@ -273,8 +279,13 @@ pub(super) fn review_near_duplicate_episode(
                     json_response: true,
                 },
             )
-            .map_err(CliError::io)?;
-        return parse_near_duplicate_review(&content);
+            .map_err(|error| {
+                classify_larm_provider_unreachable_message(&target.target_id, &error)
+                    .map(InferenceRequestError::Preempted)
+                    .unwrap_or(InferenceRequestError::Other(error))
+            })?;
+        return parse_near_duplicate_review(&content)
+            .map_err(|error| InferenceRequestError::Other(error.to_string()));
     }
     let url = build_local_llm_chat_completions_url(&target.api_base_url, &target.api_path);
     let mut request = client.post(url).json(&json!({
@@ -288,28 +299,41 @@ pub(super) fn review_near_duplicate_episode(
     if let Some(api_key) = api_key.map(str::trim).filter(|value| !value.is_empty()) {
         request = request.header(
             "authorization",
-            crate::domains::secret_store::header(api_key, true).map_err(CliError::io)?,
+            crate::domains::secret_store::header(api_key, true)
+                .map_err(InferenceRequestError::Other)?,
         );
     }
-    let response = request
-        .send()
-        .map_err(|error| CliError::io(format!("near duplicate review request failed: {error}")))?;
+    let response = request.send().map_err(|error| {
+        classify_larm_provider_unreachable(&target.target_id, &error)
+            .map(InferenceRequestError::Preempted)
+            .unwrap_or_else(|| {
+                InferenceRequestError::Other(format!(
+                    "near duplicate review request failed: {error}"
+                ))
+            })
+    })?;
     let status = response.status();
+    let headers = response.headers().clone();
     let retry_after_seconds = response
         .headers()
         .get(RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
         .and_then(parse_retry_after_seconds);
     let body = response.text().map_err(|error| {
-        CliError::io(format!(
+        InferenceRequestError::Other(format!(
             "failed to read near duplicate review response: {error}"
         ))
     })?;
     if !status.is_success() {
+        if let Some(preemption) =
+            classify_larm_foreground_preemption(&target.target_id, status.as_u16(), &headers, &body)
+        {
+            return Err(InferenceRequestError::Preempted(preemption));
+        }
         let retry_after_message = retry_after_seconds
             .map(|seconds| format!(" retry_after_seconds={seconds}"))
             .unwrap_or_default();
-        return Err(CliError::io(format!(
+        return Err(InferenceRequestError::Other(format!(
             "near duplicate review HTTP {}{}: {}",
             status.as_u16(),
             retry_after_message,
@@ -317,12 +341,14 @@ pub(super) fn review_near_duplicate_episode(
         )));
     }
     let parsed: Value = serde_json::from_str(&body).map_err(|error| {
-        CliError::io(format!(
+        InferenceRequestError::Other(format!(
             "failed to parse near duplicate review response JSON: {error}"
         ))
     })?;
-    let content = super::super::structured_output::content(&parsed).map_err(CliError::io)?;
+    let content =
+        super::super::structured_output::content(&parsed).map_err(InferenceRequestError::Other)?;
     parse_near_duplicate_review(content)
+        .map_err(|error| InferenceRequestError::Other(error.to_string()))
 }
 
 pub(super) fn near_duplicate_review_allows_publish(
