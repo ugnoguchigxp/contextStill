@@ -113,7 +113,6 @@ export type LocalLlmModelSettings = {
 export type LarmAgentConnectionSettings = {
   id: string;
   controlBaseUrl: string;
-  agentProfile: string;
   audience: string;
   availabilityPollMs: number;
   availabilityTimeoutMs: number;
@@ -447,7 +446,7 @@ const larmAgentConnectionSchema = z
   .object({
     id: larmIdentifierSchema,
     controlBaseUrl: z.string().trim().url(),
-    agentProfile: larmIdentifierSchema,
+    agentProfile: larmIdentifierSchema.optional(),
     audience: larmIdentifierSchema,
     availabilityPollMs: z.number().int().min(1_000).max(300_000).default(5_000),
     availabilityTimeoutMs: z.number().int().min(250).max(30_000).default(2_000),
@@ -500,7 +499,13 @@ const larmAgentConnectionSchema = z
         message: "ttlSeconds must cover requestTimeoutMs plus a 30 second cleanup margin",
       });
     }
-  });
+  })
+  .transform(({ agentProfile: _legacyAgentProfile, ...connection }) => ({
+    ...connection,
+    audience: "same-host",
+    ttlSeconds: 300,
+    requestTimeoutMs: Math.min(connection.requestTimeoutMs, 240_000),
+  }));
 
 const runtimeRouteSchema = z.union([
   z

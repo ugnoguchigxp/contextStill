@@ -422,15 +422,12 @@ export function routeTargetOptions(settings: RuntimeSettingsEditable): RouteTarg
     ? settings.providers["larm-agent-connection"].connections
         .filter(
           (connection) =>
-            connection.id.trim() &&
-            connection.controlBaseUrl.trim() &&
-            connection.agentProfile.trim() &&
-            connection.audience.trim(),
+            connection.id.trim() && connection.controlBaseUrl.trim() && connection.audience.trim(),
         )
         .map((connection) => ({
           kind: "larm-agent-connection" as const,
           value: `larm-agent-connection:${connection.id}`,
-          label: `LARM / ${connection.agentProfile} / ${connection.controlBaseUrl}`,
+          label: `LARM / contextStill / ${connection.controlBaseUrl}`,
           connectionId: connection.id,
         }))
     : [];
@@ -520,7 +517,7 @@ export function providerPoolTargetLabel(
     const connection = settings.providers["larm-agent-connection"].connections.find(
       (item) => item.id === target.connectionId,
     );
-    return connection?.agentProfile || target.connectionId;
+    return connection ? "contextStill" : target.connectionId;
   }
   if (target.provider === "local-llm") {
     const model = settings.providers["local-llm"].models.find(

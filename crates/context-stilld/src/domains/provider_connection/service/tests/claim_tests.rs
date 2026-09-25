@@ -26,7 +26,7 @@ fn settings_are_disabled_by_default_and_reject_unsafe_origins() {
     assert!(config("http://127.0.0.1:44448").validate().is_err());
     assert!(config("http://localhost:44448").validate().is_err());
     let mut path_segment_config = config("http://127.0.0.1:9810");
-    path_segment_config.agent_profile = "..".to_string();
+    path_segment_config.audience = "..".to_string();
     assert!(path_segment_config.validate().is_err());
 }
 

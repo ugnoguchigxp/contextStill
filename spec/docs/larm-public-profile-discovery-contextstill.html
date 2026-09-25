@@ -1,0 +1,31 @@
+<article lang="ja">
+  <h1>ContextStillのAgent Connection provide契約</h1>
+  <p>
+    Rust resident
+    lifecycleはjob境界で<code>GET /v3/agent-profiles?profile=contextStill</code>を事前検証に使う。discoveryなしの直接POSTも可能である。service
+    activityがactiveの場合も作成要求を送り、LARMのprovide判定を受ける。
+  </p>
+  <p>
+    応答は<code>contractVersion=agent-connection.v3</code>、<code>requestedProfile=contextStill</code>、activityと同じ<code>catalogRevision</code>、一件の<code>profiles</code>を必須とする。Profileは<code>deprecated=false</code>、<code>selectionPolicy=explicit-only</code>、<code>id=canonicalProfile</code>で、Providerは<code>llm</code>一件、<code>protocol=openai.chat-completions.v1</code>、<code>endpoint=/v1/chat/completions</code>、非空modelを必須とする。serviceは空であること。
+  </p>
+  <p>
+    <code>POST /v1/agent-connections</code
+    >へ<code>profile=contextStill</code>、<code>audience=same-host</code>、<code>client=contextstill</code>、<code>ttlSeconds=300</code>、<code>allowFallback=false</code>、<code>deploymentPolicy=existing-only</code>を送る。<code>Prefer: wait=300</code>とjobごとのIdempotency-Keyを付け、discoveryを行ったときだけ<code>expectedCatalogRevision</code>を送る。旧入力<code>agentProfile</code>と<code>explicitAgentProfile</code>は送らない。旧設定の<code>agentProfile</code>は読み込み時に除去し、audienceとTTLを新契約へ移行する。
+  </p>
+  <p>
+    201ではreadyとllmのclaimableを確認し、202ではLocationが同じConnectionを指すことを確認して期限付きでpollする。responseの公開profile、解決後agentProfile、llm一件のprotocol、endpoint、modelを検証する。claim後のcredential、baseUrl、modelを実行targetに使い、create
+    responseとの不一致時は推論しない。claim
+    credentialがConnectionより先に失効する場合はcredentialの期限を実行targetの期限とし、1回の推論とcleanupに必要な残存時間がなければ開始しない。409
+    provider_conflictは対象jobをrejectedで終了し、Retry-Afterを記録する。次のjobは新しいIdempotency-Keyで評価する。資源の優先順位はLARMに委ねる。tokenはログ、DB、設定応答、成果へ保存しない。
+  </p>
+  <p>
+    2026年9月25日の隔離E2Eでは、実LARMへSSHトンネルで接続し、finding candidate
+    queue一件のprovide、claim、実推論、成果一件の保存、次tickでのrelease、active lease
+    0件を確認した。先に制御APIだけを19810番へ転送した試行では、claimが返した127.0.0.1:9810の実推論先へ届かずprovider_unreachableになった。9810番を同じ接続先へ転送して再実行すると完走した。隔離daemonを使う決定的テストでも同じqueue経路が完了する。
+  </p>
+  <p>
+    同日のSAAA提供中に実LARMが409 provider_conflictを返すことも確認した。隔離queue
+    jobはfailed、last_outcome_kindはrejected、rejected eventは一件、成果とactive
+    leaseは0件となり、次tickでも再実行しなかった。
+  </p>
+</article>

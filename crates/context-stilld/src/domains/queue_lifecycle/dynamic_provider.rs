@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
 use crate::domains::{
-    provider_connection::{LarmConnectionConfig, LarmConnectionManager},
+    provider_connection::{LarmConnectionConfig, LarmConnectionManager, LarmControlError},
     sqlite_writer,
 };
 use crate::shared::errors::CliError;
@@ -174,7 +174,7 @@ impl LarmManagerCheckout {
             crate::domains::provider_connection::LarmReconcileResult,
             Option<crate::domains::provider_connection::ClaimedLarmTarget>,
         ),
-        CliError,
+        LarmControlError,
     > {
         let manager = self
             .manager
@@ -182,9 +182,7 @@ impl LarmManagerCheckout {
             .expect("checked-out LARM manager must exist");
         // Reconciliation performs control-plane HTTP.  The registry entry is not
         // locked here, so unrelated connections and drain requests can progress.
-        let reconciled = manager.reconcile(due_job_exists).map_err(|error| {
-            CliError::io(format!("LARM control-plane reconciliation failed: {error}"))
-        })?;
+        let reconciled = manager.reconcile(due_job_exists)?;
         Ok((reconciled, manager.target().cloned()))
     }
 }
@@ -328,7 +326,7 @@ fn provider_startup_selection_lines(settings: &Value) -> Result<Vec<String>, Cli
                 "larm-agent-connection".to_string(),
                 connection_id,
                 control_host_label(&connection.control_base_url)?,
-                connection.agent_profile,
+                "contextStill".to_string(),
                 connection.audience,
             )
         } else {
@@ -418,6 +416,9 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
         let (reconciled, claimed_target) = match manager.reconcile(due_job_exists) {
             Ok(result) => result,
             Err(error) => {
+                if error.kind == "provider_conflict" && due_job_exists {
+                    reject_conflicted_job(sqlite_path, &plan, error.retry_after_ms)?;
+                }
                 eprintln!(
                     "LARM connection {} is unavailable; queue remains unclaimed: {error}",
                     plan.connection.id
@@ -695,6 +696,32 @@ fn dynamic_plan_has_runnable_job(
     Ok(false)
 }
 
+fn reject_conflicted_job(
+    sqlite_path: &Path,
+    plan: &DynamicProviderPlan,
+    retry_after_ms: Option<u64>,
+) -> Result<(), CliError> {
+    let queues = plan.priority_queues.clone();
+    sqlite_writer::execute_for_path(sqlite_path, "queue.provider_conflict", move |connection| {
+        let transaction = connection.transaction().map_err(|error| error.to_string())?;
+        for queue in &queues {
+            let table = queue_table_name(&queue.queue_name).map_err(|error| error.to_string())?;
+            let allowed = queue.allowed_route_values.as_deref().unwrap_or_default();
+            let (route_condition, parameters) = route_filter(queue, allowed).map_err(|error| error.to_string())?;
+            let select = format!("select id from {table} where ((status='pending' and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP)) or (status='paused' and next_run_at is not null and datetime(next_run_at) <= CURRENT_TIMESTAMP)) {route_condition} order by priority desc, created_at, id limit 1");
+            let id: Option<String> = transaction.query_row(&select, rusqlite::params_from_iter(parameters), |row| row.get(0)).optional().map_err(|error| error.to_string())?;
+            let Some(id) = id else { continue };
+            let update = format!("update {table} set status='failed', next_run_at=null, completed_at=CURRENT_TIMESTAMP, last_error='provider_conflict', last_outcome_kind='rejected', updated_at=CURRENT_TIMESTAMP where id=?1 and status in ('pending','paused')");
+            if transaction.execute(&update, [&id]).map_err(|error| error.to_string())? == 1 {
+                let metadata = json!({"reason":"provider_conflict","retryAfterMs":retry_after_ms}).to_string();
+                append_queue_event_for_connection(&transaction, &format!("rust-queue-event-{}", unique_suffix()), &queue.queue_name, &id, "rejected", Some("LARM provider_conflict"), Some(&metadata)).map_err(|error| error.to_string())?;
+            }
+            return transaction.commit().map_err(|error| error.to_string());
+        }
+        transaction.commit().map_err(|error| error.to_string())
+    }).map_err(|error| CliError::io(format!("SQLite writer provider conflict rejection failed: {error}")))
+}
+
 fn route_filter<'a>(
     queue: &ProviderQueueClaimSpec,
     allowed: &'a [String],
@@ -841,6 +868,7 @@ fn unique_suffix() -> String {
 #[cfg(test)]
 mod tests {
     use super::super::executor::{executor_priority_queues_for_pool, provider_pools};
+    use super::super::test_support::temp_app_dir;
     use super::*;
 
     fn larm_connection_config(id: &str) -> LarmConnectionConfig {
@@ -866,6 +894,57 @@ mod tests {
         LarmConnectionConfig::from_settings(&settings, id)
             .unwrap()
             .expect("enabled test LARM connection must be present")
+    }
+
+    #[test]
+    fn provider_conflict_rejects_one_due_job_once_without_claiming_a_lease() {
+        let app_dir = temp_app_dir("provider_conflict_rejection");
+        let sqlite_path = app_dir.join("queue.sqlite");
+        crate::domains::vector_index::service::register_sqlite_vec();
+        let mut db = Connection::open(&sqlite_path).unwrap();
+        crate::domains::sqlite_writer::schema::configure_writer_connection(&db).unwrap();
+        crate::domains::sqlite_writer::schema::migrate(&mut db, 3).unwrap();
+        db.execute_batch("insert into finding_candidate_queue (id, source_kind, source_key, source_uri, status, priority) values ('job-a','vibe_memory','a','vibe_memory:a','pending',100),('job-b','vibe_memory','b','vibe_memory:b','pending',90);").unwrap();
+        drop(db);
+        let settings = json!({"providers":{"larm-agent-connection":{"enabled":true,"connections":[{"id":"test","controlBaseUrl":"http://127.0.0.1:9810","audience":"same-host","availabilityPollMs":5000,"availabilityTimeoutMs":2000,"controlTimeoutMs":5000,"readyTimeoutMs":180000,"ttlSeconds":300,"requestTimeoutMs":240000}]}},"taskRouting":{"findCandidate":{"source":{"kind":"larm-agent-connection","connectionId":"test"},"vibe":{"kind":"larm-agent-connection","connectionId":"test"}}}});
+        let plans = dynamic_provider_plans(&settings, &HashSet::new()).unwrap();
+        reject_conflicted_job(&sqlite_path, &plans[0], Some(2_000)).unwrap();
+        reject_conflicted_job(&sqlite_path, &plans[0], Some(2_000)).unwrap();
+        let db = Connection::open(&sqlite_path).unwrap();
+        let rows = db.prepare("select id,status,last_error,last_outcome_kind from finding_candidate_queue order by id").unwrap().query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,Option<String>>(2)?,row.get::<_,Option<String>>(3)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "job-a".into(),
+                    "failed".into(),
+                    Some("provider_conflict".into()),
+                    Some("rejected".into())
+                ),
+                (
+                    "job-b".into(),
+                    "failed".into(),
+                    Some("provider_conflict".into()),
+                    Some("rejected".into())
+                )
+            ]
+        );
+        let events: i64 = db
+            .query_row(
+                "select count(*) from distillation_queue_events where event_type='rejected'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(events, 2);
+        let leases: i64 = db
+            .query_row("select count(*) from llm_provider_leases", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(leases, 0);
+        drop(db);
+        std::fs::remove_dir_all(app_dir).unwrap();
     }
 
     #[test]
@@ -942,8 +1021,8 @@ mod tests {
         assert!(startup_lines[0].contains("providerKind=larm-agent-connection"));
         assert!(startup_lines[0].contains("provider=contextstill-background"));
         assert!(startup_lines[0].contains("controlHost=127.0.0.1:9810"));
-        assert!(startup_lines[0].contains("agentProfile=contextstill-background"));
-        assert!(startup_lines[0].contains("audience=saaa-desktop"));
+        assert!(startup_lines[0].contains("agentProfile=contextStill"));
+        assert!(startup_lines[0].contains("audience=same-host"));
         assert!(startup_lines[0]
             .contains("routes=findCandidate.source,findCandidate.vibe,episodeDistiller"));
         assert!(!startup_lines[0].to_ascii_lowercase().contains("token"));

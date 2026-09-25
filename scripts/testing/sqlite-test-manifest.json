@@ -2,6 +2,7 @@
   "version": 1,
   "tests": [
     "test/backfill-repository-identity.cli.bun.ts",
+    "test/larm-provider-recovery.bun.ts",
     "test/repository-identity-backfill.sqlite.bun.ts",
     "test/security-intelligence-ingress.bun.ts",
     "test/settings-secret-store.bun.ts",

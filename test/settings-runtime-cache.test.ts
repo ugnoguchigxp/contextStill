@@ -110,7 +110,6 @@ describe("settings runtime cache", () => {
         {
           id: "contextstill-background",
           controlBaseUrl: "http://gnosis.local:9810",
-          agentProfile: "contextstill-background",
           audience: "saaa-desktop",
           availabilityPollMs: 5_000,
           availabilityTimeoutMs: 2_000,
@@ -127,6 +126,13 @@ describe("settings runtime cache", () => {
     };
 
     const normalized = normalizeRuntimeSettingsEditable(input);
+
+    expect(normalized.providers["larm-agent-connection"].connections[0]).not.toHaveProperty(
+      "agentProfile",
+    );
+    expect(normalized.providers["larm-agent-connection"].connections[0]?.audience).toBe(
+      "same-host",
+    );
 
     expect(normalized.taskRouting.findCandidate.source).toEqual({
       kind: "larm-agent-connection",
@@ -151,6 +157,39 @@ describe("settings runtime cache", () => {
     ).toBe(false);
   });
 
+  test("drops a legacy Agent Profile setting and fixes the ContextStill provide values", () => {
+    const input = cloneDefaultSettings();
+    const legacy = {
+      ...input,
+      providers: {
+        ...input.providers,
+        "larm-agent-connection": {
+          enabled: true,
+          connections: [
+            {
+              id: "legacy",
+              controlBaseUrl: "http://gnosis.local:9810",
+              agentProfile: "contextstill-background",
+              audience: "saaa-desktop",
+              availabilityPollMs: 5_000,
+              availabilityTimeoutMs: 2_000,
+              controlTimeoutMs: 5_000,
+              readyTimeoutMs: 180_000,
+              ttlSeconds: 900,
+              requestTimeoutMs: 300_000,
+            },
+          ],
+        },
+      },
+    };
+    const connection =
+      normalizeRuntimeSettingsEditable(legacy).providers["larm-agent-connection"].connections[0];
+    expect(connection).not.toHaveProperty("agentProfile");
+    expect(connection?.audience).toBe("same-host");
+    expect(connection?.ttlSeconds).toBe(300);
+    expect(connection?.requestTimeoutMs).toBe(240_000);
+  });
+
   test("rejects mixed static and LARM route fields", () => {
     const input = cloneDefaultSettings() as unknown as {
       providers: Record<string, unknown>;
@@ -166,7 +205,6 @@ describe("settings runtime cache", () => {
         {
           id: "contextstill-background",
           controlBaseUrl: "http://gnosis.local:9810",
-          agentProfile: "contextstill-background",
           audience: "saaa-desktop",
           availabilityPollMs: 5_000,
           availabilityTimeoutMs: 2_000,
@@ -195,7 +233,6 @@ describe("settings runtime cache", () => {
         {
           id: "contextstill-background",
           controlBaseUrl: "http://gnosis.local:9810",
-          agentProfile: "contextstill-background",
           audience: "saaa-desktop",
           availabilityPollMs: 5_000,
           availabilityTimeoutMs: 2_000,
@@ -231,7 +268,6 @@ describe("settings runtime cache", () => {
         {
           id: "contextstill-background",
           controlBaseUrl: "https://example.com",
-          agentProfile: "contextstill-background",
           audience: "saaa-desktop",
           availabilityPollMs: 5_000,
           availabilityTimeoutMs: 2_000,
@@ -261,7 +297,6 @@ describe("settings runtime cache", () => {
         {
           id: "contextstill-background",
           controlBaseUrl: "http://127.0.0.1:44448",
-          agentProfile: "contextstill-background",
           audience: "saaa-desktop",
           availabilityPollMs: 5_000,
           availabilityTimeoutMs: 2_000,
@@ -317,7 +352,6 @@ describe("settings runtime cache", () => {
         {
           id: "local-primary",
           controlBaseUrl: "http://gnosis.local:9810",
-          agentProfile: "contextstill-background",
           audience: "saaa-desktop",
           availabilityPollMs: 5_000,
           availabilityTimeoutMs: 2_000,
@@ -359,7 +393,6 @@ describe("settings runtime cache", () => {
         {
           id: "openai",
           controlBaseUrl: "http://gnosis.local:9810",
-          agentProfile: "contextstill-background",
           audience: "saaa-desktop",
           availabilityPollMs: 5_000,
           availabilityTimeoutMs: 2_000,

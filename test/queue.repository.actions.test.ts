@@ -418,7 +418,7 @@ describe("queue repository list and control actions", () => {
       expect(byId["bedrock-1"]?.provider).toBe("bedrock");
       expect(byId["codex-1"]?.provider).toBe("codex");
       expect(byId["larm-1"]?.provider).toBe("larm-agent-connection");
-      expect(byId["larm-1"]?.model).toBe("profile-1");
+      expect(byId["larm-1"]?.model).toBeNull();
     });
 
     test("reports sqlite dashboard stats including covering non-registered counts", async () => {

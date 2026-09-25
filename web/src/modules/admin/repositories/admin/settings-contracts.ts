@@ -76,7 +76,6 @@ export type LocalLlmModelSettings = {
 export type LarmAgentConnectionSettings = {
   id: string;
   controlBaseUrl: string;
-  agentProfile: string;
   audience: string;
   availabilityPollMs: number;
   availabilityTimeoutMs: number;

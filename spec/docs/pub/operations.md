@@ -263,3 +263,8 @@ bun run rust:agent-log-sync:smoke
 For lifecycle experiments, set `CONTEXT_STILL_APP_DATA_DIR` to a temporary directory and stop the process through the matching Rust command before removing that directory. The Rust default flags are status-only until a boundary switch is explicitly made; rollback remains the direct TypeScript command for that boundary.
 
 For live macOS ownership checks, set `CONTEXT_STILL_VERIFY_LIVE_OWNERSHIP=1` when running `bun run verify:rust-daemon`. The check is intentionally opt-in because CI and fresh development shells may not have LaunchAgents loaded.
+## LARM公開Profile Discovery
+
+ContextStillのLARM接続は、Queueに処理対象があるときに`contextStill` selectorでAgent Connectionのprovideを要求します。管理画面のPublic Profile Selectorは固定です。既存設定の`agentProfile`は読み込み時に除去され、audienceは`same-host`、TTLは300秒へ移行します。具体Profile IDはLARMの応答で検証しますが、次回の作成入力には使いません。
+
+LARMが`agent-connection.v3`の単一Profile応答を返さない場合、そのjobは待機し、静的Providerには切り替わりません。LARM側で`GET /v3/agent-profiles?profile=contextStill`が`requestedProfile: "contextStill"`と一件の`profiles`を返すことを確認してください。`POST /v1/agent-connections`の`409 provider_conflict`は対象jobの`rejected`であり、queue eventの`retryAfterMs`を確認できます。claimが返す`baseUrl`を実行ホストから到達できることも確認してください。

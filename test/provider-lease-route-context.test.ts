@@ -14,7 +14,6 @@ describe("provider lease route context", () => {
         {
           id: "contextstill-background",
           controlBaseUrl: "http://gnosis.local:9810",
-          agentProfile: "contextstill-background",
           audience: "saaa-desktop",
           availabilityPollMs: 5_000,
           availabilityTimeoutMs: 2_000,

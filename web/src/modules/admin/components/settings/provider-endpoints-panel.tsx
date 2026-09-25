@@ -332,14 +332,13 @@ export function ProviderEndpointsPanel({
               {
                 id,
                 controlBaseUrl: "http://192.168.0.130:9810",
-                agentProfile: "contextstill-background",
-                audience: "saaa-desktop",
+                audience: "same-host",
                 availabilityPollMs: 5_000,
                 availabilityTimeoutMs: 2_000,
                 controlTimeoutMs: 5_000,
                 readyTimeoutMs: 180_000,
-                ttlSeconds: 900,
-                requestTimeoutMs: 300_000,
+                ttlSeconds: 300,
+                requestTimeoutMs: 240_000,
               },
             ],
           },
@@ -900,22 +899,12 @@ export function ProviderEndpointsPanel({
                 />
               </label>
               <label className="settings-field">
-                <span>Agent Profile</span>
-                <Input
-                  value={connection.agentProfile}
-                  onChange={(event) =>
-                    updateLarmConnection(index, { agentProfile: event.target.value })
-                  }
-                />
+                <span>Public Profile Selector</span>
+                <Input value="contextStill" readOnly />
               </label>
               <label className="settings-field">
                 <span>Audience</span>
-                <Input
-                  value={connection.audience}
-                  onChange={(event) =>
-                    updateLarmConnection(index, { audience: event.target.value })
-                  }
-                />
+                <Input value="same-host" readOnly />
               </label>
               {(
                 [
@@ -932,12 +921,14 @@ export function ProviderEndpointsPanel({
                   <Input
                     type="number"
                     min={minimum}
+                    max={key === "requestTimeoutMs" ? 240_000 : undefined}
+                    readOnly={key === "ttlSeconds"}
                     value={connection[key]}
                     onChange={(event) =>
                       updateLarmConnection(index, {
-                        [key]: Math.max(
-                          minimum,
-                          parseIntegerInput(event.target.value, connection[key]),
+                        [key]: Math.min(
+                          key === "requestTimeoutMs" ? 240_000 : Number.MAX_SAFE_INTEGER,
+                          Math.max(minimum, parseIntegerInput(event.target.value, connection[key])),
                         ),
                       })
                     }
@@ -948,8 +939,8 @@ export function ProviderEndpointsPanel({
             <div className="settings-route-chain">
               <span className="settings-route-chain-item">
                 <strong>Integration status</strong>
-                The Rust resident checks LARM-wide service activity and claims this connection only
-                while routed queue work is due and no service workload is active.
+                The Rust resident requests provide when routed queue work is due. LARM decides
+                admission; provider conflicts reject the current job.
               </span>
             </div>
           </div>

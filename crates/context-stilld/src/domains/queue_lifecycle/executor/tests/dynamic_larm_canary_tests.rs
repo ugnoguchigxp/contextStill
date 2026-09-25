@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{mpsc, Mutex, MutexGuard, OnceLock};
+use std::sync::{mpsc, Arc, Barrier, Mutex, MutexGuard, OnceLock};
 use std::thread;
 
 fn read_request(stream: &mut TcpStream) -> String {
@@ -70,8 +70,8 @@ fn profile_response() -> String {
         200,
         json!({
             "contractVersion": "agent-connection.v3",
+            "requestedProfile": "contextStill",
             "catalogRevision": "catalog-canary",
-            "defaultAgentProfile": "coding-default",
             "profiles": [{
                 "id": "contextstill-background",
                 "canonicalProfile": "contextstill-background",
@@ -83,10 +83,11 @@ fn profile_response() -> String {
                     "capability": "llm.coding",
                     "supportedCapabilities": ["llm.coding", "llm.general", "llm.reasoning"],
                     "protocol": "openai.chat-completions.v1",
+                    "endpoint": "/v1/chat/completions",
                     "model": "qwen-agent-worker"
                 }]
             }],
-            "audiences": ["saaa-desktop", "same-host"]
+            "audiences": ["same-host", "same-host"]
         }),
     )
 }
@@ -99,9 +100,10 @@ fn connection_response() -> String {
             "allocationId": "alloc_canary",
             "bootEpoch": "epoch-canary",
             "catalogRevision": "catalog-canary",
+            "profile": "contextStill",
             "agentProfile": "contextstill-background",
             "profileRevision": "1".repeat(64),
-            "audience": "saaa-desktop",
+            "audience": "same-host",
             "audienceRevision": "2".repeat(64),
             "status": "ready",
             "providers": [{
@@ -109,6 +111,8 @@ fn connection_response() -> String {
                 "capability": "llm.coding",
                 "route": "llm-agent-worker",
                 "protocol": "openai.chat-completions.v1",
+                "endpoint": "/v1/chat/completions",
+                "model": "qwen-agent-worker",
                 "publicModel": "qwen-agent-worker",
                 "readiness": "ready",
                 "claimable": true
@@ -128,7 +132,7 @@ fn claim_response(provider_origin: &str, provider_port: u16) -> String {
             "id": "aconn_canary",
             "allocationId": "alloc_canary",
             "status": "ready",
-            "audience": "saaa-desktop",
+            "audience": "same-host",
             "providers": [{
                 "name": "llm",
                 "capability": "llm.coding",
@@ -258,10 +262,10 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_connection() {
             }]},
             "larm-agent-connection": {"enabled": true, "connections": [{
                 "id": "contextstill-background-canary", "controlBaseUrl": control_origin,
-                "agentProfile": "contextstill-background", "audience": "saaa-desktop",
+                "audience": "same-host",
                 "availabilityPollMs": 1_000, "availabilityTimeoutMs": 2_000,
                 "controlTimeoutMs": 5_000, "readyTimeoutMs": 30_000,
-                "ttlSeconds": 900, "requestTimeoutMs": 300_000
+                "ttlSeconds": 300, "requestTimeoutMs": 240_000
             }]}
         },
         "taskRouting": {
@@ -329,8 +333,11 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_connection() {
     let control_requests = control_requests_rx.try_iter().collect::<Vec<_>>();
     assert_eq!(control_requests.len(), 5);
     assert!(control_requests[0].starts_with("GET /v1/activity HTTP/1.1"));
-    assert!(control_requests[1].starts_with("GET /v3/agent-profiles HTTP/1.1"));
+    assert!(control_requests[1].starts_with("GET /v3/agent-profiles?profile=contextStill HTTP/1.1"));
     assert!(control_requests[2].starts_with("POST /v1/agent-connections HTTP/1.1"));
+    assert!(control_requests[2].contains("\"profile\":\"contextStill\""));
+    assert!(!control_requests[2].contains("\"agentProfile\""));
+    assert!(!control_requests[2].contains("\"explicitAgentProfile\""));
     assert!(control_requests[3].contains("/claim HTTP/1.1"));
     assert!(control_requests[4].starts_with("DELETE /v1/agent-connections/aconn_canary"));
     assert!(control_requests
@@ -365,5 +372,150 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_connection() {
     assert_eq!(status, "completed");
     assert_eq!(candidates, 1);
     assert_eq!(active_leases, 0);
+    std::fs::remove_dir_all(app_dir).unwrap();
+}
+
+#[test]
+#[ignore = "requires a live LARM daemon and LARM_API_TOKEN"]
+fn live_larm_selector_drives_one_isolated_queue_job() {
+    let control_origin = std::env::var("CONTEXT_STILL_TEST_LARM_CONTROL_ORIGIN")
+        .expect("set CONTEXT_STILL_TEST_LARM_CONTROL_ORIGIN for the live test");
+    assert!(std::env::var("LARM_API_TOKEN").is_ok());
+    run_live_isolated_queue_job(&control_origin, None, false);
+}
+
+#[test]
+#[ignore = "requires SAAA to hold the live LARM provider and LARM_API_TOKEN"]
+fn live_larm_provider_conflict_rejects_one_queue_job() {
+    let control_origin = std::env::var("CONTEXT_STILL_TEST_LARM_CONTROL_ORIGIN")
+        .expect("set CONTEXT_STILL_TEST_LARM_CONTROL_ORIGIN for the live test");
+    assert!(std::env::var("LARM_API_TOKEN").is_ok());
+    run_live_isolated_queue_job(&control_origin, None, true);
+}
+
+#[test]
+#[ignore = "requires a live LARM daemon and LARM_API_TOKEN"]
+fn live_larm_selector_drives_three_parallel_queue_sessions() {
+    let control_origin = std::env::var("CONTEXT_STILL_TEST_LARM_CONTROL_ORIGIN")
+        .expect("set CONTEXT_STILL_TEST_LARM_CONTROL_ORIGIN for the live test");
+    assert!(std::env::var("LARM_API_TOKEN").is_ok());
+    let barrier = Arc::new(Barrier::new(3));
+    let handles = (0..3)
+        .map(|_| {
+            let control_origin = control_origin.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                run_live_isolated_queue_job(&control_origin, Some(&barrier), false)
+            })
+        })
+        .collect::<Vec<_>>();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+}
+
+fn run_live_isolated_queue_job(
+    control_origin: &str,
+    barrier: Option<&Barrier>,
+    expect_conflict: bool,
+) {
+    let app_dir = temp_app_dir("live_larm_selector_queue");
+    let sqlite_path = app_dir.join("queue.sqlite");
+    crate::domains::vector_index::service::register_sqlite_vec();
+    let mut connection = Connection::open(&sqlite_path).unwrap();
+    crate::domains::sqlite_writer::schema::configure_writer_connection(&connection).unwrap();
+    crate::domains::sqlite_writer::schema::migrate(&mut connection, 3).unwrap();
+    let settings = json!({"settings": {
+        "providerPools": [],
+        "providers": {
+            "local-llm": {"enabled": true, "models": [{
+                "id": "legacy-static", "apiBaseUrl": "http://127.0.0.1:44448",
+                "apiPath": "/v1/chat/completions", "model": "legacy-static"
+            }]},
+            "larm-agent-connection": {"enabled": true, "connections": [{
+                "id": "live-selector-e2e", "controlBaseUrl": control_origin,
+                "audience": "same-host",
+                "availabilityPollMs": 1_000, "availabilityTimeoutMs": 5_000,
+                "controlTimeoutMs": 10_000, "readyTimeoutMs": 180_000,
+                "ttlSeconds": 300, "requestTimeoutMs": 240_000
+            }]}
+        },
+        "taskRouting": {
+            "findCandidate": {
+                "source": {"kind": "larm-agent-connection", "connectionId": "live-selector-e2e"},
+                "vibe": {"kind": "larm-agent-connection", "connectionId": "live-selector-e2e"}
+            },
+            "episodeDistiller": {"kind": "larm-agent-connection", "connectionId": "live-selector-e2e"}
+        }
+    }});
+    connection.execute(
+        "insert into settings (id,namespace,key,value,value_kind,is_secret,schema_version,created_at,updated_at) values ('settings-live-selector','runtime','settings.v1',?1,'json',0,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+        [settings.to_string()],
+    ).unwrap();
+    connection.execute_batch(r#"
+        insert into vibe_memories (id,session_id,content,memory_type,metadata,created_at)
+        values ('memory-live-selector','session-live-selector','A valid LARM claim must be released after a Queue job.','chat','{"rustAgentLogSync":true,"projectRoot":"/work/project"}',CURRENT_TIMESTAMP);
+        insert into finding_candidate_queue (
+          id,input_kind,source_kind,source_key,source_uri,distillation_version,status,
+          priority,attempt_count,metadata,created_at,updated_at
+        ) values ('finding-live-selector','source_target','vibe_memory','memory-live-selector',
+          'vibe_memory:memory-live-selector','v1','pending',100,0,'{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+    "#).unwrap();
+    drop(connection);
+    let env = MapEnv::from_pairs(vec![
+        ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
+        (
+            "CONTEXT_STILL_SQLITE_CORE_PATH",
+            sqlite_path.to_str().unwrap(),
+        ),
+        ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
+        ("CONTEXT_STILL_RUST_QUEUE_EXECUTOR_MAX_CLAIMS", "1"),
+    ]);
+    if let Some(barrier) = barrier {
+        barrier.wait();
+    }
+    let first = run_executor_tick_report(&env).unwrap();
+    let second = run_executor_tick_report(&env).unwrap();
+    let connection = Connection::open(&sqlite_path).unwrap();
+    let (status, candidates): (String, i64) = connection.query_row(
+        "select q.status, (select count(*) from found_candidates c where c.finding_job_id=q.id) from finding_candidate_queue q where q.id='finding-live-selector'",
+        [], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).unwrap();
+    let active_leases: i64 = connection
+        .query_row(
+            "select count(*) from llm_provider_leases where status='active'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    if expect_conflict {
+        let (last_error, outcome): (Option<String>, Option<String>) = connection.query_row(
+            "select last_error,last_outcome_kind from finding_candidate_queue where id='finding-live-selector'",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        let rejected_events: i64 = connection.query_row(
+            "select count(*) from distillation_queue_events where queue_job_id='finding-live-selector' and event_type='rejected'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!((status.as_str(), candidates), ("failed", 0));
+        assert_eq!(
+            (last_error.as_deref(), outcome.as_deref()),
+            (Some("provider_conflict"), Some("rejected"))
+        );
+        assert_eq!(rejected_events, 1);
+        assert_eq!(active_leases, 0);
+        assert_eq!(first.completed + second.completed, 0);
+        drop(connection);
+        std::fs::remove_dir_all(app_dir).unwrap();
+        return;
+    }
+    assert_eq!(
+        (first.status.as_str(), first.claimed, first.completed),
+        ("executed", 1, 1)
+    );
+    assert_eq!(second.status, "waiting_for_dynamic_provider");
+    assert_eq!((status.as_str(), candidates), ("completed", 1));
+    assert_eq!(active_leases, 0);
+    drop(connection);
     std::fs::remove_dir_all(app_dir).unwrap();
 }

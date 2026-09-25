@@ -120,7 +120,7 @@ function targetLabelForProviderPoolTarget(
     const connection = settings.providers["larm-agent-connection"].connections.find(
       (item) => item.id === target.connectionId,
     );
-    return connection?.agentProfile ?? target.connectionId;
+    return connection ? "contextStill" : target.connectionId;
   }
   if (target.provider === "local-llm") {
     const model = findLocalLlmModel(settings, target.localLlmModelId);
@@ -151,7 +151,7 @@ function resolveProviderPoolTarget(
       id: `provider-pool:${providerPoolId}:larm-agent-connection:${target.connectionId}`,
       label: targetLabelForProviderPoolTarget(settings, target),
       source: "provider_pool",
-      model: connection?.agentProfile ?? null,
+      model: null,
       endpoint: connection?.controlBaseUrl ?? null,
       providerPoolId,
       connectionId: target.connectionId,
@@ -206,9 +206,9 @@ function resolveDirectRouteTarget(
       {
         provider: "larm-agent-connection",
         id: `route:larm-agent-connection:${route.connectionId}`,
-        label: connection?.agentProfile ?? route.connectionId,
+        label: connection ? "contextStill" : route.connectionId,
         source: "route",
-        model: connection?.agentProfile ?? null,
+        model: null,
         endpoint: connection?.controlBaseUrl ?? null,
         connectionId: route.connectionId,
       },
@@ -406,8 +406,8 @@ function unresolvedProviderPoolTarget(
       (item) => item.id === target.connectionId,
     );
     if (!connection) return `LARM connection ${target.connectionId} is not configured`;
-    if (!connection.controlBaseUrl.trim() || !connection.agentProfile.trim()) {
-      return `LARM connection ${target.connectionId} is missing control endpoint or profile`;
+    if (!connection.controlBaseUrl.trim()) {
+      return `LARM connection ${target.connectionId} is missing control endpoint`;
     }
     return null;
   }

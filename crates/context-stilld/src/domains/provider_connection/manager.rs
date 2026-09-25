@@ -106,9 +106,10 @@ impl LarmConnectionManager {
         match activity.state {
             ServiceActivityState::Idle => {}
             ServiceActivityState::Active => {
-                self.release()?;
-                let retry_after_ms = self.schedule_poll(activity.retry_after_ms, false);
-                return Ok(self.waiting_result("service_active", retry_after_ms));
+                if self.target.is_some() {
+                    self.release()?;
+                }
+                // LARM's create response decides whether this job is rejected.
             }
             ServiceActivityState::Draining => {
                 self.release()?;
@@ -288,6 +289,16 @@ impl LarmConnectionManager {
                 "LARM connection was not ready after readiness polling",
             ));
         }
+        let ready = if self.client.connection_requires_renewal(&ready)? {
+            self.state = LarmConnectionManagerState::Renewing;
+            let key = self.client.new_idempotency_key("renew")?;
+            let renewed = self.client.renew(&ready.id, &key)?;
+            ensure_same_connection_identity(&ready, &renewed)?;
+            self.state = LarmConnectionManagerState::WaitingReady;
+            self.client.wait_until_ready(renewed)?
+        } else {
+            ready
+        };
         self.connection = Some(ready.clone());
         self.state = LarmConnectionManagerState::Claiming;
         self.target = Some(self.client.claim(&ready)?);
@@ -316,9 +327,9 @@ impl LarmConnectionManager {
         // TTL remains the final cleanup mechanism for the remote allocation.
         self.connection = None;
         let retry_after_ms = if error.retryable {
-            self.schedule_transient_backoff(0)
+            self.schedule_transient_backoff(error.retry_after_ms.unwrap_or(0))
         } else {
-            self.schedule_unavailable_backoff(0)
+            self.schedule_unavailable_backoff(error.retry_after_ms.unwrap_or(0))
         };
         self.state = LarmConnectionManagerState::Backoff;
         self.set_next_poll(retry_after_ms);
@@ -330,9 +341,7 @@ impl LarmConnectionManager {
         } else {
             self.client.config().availability_poll_ms
         };
-        let delay = retry_after_ms
-            .max(jittered_delay(base))
-            .min(UNAVAILABLE_BACKOFF_MS);
+        let delay = retry_after_ms.max(jittered_delay(base)).min(86_400_000);
         self.state = LarmConnectionManagerState::Backoff;
         self.set_next_poll(delay);
         delay
@@ -404,38 +413,58 @@ mod tests {
     }
 
     #[test]
-    fn active_service_activity_enters_backoff_without_creating_connection() {
+    fn active_service_activity_defers_to_create_provider_conflict() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let (request_tx, request_rx) = mpsc::channel();
         let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            request_tx.send(read_request(&mut stream)).unwrap();
-            let response = json_response(serde_json::json!({
-                "contractVersion": "larm-service-activity.v1",
-                "state": "active",
-                "activeWorkloads": 1,
-                "observedAt": super::super::service::current_rfc3339_for_test(),
-                "validForMs": 1_000,
-                "retryAfterMs": 1_000,
-                "reservationGuaranteed": false,
-                "bootEpoch": "epoch-1",
-                "configRevision": "catalog-1"
-            }));
-            stream.write_all(response.as_bytes()).unwrap();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                request_tx.send(read_request(&mut stream)).unwrap();
+                let response = json_response(serde_json::json!({
+                    "contractVersion": "larm-service-activity.v1",
+                    "state": "active",
+                    "activeWorkloads": 1,
+                    "observedAt": super::super::service::current_rfc3339_for_test(),
+                    "validForMs": 1_000,
+                    "retryAfterMs": 1_000,
+                    "reservationGuaranteed": false,
+                    "bootEpoch": "epoch-1",
+                    "configRevision": "catalog-1"
+                }));
+                stream.write_all(response.as_bytes()).unwrap();
+                let (mut stream, _) = listener.accept().unwrap();
+                request_tx.send(read_request(&mut stream)).unwrap();
+                stream
+                    .write_all(json_response(profile_catalog_json("catalog-1")).as_bytes())
+                    .unwrap();
+                let (mut stream, _) = listener.accept().unwrap();
+                request_tx.send(read_request(&mut stream)).unwrap();
+                let body = r#"{"error":{"code":"provider_conflict"}}"#;
+                let response = format!("HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\nRetry-After: 2\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                stream.write_all(response.as_bytes()).unwrap();
+            }
         });
 
         let mut manager = LarmConnectionManager::new(config(&format!("http://{address}"))).unwrap();
-        let result = manager.reconcile(true).unwrap();
-        assert!(!result.ready);
-        assert_eq!(result.reason_code.as_deref(), Some("service_active"));
-        assert!(result.retry_after_ms >= 1_000);
+        let error = manager.reconcile(true).unwrap_err();
+        assert_eq!(error.kind, "provider_conflict");
+        assert_eq!(error.retry_after_ms, Some(2_000));
         assert_eq!(manager.state(), LarmConnectionManagerState::Backoff);
         assert!(manager.target().is_none());
-        assert!(request_rx
-            .recv()
-            .unwrap()
-            .starts_with("GET /v1/activity HTTP/1.1"));
+        assert!(manager.pending_create_key.is_none());
+        manager.reconcile(false).unwrap();
+        assert_eq!(
+            manager.reconcile(true).unwrap_err().kind,
+            "provider_conflict"
+        );
+        let requests = request_rx.try_iter().collect::<Vec<_>>();
+        assert_eq!(requests.len(), 6);
+        assert!(requests[2].starts_with("POST /v1/agent-connections HTTP/1.1"));
+        assert_ne!(
+            header_value(&requests[2], "idempotency-key"),
+            header_value(&requests[5], "idempotency-key")
+        );
         server.join().unwrap();
     }
 
@@ -511,11 +540,11 @@ mod tests {
         let requests = request_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(requests.len(), 2);
         assert!(requests[0].starts_with("GET /v1/activity HTTP/1.1"));
-        assert!(requests[1].starts_with("GET /v3/agent-profiles HTTP/1.1"));
+        assert!(requests[1].starts_with("GET /v3/agent-profiles?profile=contextStill HTTP/1.1"));
     }
 
     #[test]
-    fn next_job_boundary_rechecks_activity_and_yields_to_another_service() {
+    fn next_job_boundary_rechecks_activity_and_requests_a_fresh_provide_decision() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let origin = format!("http://{address}");
@@ -536,6 +565,12 @@ mod tests {
                 )),
                 "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                     .to_string(),
+                json_response(profile_catalog_json("catalog-2")),
+                json_response_with_status(
+                    409,
+                    "Conflict",
+                    serde_json::json!({"error":{"code":"provider_conflict"}}),
+                ),
             ];
             for response in responses {
                 let (mut stream, _) = listener.accept().unwrap();
@@ -546,9 +581,8 @@ mod tests {
         let mut manager = LarmConnectionManager::new(config(&origin)).unwrap();
 
         assert!(manager.reconcile(true).unwrap().ready);
-        let next_job = manager.reconcile(true).unwrap();
-        assert!(!next_job.ready);
-        assert_eq!(next_job.reason_code.as_deref(), Some("service_active"));
+        let error = manager.reconcile(true).unwrap_err();
+        assert_eq!(error.kind, "provider_conflict");
         assert!(manager.target().is_none());
 
         let requests = request_rx.try_iter().collect::<Vec<_>>();
@@ -564,10 +598,11 @@ mod tests {
                 .iter()
                 .filter(|request| request.starts_with("POST /v1/agent-connections HTTP/1.1"))
                 .count(),
-            1
+            2
         );
         assert!(requests[4].starts_with("GET /v1/activity HTTP/1.1"));
         assert!(requests[5].starts_with("DELETE /v1/agent-connections/aconn_epoch_1"));
+        assert!(requests[7].starts_with("POST /v1/agent-connections HTTP/1.1"));
         server.join().unwrap();
     }
 
@@ -595,8 +630,8 @@ mod tests {
         server.join().unwrap();
 
         let requests = request_rx.try_iter().collect::<Vec<_>>();
-        assert!(requests[0].starts_with("GET /v3/agent-profiles HTTP/1.1"));
-        assert!(requests[2].starts_with("GET /v3/agent-profiles HTTP/1.1"));
+        assert!(requests[0].starts_with("GET /v3/agent-profiles?profile=contextStill HTTP/1.1"));
+        assert!(requests[2].starts_with("GET /v3/agent-profiles?profile=contextStill HTTP/1.1"));
         let first_key = header_value(&requests[1], "idempotency-key").unwrap();
         let second_key = header_value(&requests[3], "idempotency-key").unwrap();
         assert_eq!(first_key, second_key);
@@ -771,7 +806,7 @@ mod tests {
         assert!(requests[0].starts_with("GET /v1/activity HTTP/1.1"));
         assert!(!requests[0].contains('?'));
         assert!(requests[1].starts_with("DELETE /v1/agent-connections/aconn_epoch_1"));
-        assert!(requests[2].starts_with("GET /v3/agent-profiles HTTP/1.1"));
+        assert!(requests[2].starts_with("GET /v3/agent-profiles?profile=contextStill HTTP/1.1"));
         assert!(requests[3].starts_with("POST /v1/agent-connections"));
         assert!(requests[4].contains("/claim HTTP/1.1"));
         server.join().unwrap();
@@ -781,14 +816,13 @@ mod tests {
         LarmConnectionConfig {
             id: "contextstill-background".to_string(),
             control_base_url: origin.to_string(),
-            agent_profile: "contextstill-background".to_string(),
-            audience: "saaa-desktop".to_string(),
+            audience: "same-host".to_string(),
             availability_poll_ms: 5_000,
             availability_timeout_ms: 2_000,
             control_timeout_ms: 5_000,
             ready_timeout_ms: 180_000,
-            ttl_seconds: 900,
-            request_timeout_ms: 300_000,
+            ttl_seconds: 300,
+            request_timeout_ms: 240_000,
             control_bearer_token: Some(Zeroizing::new("test-control-credential".to_string())),
         }
     }
@@ -834,8 +868,8 @@ mod tests {
     fn profile_catalog_json(revision: &str) -> serde_json::Value {
         serde_json::json!({
             "contractVersion": "agent-connection.v3",
+            "requestedProfile": "contextStill",
             "catalogRevision": revision,
-            "defaultAgentProfile": "contextstill-background",
             "profiles": [{
                 "id": "contextstill-background",
                 "canonicalProfile": "contextstill-background",
@@ -847,10 +881,11 @@ mod tests {
                     "capability": "llm.coding",
                     "supportedCapabilities": ["llm.coding"],
                     "protocol": "openai.chat-completions.v1",
+                    "endpoint": "/v1/chat/completions",
                     "model": "contextstill-background"
                 }]
             }],
-            "audiences": ["saaa-desktop"]
+            "audiences": ["same-host"]
         })
     }
 
@@ -868,9 +903,10 @@ mod tests {
             allocation_id: "alloc_epoch_1".to_string(),
             boot_epoch: boot_epoch.to_string(),
             catalog_revision: "catalog-1".to_string(),
+            profile: "contextStill".to_string(),
             agent_profile: "contextstill-background".to_string(),
             profile_revision: "1".repeat(64),
-            audience: "saaa-desktop".to_string(),
+            audience: "same-host".to_string(),
             audience_revision: "2".repeat(64),
             status: LarmConnectionStatus::Ready,
             providers: vec![PublicLarmConnectionProvider {
@@ -878,6 +914,8 @@ mod tests {
                 capability: "llm.coding".to_string(),
                 route: "llm-agent-worker".to_string(),
                 protocol: "openai.chat-completions.v1".to_string(),
+                endpoint: "/v1/chat/completions".to_string(),
+                model: "contextstill-background".to_string(),
                 public_model: "contextstill-background".to_string(),
                 readiness: LarmConnectionStatus::Ready,
                 claimable: true,
@@ -895,9 +933,10 @@ mod tests {
             "allocationId": "alloc_epoch_1",
             "bootEpoch": boot_epoch,
             "catalogRevision": "catalog-2",
+            "profile": "contextStill",
             "agentProfile": "contextstill-background",
             "profileRevision": "1".repeat(64),
-            "audience": "saaa-desktop",
+            "audience": "same-host",
             "audienceRevision": "2".repeat(64),
             "status": "ready",
             "providers": [{
@@ -905,6 +944,8 @@ mod tests {
                 "capability": "llm.coding",
                 "route": "llm-agent-worker",
                 "protocol": "openai.chat-completions.v1",
+                "endpoint": "/v1/chat/completions",
+                "model": "contextstill-background",
                 "publicModel": "contextstill-background",
                 "readiness": "ready",
                 "claimable": true
@@ -919,7 +960,7 @@ mod tests {
             "id": "aconn_epoch_1",
             "allocationId": "alloc_epoch_1",
             "status": "ready",
-            "audience": "saaa-desktop",
+            "audience": "same-host",
             "providers": [{
                 "name": "llm",
                 "capability": "llm.coding",

@@ -296,7 +296,7 @@ function summarizeProviderPoolRoute(route: RuntimeSettingsRoute): string | null 
         const connection = settings.providers["larm-agent-connection"].connections.find(
           (item) => item.id === target.connectionId,
         );
-        return connection?.agentProfile ?? target.connectionId;
+        return connection ? "contextStill" : target.connectionId;
       }
       return target.targetId;
     })
@@ -313,13 +313,9 @@ function resolveRouteRuntimeModel(route: RuntimeSettingsRoute): {
   model: string | null;
 } {
   if (isLarmAgentConnectionRoute(route)) {
-    const settings = getRuntimeSettingsSnapshot();
-    const connection = settings.providers["larm-agent-connection"].connections.find(
-      (item) => item.id === route.connectionId,
-    );
     return {
       provider: "larm-agent-connection",
-      model: connection?.agentProfile ?? route.connectionId,
+      model: null,
     };
   }
   const provider = route.provider;
@@ -434,12 +430,9 @@ function resolveActiveLeaseRuntimeModel(
         })
     : undefined;
   if (configuredTarget?.provider === "larm-agent-connection") {
-    const connection = settings.providers["larm-agent-connection"].connections.find(
-      (item) => item.id === configuredTarget.connectionId,
-    );
     return {
       provider: "larm-agent-connection",
-      model: connection?.agentProfile ?? configuredTarget.connectionId,
+      model: null,
     };
   }
   if (configuredTarget?.provider === "local-llm") {
