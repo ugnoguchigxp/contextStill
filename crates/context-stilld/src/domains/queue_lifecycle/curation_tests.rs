@@ -916,6 +916,9 @@ fn runs_claimed_curation_through_http_provider_and_durable_completion() {
         model: "test".into(),
     };
     let embedding = FinalizeEmbeddingConfig {
+        larm_control_url: None,
+        larm_audience: "saaa-desktop".to_string(),
+        larm_state_path: None,
         provider: "disabled".into(),
         daemon_url: String::new(),
         access_token: None,

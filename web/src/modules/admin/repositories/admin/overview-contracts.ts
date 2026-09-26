@@ -511,9 +511,7 @@ export type OverviewDashboard = {
   productValueStats: {
     windowLabel: string;
     metrics: Array<{
-      metric:
-        | "compile_adoption_rate"
-        | "compile_reuse_rate"
+      metric: "compile_adoption_rate" | "compile_reuse_rate";
       label: string;
       rate: number | null;
       count: number;

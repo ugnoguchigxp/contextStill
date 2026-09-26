@@ -68,6 +68,9 @@ fn serve_embedding() -> (String, thread::JoinHandle<()>) {
 
 fn embedding_config(daemon_url: String) -> FinalizeEmbeddingConfig {
     FinalizeEmbeddingConfig {
+        larm_control_url: None,
+        larm_audience: "saaa-desktop".to_string(),
+        larm_state_path: None,
         provider: "daemon".to_string(),
         daemon_url,
         access_token: None,
@@ -105,6 +108,31 @@ fn rust_finalize_persists_knowledge_embedding_and_completed_state() {
         )
         .unwrap();
     assert_eq!((knowledge, vectors), (1, 1));
+}
+
+#[test]
+fn finalize_queue_uses_local_embedding_when_larm_is_unreachable() {
+    let connection = setup();
+    let (url, server) = serve_embedding();
+    let mut config = embedding_config(url);
+    config.provider = "auto".to_string();
+    config.larm_control_url = Some("http://127.0.0.1:9".to_string());
+    let status = run_finalize_distille_job_for_connection(
+        &connection,
+        "finalize-1",
+        "rust-worker",
+        &config,
+        20.0,
+    )
+    .unwrap();
+    server.join().unwrap();
+    assert_eq!(status, FinalizeExecutionStatus::Completed);
+    let (queue_status, vector_count): (String, i64) = connection.query_row(
+        "select q.status, (select count(*) from knowledge_items_vec_fallback where knowledge_id=q.knowledge_id) from finalize_distille_queue q where q.id='finalize-1'",
+        [], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).unwrap();
+    assert_eq!(queue_status, "completed");
+    assert_eq!(vector_count, 1);
 }
 
 #[test]

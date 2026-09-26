@@ -165,7 +165,6 @@ describeDb("api route integration", () => {
     }
   });
 
-
   test("POST /api/vibe-memory persists memory and GET /api/vibe-memory lists it", async () => {
     const createResponse = await authenticatedRequest("/api/vibe-memory", {
       method: "POST",

@@ -1807,7 +1807,34 @@ fn finalize_embedding_config(
         connection,
         config.embedding_dimension,
     ));
+    let larm_control_url = settings
+        .pointer("/providers/larm-agent-connection/enabled")
+        .and_then(Value::as_bool)
+        .filter(|enabled| *enabled)
+        .and_then(|_| {
+            settings.pointer("/providers/larm-agent-connection/connections/0/controlBaseUrl")
+        })
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let larm_audience = larm_control_url
+        .as_deref()
+        .and_then(|url| reqwest::Url::parse(url).ok())
+        .and_then(|url| url.host_str().map(str::to_string))
+        .map(|host| {
+            if matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1") {
+                "same-host"
+            } else {
+                "saaa-desktop"
+            }
+        })
+        .unwrap_or("saaa-desktop");
     FinalizeEmbeddingConfig {
+        larm_control_url,
+        larm_audience: larm_audience.to_string(),
+        larm_state_path: connection
+            .path()
+            .filter(|path| !path.is_empty())
+            .map(|path| std::path::PathBuf::from(path).with_extension("larm-embedding.json")),
         provider: settings
             .pointer("/embedding/provider")
             .and_then(Value::as_str)

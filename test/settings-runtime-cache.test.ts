@@ -131,7 +131,7 @@ describe("settings runtime cache", () => {
       "agentProfile",
     );
     expect(normalized.providers["larm-agent-connection"].connections[0]?.audience).toBe(
-      "same-host",
+      "saaa-desktop",
     );
 
     expect(normalized.taskRouting.findCandidate.source).toEqual({
@@ -185,7 +185,7 @@ describe("settings runtime cache", () => {
     const connection =
       normalizeRuntimeSettingsEditable(legacy).providers["larm-agent-connection"].connections[0];
     expect(connection).not.toHaveProperty("agentProfile");
-    expect(connection?.audience).toBe("same-host");
+    expect(connection?.audience).toBe("saaa-desktop");
     expect(connection?.ttlSeconds).toBe(300);
     expect(connection?.requestTimeoutMs).toBe(240_000);
   });

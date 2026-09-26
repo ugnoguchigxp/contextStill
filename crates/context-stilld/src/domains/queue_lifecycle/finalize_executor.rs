@@ -31,6 +31,9 @@ pub(crate) struct FinalizeEmbeddingConfig {
     pub(crate) provider: String,
     pub(crate) daemon_url: String,
     pub(crate) access_token: Option<String>,
+    pub(crate) larm_control_url: Option<String>,
+    pub(crate) larm_audience: String,
+    pub(crate) larm_state_path: Option<std::path::PathBuf>,
     pub(crate) timeout_seconds: u64,
     pub(crate) expected_dimension: Option<usize>,
     pub(crate) openai_api_base_url: Option<String>,
@@ -1010,7 +1013,32 @@ pub(super) fn embed_one(
     if provider == "disabled" {
         return Err(CliError::io("embedding provider is disabled"));
     }
-    if provider == "auto" || provider == "daemon" {
+    if provider == "auto" {
+        if let Some(control_url) = config.larm_control_url.as_deref() {
+            match super::larm_embedding::target(
+                control_url,
+                &config.larm_audience,
+                config.larm_state_path.as_deref(),
+            ) {
+                Ok((endpoint, credential)) => {
+                    return embed_via_daemon_at(
+                        config,
+                        text,
+                        &endpoint,
+                        Some(credential.as_str()),
+                        true,
+                    )
+                }
+                Err(super::larm_embedding::EmbeddingConnectionError::Unreachable) => {}
+                Err(error) => {
+                    super::larm_embedding::classify(error)?;
+                    unreachable!();
+                }
+            }
+        }
+        return embed_via_daemon(config, text);
+    }
+    if provider == "daemon" {
         return embed_via_daemon(config, text);
     }
     if provider == "openai" {
@@ -1022,27 +1050,39 @@ pub(super) fn embed_one(
 }
 
 fn embed_via_daemon(config: &FinalizeEmbeddingConfig, text: &str) -> Result<Vec<f64>, CliError> {
+    let url = format!("{}/embed", config.daemon_url.trim_end_matches('/'));
+    embed_via_daemon_at(config, text, &url, config.access_token.as_deref(), false)
+}
+
+fn embed_via_daemon_at(
+    config: &FinalizeEmbeddingConfig,
+    text: &str,
+    url: &str,
+    access_token: Option<&str>,
+    strict_space: bool,
+) -> Result<Vec<f64>, CliError> {
     let client = Client::builder()
         .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
         .build()
         .map_err(|error| CliError::io(format!("failed to build embedding client: {error}")))?;
-    let url = format!("{}/embed", config.daemon_url.trim_end_matches('/'));
     let mut request = client.post(url).json(&json!({
         "texts":[text],
         "type":"passage",
         "normalize":true,
         "priority":"normal"
     }));
-    if let Some(token) = config
-        .access_token
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
+    if let Some(token) = access_token.filter(|value| !value.trim().is_empty()) {
         request = request.bearer_auth(token.trim());
     }
-    let response = request
-        .send()
-        .map_err(|error| CliError::io(format!("embedding daemon request failed: {error}")))?;
+    let response = match request.send() {
+        Ok(response) => response,
+        Err(error) if strict_space && error.is_connect() => return embed_via_daemon(config, text),
+        Err(error) => {
+            return Err(CliError::io(format!(
+                "embedding daemon request failed: {error}"
+            )))
+        }
+    };
     let status = response.status();
     let payload: Value = response
         .json()
@@ -1053,11 +1093,25 @@ fn embed_via_daemon(config: &FinalizeEmbeddingConfig, text: &str) -> Result<Vec<
             truncate(&payload.to_string(), 500)
         )));
     }
+    if strict_space
+        && (payload["dimension"] != 384
+            || payload["type"] != "passage"
+            || payload["normalize"] != true)
+    {
+        return Err(CliError::io("embedding_space_mismatch"));
+    }
     let vector = payload
         .pointer("/embeddings/0")
         .and_then(Value::as_array)
         .ok_or_else(|| CliError::io("embedding daemon response did not include embeddings[0]"))?;
-    validate_vector(vector, config.expected_dimension)
+    let vector = validate_vector(vector, config.expected_dimension)?;
+    if strict_space {
+        let norm = vector.iter().map(|value| value * value).sum::<f64>().sqrt();
+        if (norm - 1.0).abs() > 0.05 {
+            return Err(CliError::io("embedding_space_mismatch"));
+        }
+    }
+    Ok(vector)
 }
 
 fn embed_via_openai(config: &FinalizeEmbeddingConfig, text: &str) -> Result<Vec<f64>, CliError> {

@@ -1643,5 +1643,4 @@ mod tests {
             "Just plain text without any headings"
         ));
     }
-
 }

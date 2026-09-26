@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::service::{
@@ -38,6 +39,10 @@ pub struct LarmConnectionManager {
     next_poll_at: Option<Instant>,
     transient_backoff_ms: u64,
     pending_create_key: Option<String>,
+    recovered_connection_id: Option<String>,
+    state_path: Option<PathBuf>,
+    pending_reason: Option<String>,
+    create_attempted: bool,
 }
 
 impl LarmConnectionManager {
@@ -50,7 +55,59 @@ impl LarmConnectionManager {
             next_poll_at: None,
             transient_backoff_ms: 0,
             pending_create_key: None,
+            recovered_connection_id: None,
+            state_path: None,
+            pending_reason: None,
+            create_attempted: false,
         })
+    }
+
+    pub fn new_persistent(
+        config: LarmConnectionConfig,
+        state_path: PathBuf,
+    ) -> Result<Self, LarmControlError> {
+        let mut manager = Self::new(config)?;
+        if state_path.exists() {
+            let bytes = std::fs::read(&state_path).map_err(|error| {
+                LarmControlError::configuration(format!("failed to read LARM state: {error}"))
+            })?;
+            let value: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|_| LarmControlError::configuration("invalid persisted LARM state"))?;
+            manager.pending_create_key = value["key"].as_str().map(str::to_string);
+            manager.recovered_connection_id = value["id"].as_str().map(str::to_string);
+            manager.pending_reason = value["reason"].as_str().map(str::to_string);
+            manager.create_attempted = value["createAttempted"].as_bool().unwrap_or(false);
+            if manager.pending_create_key.is_none() {
+                return Err(LarmControlError::configuration(
+                    "persisted LARM state has no idempotency key",
+                ));
+            }
+        }
+        manager.state_path = Some(state_path);
+        Ok(manager)
+    }
+
+    fn persist(&self) -> Result<(), LarmControlError> {
+        let Some(path) = self.state_path.as_ref() else {
+            return Ok(());
+        };
+        let value = serde_json::json!({"key":self.pending_create_key,"id":self.connection_id(),"reason":self.pending_reason,"createAttempted":self.create_attempted});
+        let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+        std::fs::write(&temporary, value.to_string()).map_err(|error| {
+            LarmControlError::configuration(format!("failed to persist LARM state: {error}"))
+        })?;
+        std::fs::rename(&temporary, path).map_err(|error| {
+            LarmControlError::configuration(format!("failed to commit LARM state: {error}"))
+        })
+    }
+
+    fn rotate_key_after_release(&mut self) -> Result<(), LarmControlError> {
+        self.connection = None;
+        self.recovered_connection_id = None;
+        self.pending_create_key = Some(self.client.new_idempotency_key("create")?);
+        self.pending_reason = None;
+        self.create_attempted = false;
+        self.persist()
     }
 
     pub fn state(&self) -> LarmConnectionManagerState {
@@ -69,16 +126,14 @@ impl LarmConnectionManager {
         self.connection
             .as_ref()
             .map(|connection| connection.id.as_str())
+            .or(self.recovered_connection_id.as_deref())
     }
 
     pub fn reconcile(
         &mut self,
         due_job_exists: bool,
     ) -> Result<LarmReconcileResult, LarmControlError> {
-        if !due_job_exists {
-            self.release()?;
-            return Ok(self.waiting_result("queue_idle", 0));
-        }
+        let _ = due_job_exists;
         if let Some(next_poll_at) = self.next_poll_at {
             if Instant::now() < next_poll_at {
                 return Ok(LarmReconcileResult {
@@ -105,12 +160,7 @@ impl LarmConnectionManager {
         };
         match activity.state {
             ServiceActivityState::Idle => {}
-            ServiceActivityState::Active => {
-                if self.target.is_some() {
-                    self.release()?;
-                }
-                // LARM's create response decides whether this job is rejected.
-            }
+            ServiceActivityState::Active => {}
             ServiceActivityState::Draining => {
                 self.release()?;
                 let retry_after_ms = self.schedule_poll(activity.retry_after_ms, false);
@@ -120,11 +170,43 @@ impl LarmConnectionManager {
 
         self.transient_backoff_ms = 0;
         self.next_poll_at = None;
+        if let Some(id) = self.recovered_connection_id.clone() {
+            let recovered = self.client.get(&id)?;
+            if recovered.status == LarmConnectionStatus::Released {
+                self.rotate_key_after_release()?;
+            } else {
+                self.connection = Some(recovered);
+                self.recovered_connection_id = None;
+            }
+        }
         if self.connection.as_ref().is_some_and(|connection| {
             connection.boot_epoch != activity.boot_epoch
                 || connection.catalog_revision != activity.config_revision
         }) {
             self.discard_connection_best_effort();
+        }
+        if let Some(previous) = self.connection.clone() {
+            let current = match self.client.get(&previous.id) {
+                Ok(current) => current,
+                Err(error) => {
+                    self.fail_closed(&error);
+                    return Err(error);
+                }
+            };
+            if let Err(error) = ensure_same_connection_identity(&previous, &current) {
+                self.fail_closed(&error);
+                return Err(error);
+            }
+            if matches!(
+                current.status,
+                LarmConnectionStatus::Failed
+                    | LarmConnectionStatus::Released
+                    | LarmConnectionStatus::Expired
+            ) {
+                self.release()?;
+            } else {
+                self.connection = Some(current);
+            }
         }
         if let Some(target) = self.target.as_ref() {
             let requires_renewal = match self.client.target_requires_renewal(target) {
@@ -145,10 +227,12 @@ impl LarmConnectionManager {
             }
         }
         self.state = LarmConnectionManagerState::Ready;
+        self.pending_reason = None;
+        self.persist()?;
         Ok(LarmReconcileResult {
             state: self.state,
             ready: true,
-            reason_code: Some("service_idle".to_string()),
+            reason_code: Some("connection_ready".to_string()),
             retry_after_ms: 0,
         })
     }
@@ -207,7 +291,24 @@ impl LarmConnectionManager {
 
     pub fn release(&mut self) -> Result<(), LarmControlError> {
         self.target = None;
-        self.pending_create_key = None;
+        if self.connection_id().is_none() && self.create_attempted {
+            let key = self.pending_create_key.clone().ok_or_else(|| {
+                LarmControlError::configuration("ambiguous create has no idempotency key")
+            })?;
+            if let Ok(activity) = self.client.service_activity() {
+                let _ = self
+                    .client
+                    .discover_configured_profile(&activity.config_revision);
+            }
+            match self.client.create(&key) {
+                Ok(connection) => {
+                    self.connection = Some(connection);
+                    self.persist()?;
+                }
+                Err(error) if error.kind == "provider_conflict" => return Ok(()),
+                Err(error) => return Err(error),
+            }
+        }
         let Some(connection_id) = self.connection_id().map(str::to_string) else {
             self.state = LarmConnectionManagerState::WaitingActivity;
             self.next_poll_at = None;
@@ -216,11 +317,9 @@ impl LarmConnectionManager {
         };
         self.state = LarmConnectionManagerState::Releasing;
         let result = self.client.release(&connection_id);
-        // A failed remote cleanup must not leave a locally reusable Connection.
-        // LARM's TTL is the final cleanup mechanism when DELETE cannot be confirmed.
-        self.connection = None;
         match result {
             Ok(()) => {
+                self.rotate_key_after_release()?;
                 self.state = LarmConnectionManagerState::WaitingActivity;
                 self.next_poll_at = None;
                 self.transient_backoff_ms = 0;
@@ -258,22 +357,20 @@ impl LarmConnectionManager {
                 None => {
                     let key = self.client.new_idempotency_key("create")?;
                     self.pending_create_key = Some(key.clone());
+                    self.persist()?;
                     key
                 }
             };
+            self.create_attempted = true;
+            self.persist()?;
             let created = match self.client.create(&key) {
-                Ok(connection) => {
-                    self.pending_create_key = None;
-                    connection
-                }
+                Ok(connection) => connection,
                 Err(error) => {
-                    if !error.retryable || error.http_status == Some(409) {
-                        self.pending_create_key = None;
-                    }
                     return Err(error);
                 }
             };
             self.connection = Some(created.clone());
+            self.persist()?;
             if created.boot_epoch != activity.boot_epoch
                 || created.catalog_revision != activity.config_revision
             {
@@ -307,25 +404,21 @@ impl LarmConnectionManager {
 
     fn discard_connection_best_effort(&mut self) {
         self.target = None;
-        self.pending_create_key = None;
         if let Some(connection_id) = self.connection_id().map(str::to_string) {
             self.state = LarmConnectionManagerState::Releasing;
-            let _ = self.client.release(&connection_id);
+            if self.client.release(&connection_id).is_ok() {
+                let _ = self.rotate_key_after_release();
+            }
         }
-        self.connection = None;
         self.state = LarmConnectionManagerState::WaitingActivity;
     }
 
     fn fail_closed(&mut self, error: &LarmControlError) {
         self.target = None;
-        if let Some(connection_id) = self.connection_id().map(str::to_string) {
-            self.state = LarmConnectionManagerState::Releasing;
-            let _ = self.client.release(&connection_id);
+        if !error.retryable || error.kind == "foreground_preempted" {
+            self.discard_connection_best_effort();
         }
-        // A connection involved in a protocol or transport failure must never be
-        // reused just because its best-effort remote cleanup also failed. LARM's
-        // TTL remains the final cleanup mechanism for the remote allocation.
-        self.connection = None;
+        self.pending_reason = Some(error.kind.to_string());
         let retry_after_ms = if error.retryable {
             self.schedule_transient_backoff(error.retry_after_ms.unwrap_or(0))
         } else {
@@ -333,6 +426,7 @@ impl LarmConnectionManager {
         };
         self.state = LarmConnectionManagerState::Backoff;
         self.set_next_poll(retry_after_ms);
+        let _ = self.persist();
     }
 
     fn schedule_poll(&mut self, retry_after_ms: u64, unavailable: bool) -> u64 {
@@ -356,7 +450,7 @@ impl LarmConnectionManager {
         .min(TRANSIENT_BACKOFF_MAX_MS);
         let delay = retry_after_ms
             .max(jittered_delay(self.transient_backoff_ms))
-            .min(TRANSIENT_BACKOFF_MAX_MS);
+            .min(86_400_000);
         self.state = LarmConnectionManagerState::Backoff;
         self.set_next_poll(delay);
         delay
@@ -404,12 +498,33 @@ mod tests {
     use zeroize::Zeroizing;
 
     #[test]
-    fn queue_idle_does_not_poll_service_activity() {
+    fn desired_connection_reconciles_even_when_queue_is_idle() {
         let mut manager = LarmConnectionManager::new(config("http://127.0.0.1:9")).unwrap();
-        let result = manager.reconcile(false).unwrap();
-        assert!(!result.ready);
-        assert_eq!(result.reason_code.as_deref(), Some("queue_idle"));
-        assert_eq!(manager.state(), LarmConnectionManagerState::WaitingActivity);
+        assert!(manager.reconcile(false).is_err());
+        assert_eq!(manager.state(), LarmConnectionManagerState::Backoff);
+    }
+
+    #[test]
+    fn pending_key_and_connection_id_survive_manager_reconstruction() {
+        let path = std::env::temp_dir().join(format!(
+            "contextstill-larm-state-{}.json",
+            std::process::id()
+        ));
+        let mut manager =
+            LarmConnectionManager::new_persistent(config("http://127.0.0.1:9"), path.clone())
+                .unwrap();
+        manager.pending_create_key = Some("contextstill:create:stable".into());
+        manager.connection = Some(public_connection("epoch-1"));
+        manager.persist().unwrap();
+        let recovered =
+            LarmConnectionManager::new_persistent(config("http://127.0.0.1:9"), path.clone())
+                .unwrap();
+        assert_eq!(
+            recovered.pending_create_key.as_deref(),
+            Some("contextstill:create:stable")
+        );
+        assert_eq!(recovered.connection_id(), Some("aconn_epoch_1"));
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -452,8 +567,8 @@ mod tests {
         assert_eq!(error.retry_after_ms, Some(2_000));
         assert_eq!(manager.state(), LarmConnectionManagerState::Backoff);
         assert!(manager.target().is_none());
-        assert!(manager.pending_create_key.is_none());
-        manager.reconcile(false).unwrap();
+        assert!(manager.pending_create_key.is_some());
+        manager.next_poll_at = None;
         assert_eq!(
             manager.reconcile(true).unwrap_err().kind,
             "provider_conflict"
@@ -461,9 +576,104 @@ mod tests {
         let requests = request_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(requests.len(), 6);
         assert!(requests[2].starts_with("POST /v1/agent-connections HTTP/1.1"));
-        assert_ne!(
+        assert_eq!(
             header_value(&requests[2], "idempotency-key"),
             header_value(&requests[5], "idempotency-key")
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn provider_conflict_recovers_and_claims_with_the_same_create_key() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let origin = format!("http://{address}");
+        let claim_origin = origin.clone();
+        let (request_tx, request_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let mut ready = connection_json("epoch-1");
+            ready["catalogRevision"] = serde_json::json!("catalog-1");
+            let conflict = r#"{"error":{"code":"provider_conflict"}}"#;
+            let responses = [
+                json_response(service_activity_json("active", 1, 1_000, "epoch-1", "catalog-1")),
+                json_response(profile_catalog_json("catalog-1")),
+                format!("HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\nRetry-After: 1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{conflict}", conflict.len()),
+                json_response(service_activity_json("idle", 0, 0, "epoch-1", "catalog-1")),
+                json_response(profile_catalog_json("catalog-1")),
+                json_response_with_status(201, "Created", ready),
+                json_response(claim_json(&claim_origin)),
+            ];
+            for response in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                request_tx.send(read_request(&mut stream)).unwrap();
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        let mut manager = LarmConnectionManager::new(config(&origin)).unwrap();
+        assert_eq!(
+            manager.reconcile(true).unwrap_err().kind,
+            "provider_conflict"
+        );
+        manager.next_poll_at = None;
+        assert!(manager.reconcile(false).unwrap().ready);
+        let requests = request_rx.try_iter().collect::<Vec<_>>();
+        assert_eq!(
+            header_value(&requests[2], "idempotency-key"),
+            header_value(&requests[5], "idempotency-key")
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /v1/agent-connections HTTP/1.1"))
+                .count(),
+            2
+        );
+        assert!(manager.target().is_some());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn active_service_does_not_release_a_still_ready_llm_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let origin = format!("http://{address}");
+        let (request_tx, request_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let mut ready = connection_json("epoch-1");
+            ready["catalogRevision"] = serde_json::json!("catalog-1");
+            for response in [
+                json_response(service_activity_json(
+                    "active",
+                    1,
+                    1_000,
+                    "epoch-1",
+                    "catalog-1",
+                )),
+                json_response(ready),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                request_tx.send(read_request(&mut stream)).unwrap();
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        let mut manager = LarmConnectionManager::new(config(&origin)).unwrap();
+        manager.connection = Some(public_connection("epoch-1"));
+        manager.target = Some(ClaimedLarmTarget {
+            connection_id: "aconn_epoch_1".into(),
+            allocation_id: "alloc_epoch_1".into(),
+            api_base_url: format!("{origin}/v1"),
+            model: "contextstill-background".into(),
+            bearer_token: Zeroizing::new("secret".into()),
+            expires_at: "2099-09-06T12:15:00.000Z".into(),
+        });
+        assert!(manager.reconcile(false).unwrap().ready);
+        assert_eq!(manager.connection_id(), Some("aconn_epoch_1"));
+        assert_eq!(
+            request_rx
+                .try_iter()
+                .filter(|request| request.starts_with("DELETE "))
+                .count(),
+            0
         );
         server.join().unwrap();
     }
@@ -544,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn next_job_boundary_rechecks_activity_and_requests_a_fresh_provide_decision() {
+    fn next_job_boundary_keeps_a_still_ready_connection() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let origin = format!("http://{address}");
@@ -563,14 +773,7 @@ mod tests {
                     "epoch-2",
                     "catalog-2",
                 )),
-                "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                    .to_string(),
-                json_response(profile_catalog_json("catalog-2")),
-                json_response_with_status(
-                    409,
-                    "Conflict",
-                    serde_json::json!({"error":{"code":"provider_conflict"}}),
-                ),
+                json_response(connection_json("epoch-2")),
             ];
             for response in responses {
                 let (mut stream, _) = listener.accept().unwrap();
@@ -581,9 +784,8 @@ mod tests {
         let mut manager = LarmConnectionManager::new(config(&origin)).unwrap();
 
         assert!(manager.reconcile(true).unwrap().ready);
-        let error = manager.reconcile(true).unwrap_err();
-        assert_eq!(error.kind, "provider_conflict");
-        assert!(manager.target().is_none());
+        assert!(manager.reconcile(true).unwrap().ready);
+        assert!(manager.target().is_some());
 
         let requests = request_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(
@@ -598,11 +800,10 @@ mod tests {
                 .iter()
                 .filter(|request| request.starts_with("POST /v1/agent-connections HTTP/1.1"))
                 .count(),
-            2
+            1
         );
         assert!(requests[4].starts_with("GET /v1/activity HTTP/1.1"));
-        assert!(requests[5].starts_with("DELETE /v1/agent-connections/aconn_epoch_1"));
-        assert!(requests[7].starts_with("POST /v1/agent-connections HTTP/1.1"));
+        assert!(requests[5].starts_with("GET /v1/agent-connections/aconn_epoch_1 HTTP/1.1"));
         server.join().unwrap();
     }
 
@@ -651,7 +852,7 @@ mod tests {
     }
 
     #[test]
-    fn fail_closed_discards_local_connection_even_when_remote_release_fails() {
+    fn fail_closed_retains_connection_identity_when_remote_release_fails() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
@@ -677,14 +878,14 @@ mod tests {
 
         manager.fail_closed(&LarmControlError::protocol("invalid claim"));
 
-        assert!(manager.connection.is_none());
+        assert!(manager.connection.is_some());
         assert!(manager.target.is_none());
         assert_eq!(manager.state(), LarmConnectionManagerState::Backoff);
         server.join().unwrap();
     }
 
     #[test]
-    fn release_failure_discards_the_local_connection_and_credential() {
+    fn release_failure_retains_connection_identity_without_credential() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
@@ -711,7 +912,7 @@ mod tests {
         let error = manager.release().unwrap_err();
 
         assert_eq!(error.http_status, Some(503));
-        assert!(manager.connection.is_none());
+        assert!(manager.connection.is_some());
         assert!(manager.target().is_none());
         assert_eq!(manager.state(), LarmConnectionManagerState::Backoff);
         server.join().unwrap();

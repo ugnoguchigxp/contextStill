@@ -502,7 +502,9 @@ const larmAgentConnectionSchema = z
   })
   .transform(({ agentProfile: _legacyAgentProfile, ...connection }) => ({
     ...connection,
-    audience: "same-host",
+    audience: isLoopbackLarmHost(new URL(connection.controlBaseUrl).hostname)
+      ? "same-host"
+      : "saaa-desktop",
     ttlSeconds: 300,
     requestTimeoutMs: Math.min(connection.requestTimeoutMs, 240_000),
   }));

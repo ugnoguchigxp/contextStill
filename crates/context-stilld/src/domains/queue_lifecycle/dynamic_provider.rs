@@ -97,12 +97,14 @@ impl LarmManagerCheckout {
     fn take(sqlite_path: &Path, config: &LarmConnectionConfig) -> Result<Option<Self>, CliError> {
         let registry = LARM_CONNECTION_MANAGERS.get_or_init(|| Mutex::new(BTreeMap::new()));
         let key = larm_manager_registry_key(sqlite_path, &config.id);
-        let new_manager = LarmConnectionManager::new(config.clone()).map_err(|error| {
-            CliError::io(format!(
-                "failed to initialize LARM connection {}: {error}",
-                config.id
-            ))
-        })?;
+        let state_path = sqlite_path.with_extension(format!("larm-{}.json", config.id));
+        let new_manager = LarmConnectionManager::new_persistent(config.clone(), state_path.clone())
+            .map_err(|error| {
+                CliError::io(format!(
+                    "failed to initialize LARM connection {}: {error}",
+                    config.id
+                ))
+            })?;
         let entry_handle = {
             let mut registry = registry
                 .lock()
@@ -147,13 +149,14 @@ impl LarmManagerCheckout {
                 )));
             }
             if manager.config() != config {
-                manager = LarmConnectionManager::new(config.clone()).map_err(|error| {
-                    restore_failed_manager(&entry_handle, manager);
-                    CliError::io(format!(
-                        "failed to reinitialize LARM connection {}: {error}",
-                        config.id
-                    ))
-                })?;
+                manager = LarmConnectionManager::new_persistent(config.clone(), state_path)
+                    .map_err(|error| {
+                        restore_failed_manager(&entry_handle, manager);
+                        CliError::io(format!(
+                            "failed to reinitialize LARM connection {}: {error}",
+                            config.id
+                        ))
+                    })?;
             }
             let mut entry = entry_handle
                 .lock()
@@ -272,6 +275,7 @@ fn release_unreferenced_larm_managers(
 
 pub(crate) fn release_dynamic_provider_connections() {
     release_unreferenced_larm_managers(None, &BTreeSet::new());
+    super::larm_embedding::shutdown();
 }
 
 pub(crate) fn log_provider_startup_selection_for_path(sqlite_path: &std::path::Path) {
@@ -413,39 +417,48 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
         let Some(mut manager) = LarmManagerCheckout::take(sqlite_path, &plan.connection)? else {
             continue;
         };
-        let (reconciled, claimed_target) = match manager.reconcile(due_job_exists) {
-            Ok(result) => result,
+        let (target, api_key) = match manager.reconcile(due_job_exists) {
+            Ok((reconciled, claimed_target)) if due_job_exists && reconciled.ready => {
+                let claimed_target = claimed_target
+                    .as_ref()
+                    .ok_or_else(|| CliError::runtime("ready LARM manager has no claimed target"))?;
+                (
+                    LocalLlmTargetConfig {
+                        codex: false,
+                        quota_db: None,
+                        target_id: plan.pool.targets[0].clone(),
+                        api_base_url: claimed_target.api_base_url.clone(),
+                        api_path: "/v1/chat/completions".to_string(),
+                        model: claimed_target.model.clone(),
+                    },
+                    Some(Zeroizing::new(
+                        claimed_target.bearer_token.as_str().to_string(),
+                    )),
+                )
+            }
+            Err(error) if error.kind == "transport" && due_job_exists => {
+                let Some(local) = local_ornith_fallback(&settings, &reader, &plan.pool.targets[0])
+                else {
+                    eprintln!(
+                        "LARM connection {} and local ornith are unavailable: {error}",
+                        plan.connection.id
+                    );
+                    continue;
+                };
+                local
+            }
             Err(error) => {
-                if error.kind == "provider_conflict" && due_job_exists {
-                    reject_conflicted_job(sqlite_path, &plan, error.retry_after_ms)?;
-                }
                 eprintln!(
                     "LARM connection {} is unavailable; queue remains unclaimed: {error}",
                     plan.connection.id
                 );
                 continue;
             }
-        };
-        if !due_job_exists || !reconciled.ready {
-            continue;
-        }
-        let claimed_target = claimed_target
-            .as_ref()
-            .ok_or_else(|| CliError::runtime("ready LARM manager has no claimed target"))?;
-        let target = LocalLlmTargetConfig {
-            codex: false,
-            quota_db: None,
-            target_id: plan.pool.targets[0].clone(),
-            api_base_url: claimed_target.api_base_url.clone(),
-            api_path: "/v1/chat/completions".to_string(),
-            model: claimed_target.model.clone(),
+            Ok(_) => continue,
         };
         if target.model.trim() == "coding-default" {
             continue;
         }
-        let api_key = Some(Zeroizing::new(
-            claimed_target.bearer_token.as_str().to_string(),
-        ));
         let worker_id = format!(
             "context-stilld-rust-executor:{}:{}",
             plan.pool.pool_id,
@@ -696,30 +709,68 @@ fn dynamic_plan_has_runnable_job(
     Ok(false)
 }
 
-fn reject_conflicted_job(
-    sqlite_path: &Path,
-    plan: &DynamicProviderPlan,
-    retry_after_ms: Option<u64>,
-) -> Result<(), CliError> {
-    let queues = plan.priority_queues.clone();
-    sqlite_writer::execute_for_path(sqlite_path, "queue.provider_conflict", move |connection| {
-        let transaction = connection.transaction().map_err(|error| error.to_string())?;
-        for queue in &queues {
-            let table = queue_table_name(&queue.queue_name).map_err(|error| error.to_string())?;
-            let allowed = queue.allowed_route_values.as_deref().unwrap_or_default();
-            let (route_condition, parameters) = route_filter(queue, allowed).map_err(|error| error.to_string())?;
-            let select = format!("select id from {table} where ((status='pending' and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP)) or (status='paused' and next_run_at is not null and datetime(next_run_at) <= CURRENT_TIMESTAMP)) {route_condition} order by priority desc, created_at, id limit 1");
-            let id: Option<String> = transaction.query_row(&select, rusqlite::params_from_iter(parameters), |row| row.get(0)).optional().map_err(|error| error.to_string())?;
-            let Some(id) = id else { continue };
-            let update = format!("update {table} set status='failed', next_run_at=null, completed_at=CURRENT_TIMESTAMP, last_error='provider_conflict', last_outcome_kind='rejected', updated_at=CURRENT_TIMESTAMP where id=?1 and status in ('pending','paused')");
-            if transaction.execute(&update, [&id]).map_err(|error| error.to_string())? == 1 {
-                let metadata = json!({"reason":"provider_conflict","retryAfterMs":retry_after_ms}).to_string();
-                append_queue_event_for_connection(&transaction, &format!("rust-queue-event-{}", unique_suffix()), &queue.queue_name, &id, "rejected", Some("LARM provider_conflict"), Some(&metadata)).map_err(|error| error.to_string())?;
-            }
-            return transaction.commit().map_err(|error| error.to_string());
+fn local_ornith_fallback(
+    settings: &Value,
+    reader: &Connection,
+    target_id: &str,
+) -> Option<(LocalLlmTargetConfig, Option<Zeroizing<String>>)> {
+    let models = settings
+        .pointer("/providers/local-llm/models")?
+        .as_array()?;
+    let model = models.iter().find(|model| {
+        if !model
+            .get("model")
+            .and_then(Value::as_str)
+            .is_some_and(|name| name.starts_with("ornith-"))
+        {
+            return false;
         }
-        transaction.commit().map_err(|error| error.to_string())
-    }).map_err(|error| CliError::io(format!("SQLite writer provider conflict rejection failed: {error}")))
+        let Some(base_url) = model.get("apiBaseUrl").and_then(Value::as_str) else {
+            return false;
+        };
+        reqwest::Url::parse(base_url).ok().is_some_and(|url| {
+            url.scheme() == "http"
+                && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
+                && url.port_or_known_default().is_some()
+        })
+    })?;
+    let base_url = model.get("apiBaseUrl")?.as_str()?.trim_end_matches('/');
+    let health = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_millis(700))
+        .no_proxy()
+        .build()
+        .ok()?
+        .get(format!("{base_url}/health"))
+        .send()
+        .ok()?;
+    if !health.status().is_success()
+        || health
+            .json::<Value>()
+            .ok()?
+            .get("ready")
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
+        return None;
+    }
+    let api_key = crate::domains::secret_store::row_token(reader, "localLlmApiKey")
+        .or_else(|| std::env::var("LOCAL_LLM_API_KEY").ok())
+        .map(Zeroizing::new);
+    Some((
+        LocalLlmTargetConfig {
+            codex: false,
+            quota_db: None,
+            target_id: target_id.to_string(),
+            api_base_url: base_url.to_string(),
+            api_path: model
+                .get("apiPath")
+                .and_then(Value::as_str)
+                .unwrap_or("/v1/chat/completions")
+                .to_string(),
+            model: model.get("model")?.as_str()?.to_string(),
+        },
+        api_key,
+    ))
 }
 
 fn route_filter<'a>(
@@ -868,8 +919,27 @@ fn unique_suffix() -> String {
 #[cfg(test)]
 mod tests {
     use super::super::executor::{executor_priority_queues_for_pool, provider_pools};
-    use super::super::test_support::temp_app_dir;
     use super::*;
+
+    #[test]
+    fn local_ornith_is_available_only_when_its_loopback_health_is_ready() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            use std::io::{Read, Write};
+            let mut request = [0_u8; 1024];
+            let size = stream.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..size]).starts_with("GET /health"));
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 14\r\nConnection: close\r\n\r\n{\"ready\":true}").unwrap();
+        });
+        let settings = json!({"providers":{"local-llm":{"models":[{"apiBaseUrl":format!("http://127.0.0.1:{port}"),"apiPath":"/v1/chat/completions","model":"ornith-1.0-9b-4bit"}]}}});
+        let db = Connection::open_in_memory().unwrap();
+        let (target, _) = local_ornith_fallback(&settings, &db, "fallback").unwrap();
+        assert_eq!(target.model, "ornith-1.0-9b-4bit");
+        assert_eq!(target.target_id, "fallback");
+        server.join().unwrap();
+    }
 
     fn larm_connection_config(id: &str) -> LarmConnectionConfig {
         let settings = json!({
@@ -894,57 +964,6 @@ mod tests {
         LarmConnectionConfig::from_settings(&settings, id)
             .unwrap()
             .expect("enabled test LARM connection must be present")
-    }
-
-    #[test]
-    fn provider_conflict_rejects_one_due_job_once_without_claiming_a_lease() {
-        let app_dir = temp_app_dir("provider_conflict_rejection");
-        let sqlite_path = app_dir.join("queue.sqlite");
-        crate::domains::vector_index::service::register_sqlite_vec();
-        let mut db = Connection::open(&sqlite_path).unwrap();
-        crate::domains::sqlite_writer::schema::configure_writer_connection(&db).unwrap();
-        crate::domains::sqlite_writer::schema::migrate(&mut db, 3).unwrap();
-        db.execute_batch("insert into finding_candidate_queue (id, source_kind, source_key, source_uri, status, priority) values ('job-a','vibe_memory','a','vibe_memory:a','pending',100),('job-b','vibe_memory','b','vibe_memory:b','pending',90);").unwrap();
-        drop(db);
-        let settings = json!({"providers":{"larm-agent-connection":{"enabled":true,"connections":[{"id":"test","controlBaseUrl":"http://127.0.0.1:9810","audience":"same-host","availabilityPollMs":5000,"availabilityTimeoutMs":2000,"controlTimeoutMs":5000,"readyTimeoutMs":180000,"ttlSeconds":300,"requestTimeoutMs":240000}]}},"taskRouting":{"findCandidate":{"source":{"kind":"larm-agent-connection","connectionId":"test"},"vibe":{"kind":"larm-agent-connection","connectionId":"test"}}}});
-        let plans = dynamic_provider_plans(&settings, &HashSet::new()).unwrap();
-        reject_conflicted_job(&sqlite_path, &plans[0], Some(2_000)).unwrap();
-        reject_conflicted_job(&sqlite_path, &plans[0], Some(2_000)).unwrap();
-        let db = Connection::open(&sqlite_path).unwrap();
-        let rows = db.prepare("select id,status,last_error,last_outcome_kind from finding_candidate_queue order by id").unwrap().query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,Option<String>>(2)?,row.get::<_,Option<String>>(3)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
-        assert_eq!(
-            rows,
-            vec![
-                (
-                    "job-a".into(),
-                    "failed".into(),
-                    Some("provider_conflict".into()),
-                    Some("rejected".into())
-                ),
-                (
-                    "job-b".into(),
-                    "failed".into(),
-                    Some("provider_conflict".into()),
-                    Some("rejected".into())
-                )
-            ]
-        );
-        let events: i64 = db
-            .query_row(
-                "select count(*) from distillation_queue_events where event_type='rejected'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(events, 2);
-        let leases: i64 = db
-            .query_row("select count(*) from llm_provider_leases", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(leases, 0);
-        drop(db);
-        std::fs::remove_dir_all(app_dir).unwrap();
     }
 
     #[test]

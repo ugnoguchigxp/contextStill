@@ -226,10 +226,7 @@ export const overviewCompileEvalStatsSchema = z.object({
 });
 
 export const overviewProductValueMetricSchema = z.object({
-  metric: z.enum([
-    "compile_adoption_rate",
-    "compile_reuse_rate",
-  ]),
+  metric: z.enum(["compile_adoption_rate", "compile_reuse_rate"]),
   label: z.string().min(1),
   rate: z.number().min(0).max(1).nullable(),
   count: z.number().int().nonnegative(),

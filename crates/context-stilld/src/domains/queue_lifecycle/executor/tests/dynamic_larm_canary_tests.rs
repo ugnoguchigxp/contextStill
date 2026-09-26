@@ -199,7 +199,7 @@ impl Drop for ScopedLarmTokenEnvironment {
 }
 
 #[test]
-fn dynamic_larm_canary_uses_claimed_json_target_and_releases_connection() {
+fn dynamic_larm_canary_uses_claimed_json_target_and_releases_on_shutdown() {
     let _token_environment = ScopedLarmTokenEnvironment::set_for_test();
     let provider_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let provider_address = provider_listener.local_addr().unwrap();
@@ -301,7 +301,7 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_connection() {
         ("CONTEXT_STILL_RUST_QUEUE_EXECUTOR_MAX_CLAIMS", "1"),
     ]);
     let first = run_executor_tick_report(&env).unwrap();
-    let second = run_executor_tick_report(&env).unwrap();
+    super::super::super::dynamic_provider::release_dynamic_provider_connections();
     provider_server.join().unwrap();
     control_server.join().unwrap();
 
@@ -309,7 +309,6 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_connection() {
         (first.status.as_str(), first.claimed, first.completed),
         ("executed", 1, 1)
     );
-    assert_eq!(second.status, "waiting_for_dynamic_provider");
     let provider_request = provider_request_rx.recv().unwrap();
     assert!(provider_request.starts_with("POST /v1/chat/completions HTTP/1.1"));
     let provider_headers = provider_request.to_ascii_lowercase();
@@ -386,7 +385,7 @@ fn live_larm_selector_drives_one_isolated_queue_job() {
 
 #[test]
 #[ignore = "requires SAAA to hold the live LARM provider and LARM_API_TOKEN"]
-fn live_larm_provider_conflict_rejects_one_queue_job() {
+fn live_larm_provider_conflict_keeps_one_queue_job_pending() {
     let control_origin = std::env::var("CONTEXT_STILL_TEST_LARM_CONTROL_ORIGIN")
         .expect("set CONTEXT_STILL_TEST_LARM_CONTROL_ORIGIN for the live test");
     assert!(std::env::var("LARM_API_TOKEN").is_ok());
@@ -454,7 +453,7 @@ fn run_live_isolated_queue_job(
     ).unwrap();
     connection.execute_batch(r#"
         insert into vibe_memories (id,session_id,content,memory_type,metadata,created_at)
-        values ('memory-live-selector','session-live-selector','A valid LARM claim must be released after a Queue job.','chat','{"rustAgentLogSync":true,"projectRoot":"/work/project"}',CURRENT_TIMESTAMP);
+        values ('memory-live-selector','session-live-selector','A valid LARM claim must be released on shutdown.','chat','{"rustAgentLogSync":true,"projectRoot":"/work/project"}',CURRENT_TIMESTAMP);
         insert into finding_candidate_queue (
           id,input_kind,source_kind,source_key,source_uri,distillation_version,status,
           priority,attempt_count,metadata,created_at,updated_at
@@ -476,6 +475,7 @@ fn run_live_isolated_queue_job(
     }
     let first = run_executor_tick_report(&env).unwrap();
     let second = run_executor_tick_report(&env).unwrap();
+    super::super::super::dynamic_provider::release_dynamic_provider_connections();
     let connection = Connection::open(&sqlite_path).unwrap();
     let (status, candidates): (String, i64) = connection.query_row(
         "select q.status, (select count(*) from found_candidates c where c.finding_job_id=q.id) from finding_candidate_queue q where q.id='finding-live-selector'",
@@ -489,20 +489,12 @@ fn run_live_isolated_queue_job(
         )
         .unwrap();
     if expect_conflict {
-        let (last_error, outcome): (Option<String>, Option<String>) = connection.query_row(
-            "select last_error,last_outcome_kind from finding_candidate_queue where id='finding-live-selector'",
-            [], |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
         let rejected_events: i64 = connection.query_row(
             "select count(*) from distillation_queue_events where queue_job_id='finding-live-selector' and event_type='rejected'",
             [], |row| row.get(0),
         ).unwrap();
-        assert_eq!((status.as_str(), candidates), ("failed", 0));
-        assert_eq!(
-            (last_error.as_deref(), outcome.as_deref()),
-            (Some("provider_conflict"), Some("rejected"))
-        );
-        assert_eq!(rejected_events, 1);
+        assert_eq!((status.as_str(), candidates), ("pending", 0));
+        assert_eq!(rejected_events, 0);
         assert_eq!(active_leases, 0);
         assert_eq!(first.completed + second.completed, 0);
         drop(connection);

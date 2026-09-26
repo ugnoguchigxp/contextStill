@@ -14,6 +14,7 @@ mod inference_preemption;
 mod inspect;
 #[cfg(test)]
 mod larm_e2e_tests;
+mod larm_embedding;
 mod maintenance;
 mod provider_execution;
 mod provider_lease;

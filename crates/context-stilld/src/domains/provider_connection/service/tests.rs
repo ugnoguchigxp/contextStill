@@ -114,7 +114,7 @@ fn create_directly_returns_ready_without_discovery() {
         let (mut stream, _) = listener.accept().unwrap();
         let request = read_request(&mut stream);
         assert!(request.starts_with("POST /v1/agent-connections HTTP/1.1"));
-        assert!(request.to_ascii_lowercase().contains("prefer: wait=300"));
+        assert!(request.to_ascii_lowercase().contains("prefer: wait=1"));
         assert!(request.contains("\"profile\":\"contextStill\""));
         assert!(request.contains("\"audience\":\"same-host\""));
         assert!(request.contains("\"ttlSeconds\":300"));

@@ -4,6 +4,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Plus, Stethoscope, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { RuntimeSettingsEditable } from "../../repositories/admin.repository";
 import { CodexActionGuide } from "./codex-action-guide";
 import { ProviderHealthBadge, SecretStatusBadge } from "./settings-controls";
@@ -85,6 +86,36 @@ export function ProviderEndpointsPanel({
   renderSecretEditor,
   sourceView,
 }: Props) {
+  const [larmStatuses, setLarmStatuses] = useState<{
+    llm: string;
+    embedding: string;
+    llmSource?: string;
+    embeddingSource?: string;
+  } | null>(null);
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch("/api/queue/larm-status");
+        if (!response.ok) return;
+        const value = (await response.json()) as {
+          llm: string;
+          embedding: string;
+          llmSource?: string;
+          embeddingSource?: string;
+        };
+        if (active) setLarmStatuses(value);
+      } catch {
+        if (active) setLarmStatuses({ llm: "再接続中", embedding: "再接続中" });
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 5_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
   if (!draft) return null;
 
   const updateAzureDeployment = (
@@ -332,7 +363,7 @@ export function ProviderEndpointsPanel({
               {
                 id,
                 controlBaseUrl: "http://192.168.0.130:9810",
-                audience: "same-host",
+                audience: "saaa-desktop",
                 availabilityPollMs: 5_000,
                 availabilityTimeoutMs: 2_000,
                 controlTimeoutMs: 5_000,
@@ -904,7 +935,7 @@ export function ProviderEndpointsPanel({
               </label>
               <label className="settings-field">
                 <span>Audience</span>
-                <Input value="same-host" readOnly />
+                <Input value={connection.audience} readOnly />
               </label>
               {(
                 [
@@ -939,8 +970,9 @@ export function ProviderEndpointsPanel({
             <div className="settings-route-chain">
               <span className="settings-route-chain-item">
                 <strong>Integration status</strong>
-                The Rust resident requests provide when routed queue work is due. LARM decides
-                admission; provider conflicts reject the current job.
+                {larmStatuses
+                  ? `LLM: ${larmStatuses.llm} (${larmStatuses.llmSource ?? "LARM"}) · Embedding: ${larmStatuses.embedding} (${larmStatuses.embeddingSource ?? "LARM"})`
+                  : "状態を確認中"}
               </span>
             </div>
           </div>

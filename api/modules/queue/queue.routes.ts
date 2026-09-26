@@ -16,8 +16,14 @@ import {
   resumeTarget,
   retryTarget,
 } from "./queue.repository.js";
+import { getLarmStatuses } from "./larm-status.js";
 
 export const queueRouter = new Hono();
+
+queueRouter.get("/larm-status", async (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(await getLarmStatuses());
+});
 
 const queueNameValues = distillationQueueNameValues;
 const queueStatusFilterValues = ["all", ...distillationQueueStatusValues] as const;

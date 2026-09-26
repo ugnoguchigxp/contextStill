@@ -110,7 +110,16 @@ impl LarmConnectionConfig {
                 "invalid LARM connection configuration for {connection_id}: {error}"
             ))
         })?;
-        config.audience = "same-host".to_string();
+        let origin = validate_control_origin(&config.control_base_url)?;
+        config.audience = if origin
+            .host_str()
+            .is_some_and(|host| matches!(host, "127.0.0.1" | "localhost" | "::1"))
+        {
+            "same-host"
+        } else {
+            "saaa-desktop"
+        }
+        .to_string();
         config.ttl_seconds = 300;
         config.request_timeout_ms = config.request_timeout_ms.min(240_000);
         config.control_bearer_token =
@@ -122,9 +131,11 @@ impl LarmConnectionConfig {
     pub fn validate(&self) -> Result<(), LarmControlError> {
         validate_identifier("connection id", &self.id)?;
         validate_identifier("audience", &self.audience)?;
-        if self.audience != "same-host" || self.ttl_seconds != 300 {
+        if !matches!(self.audience.as_str(), "same-host" | "saaa-desktop")
+            || self.ttl_seconds != 300
+        {
             return Err(LarmControlError::configuration(
-                "ContextStill LARM connections require audience same-host and ttlSeconds 300",
+                "ContextStill LARM connections require a supported audience and ttlSeconds 300",
             ));
         }
         validate_control_origin(&self.control_base_url)?;
@@ -448,10 +459,30 @@ impl LarmControlError {
         }
     }
 
+    pub(crate) fn foreground_preempted() -> Self {
+        Self {
+            kind: "foreground_preempted",
+            message: "LARM foreground workload preempted the LLM connection".into(),
+            retryable: true,
+            http_status: None,
+            retry_after_ms: Some(1_000),
+        }
+    }
+
     fn transport(message: impl Into<String>) -> Self {
         Self {
             kind: "transport",
             message: message.into(),
+            retryable: true,
+            http_status: None,
+            retry_after_ms: None,
+        }
+    }
+
+    fn ready_timeout() -> Self {
+        Self {
+            kind: "ready_timeout",
+            message: "LARM connection did not become ready before the configured deadline".into(),
             retryable: true,
             http_status: None,
             retry_after_ms: None,
@@ -500,7 +531,7 @@ impl LarmControlError {
         if let Some(code) = code {
             if code == "provider_conflict" && status == StatusCode::CONFLICT {
                 error.kind = "provider_conflict";
-                error.retryable = false;
+                error.retryable = true;
             } else if matches!(
                 code.as_str(),
                 "catalog_revision_mismatch" | "revision_mismatch"
@@ -640,11 +671,13 @@ impl LarmControlClient {
         let response = self
             .authorized(self.client.post(self.endpoint("/v1/agent-connections")?))?
             .header("idempotency-key", idempotency_key)
-            .header("Prefer", "wait=300")
-            .timeout(Duration::from_secs(305))
+            .header("Prefer", "wait=1")
+            .timeout(Duration::from_millis(
+                self.config.control_timeout_ms.min(10_000),
+            ))
             .json(&CreateRequest {
                 profile: "contextStill",
-                audience: "same-host",
+                audience: &self.config.audience,
                 client: "contextstill",
                 ttl_seconds: 300,
                 allow_fallback: false,
@@ -685,7 +718,7 @@ impl LarmControlClient {
             let actual = location
                 .as_deref()
                 .and_then(|location| self.control_origin.join(location).ok());
-            if actual.as_ref() != Some(&expected) {
+            if location.is_some() && actual.as_ref() != Some(&expected) {
                 return Err(LarmControlError::protocol(
                     "LARM pending create Location does not identify the same connection",
                 ));
@@ -768,24 +801,27 @@ impl LarmControlClient {
                 LarmConnectionStatus::Failed
                 | LarmConnectionStatus::Released
                 | LarmConnectionStatus::Expired => {
+                    if current
+                        .error
+                        .as_ref()
+                        .is_some_and(|error| error.code == "foreground_preempted")
+                    {
+                        return Err(LarmControlError::foreground_preempted());
+                    }
                     return Err(LarmControlError::protocol(format!(
                         "LARM connection entered terminal state: {:?}",
                         current.status
-                    )))
+                    )));
                 }
             }
             if Instant::now() >= deadline {
-                return Err(LarmControlError::transport(
-                    "LARM connection did not become ready before the configured deadline",
-                ));
+                return Err(LarmControlError::ready_timeout());
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             thread::sleep(Duration::from_millis(250).min(remaining));
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err(LarmControlError::transport(
-                    "LARM connection did not become ready before the configured deadline",
-                ));
+                return Err(LarmControlError::ready_timeout());
             }
             let request_timeout = remaining
                 .min(Duration::from_millis(self.config.control_timeout_ms))
@@ -1335,7 +1371,7 @@ fn now_epoch_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn parse_rfc3339_utc_ms(value: &str) -> Option<u64> {
+pub(crate) fn parse_rfc3339_utc_ms(value: &str) -> Option<u64> {
     let date_time = value.strip_suffix('Z')?;
     let (date, time) = date_time.split_once('T')?;
     if date.len() != 10
