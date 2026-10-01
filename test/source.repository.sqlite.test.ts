@@ -21,6 +21,7 @@ vi.mock("../src/db/sqlite/runtime.js", () => {
   const mockRun = vi.fn();
 
   const mockOrm = {
+    transaction: vi.fn((callback: () => unknown) => callback()),
     select: mockSelect,
     from: mockFrom,
     where: mockWhere,
@@ -33,7 +34,7 @@ vi.mock("../src/db/sqlite/runtime.js", () => {
   };
 
   const mockDb = {
-    query: vi.fn(),
+    query: vi.fn(() => ({ run: vi.fn() })),
     exec: vi.fn(),
     close: vi.fn(),
   };

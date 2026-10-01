@@ -55,7 +55,14 @@ function chunkSourceDocument(params: {
     heading: string | null;
     content: string;
   }> = [];
-  let heading = params.title ?? null;
+  const boundedHeading = (value: string | null): string | null => {
+    if (!value || value.length <= maxChars) return value;
+    let end = maxChars;
+    const last = value.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff) end--;
+    return value.slice(0, end);
+  };
+  let heading = boundedHeading(params.title ?? null);
   let buffer: string[] = [];
   let index = 1;
 
@@ -73,11 +80,21 @@ function chunkSourceDocument(params: {
 
   for (const line of lines) {
     const headingMatch = line.match(/^(#{1,6})\s+(.+?)\s*$/);
-    if (headingMatch && buffer.join("\n").trim().length > 0) {
+    if (headingMatch && chunks.length < 1024 && buffer.join("\n").trim().length > 0) {
       flush();
-      heading = headingMatch[2]?.trim() || heading;
+      heading = boundedHeading(headingMatch[2]?.trim() || heading);
     }
-    buffer.push(line);
+    // Split a single long line too; do not split a UTF-16 surrogate pair.
+    let offset = 0;
+    while (line.length - offset > maxChars) {
+      let end = offset + maxChars;
+      const last = line.charCodeAt(end - 1);
+      if (last >= 0xd800 && last <= 0xdbff) end--;
+      buffer.push(line.slice(offset, end));
+      flush();
+      offset = end;
+    }
+    buffer.push(line.slice(offset));
     if (buffer.join("\n").length >= maxChars) flush();
   }
   flush();
@@ -185,39 +202,64 @@ export async function upsertSourceDocumentSqlite(params: UpsertSourceParams): Pr
     );
   }
   const sourceId = existing?.id ?? randomUUID();
-  repo.upsertSource({
-    id: sourceId,
-    sourceKind: params.sourceKind,
-    classificationStatus: identity.classificationStatus,
-    scope: identity.scope,
-    projectRef: identity.projectRef,
-    repoKey: identity.repoKey,
-    repoPath: identity.repoPath,
-    uri: redactedUri,
-    title: redactedTitle ?? null,
-    body: redactedBody,
-    metadata: redactedMetadata,
-    updatedAt: nowIso(),
-  });
-
-  sqlite.orm
-    .delete(sqliteSourceFragments)
-    .where(eq(sqliteSourceFragments.sourceId, sourceId))
-    .run();
-  for (const chunk of chunkSourceDocument({
-    title: redactedTitle,
-    body: redactedBody,
-  })) {
-    repo.upsertSourceFragment({
-      id: randomUUID(),
-      sourceId,
-      locator: chunk.locator,
-      heading: chunk.heading,
-      content: chunk.content,
-      metadata: redactedMetadata,
-      embedding: await tryEmbedSourceFragment(chunk.content),
-    });
+  const chunks: Array<{
+    locator: string;
+    heading: string | null;
+    content: string;
+    embedding: number[] | undefined;
+  }> = [];
+  for (const chunk of chunkSourceDocument({ title: redactedTitle, body: redactedBody })) {
+    chunks.push({ ...chunk, embedding: await tryEmbedSourceFragment(chunk.content) });
   }
+  sqlite.orm.transaction(() => {
+    repo.upsertSource({
+      id: sourceId,
+      sourceKind: params.sourceKind,
+      classificationStatus: identity.classificationStatus,
+      scope: identity.scope,
+      projectRef: identity.projectRef,
+      repoKey: identity.repoKey,
+      repoPath: identity.repoPath,
+      uri: redactedUri,
+      title: redactedTitle ?? null,
+      body: redactedBody,
+      metadata: redactedMetadata,
+      updatedAt: nowIso(),
+    });
+
+    sqlite.db
+      .query(
+        "DELETE FROM source_fragments_fts WHERE id IN (SELECT id FROM source_fragments WHERE source_id = ?)",
+      )
+      .run(sourceId);
+    sqlite.orm
+      .delete(sqliteSourceFragments)
+      .where(eq(sqliteSourceFragments.sourceId, sourceId))
+      .run();
+    if (chunks.every((chunk) => chunk.embedding === undefined)) {
+      repo.insertSourceTextFragments(
+        sourceId,
+        chunks.map((chunk) => ({
+          id: randomUUID(),
+          locator: chunk.locator,
+          heading: chunk.heading,
+          content: chunk.content,
+        })),
+        redactedMetadata,
+      );
+    } else
+      for (const chunk of chunks) {
+        repo.upsertSourceFragment({
+          id: randomUUID(),
+          sourceId,
+          locator: chunk.locator,
+          heading: chunk.heading,
+          content: chunk.content,
+          metadata: redactedMetadata,
+          embedding: chunk.embedding,
+        });
+      }
+  });
   await recordProjectScopedWritePersisted(identity, {
     producer: params.identityProducer ?? "source.upsert-document",
     entityKind: "source",

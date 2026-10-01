@@ -145,3 +145,20 @@ Readiness uses read-only schema probes and an authenticated query through the SQ
 | `GET` | `/api/settings/providers/codex/auth/status` | Codex auth status |
 | `POST` | `/api/settings/providers/codex/auth/login-command` | Generate Codex login command |
 | `POST` | `/api/settings/reload-runtime-cache` | Reload runtime settings cache |
+
+## Wiki CLI専用入口
+
+既存管理キーをx-admin-api-keyで明示して、/api/sources/cli/pagesへアクセスします。namespace未設定時は503、キーなしは401です。
+
+| Method | Path | 契約 |
+|---|---|---|
+| GET | /api/sources/cli/pages | namespace内のitems（slug/title/version） |
+| GET | /api/sources/cli/pages/:slug | page（body/meta/version） |
+| POST | /api/sources/cli/pages | slug/title/body/requestId/extract |
+| PUT | /api/sources/cli/pages/:slug | slug/body/ifVersion/requestId/extract、titleは任意 |
+
+requestIdはUUID、versionは保存Markdown全体のSHA-256（sha256:接頭辞）です。extractはboolean必須で、初期版のtrueは保存前に422 EXTRACTION_UNSUPPORTEDを返します。updateのifVersion欠落は428、競合は412です。createは既存409、updateは未作成404です。meta、rename、任意rootは受け付けません。
+
+成功200は保存とSQLite writerによるテキスト索引反映を示します。部分完了207ではok=falseとphase/operationIdを返します。同じID/入力の再試行は既存operationを復旧し、別入力の同じIDは409です。変更前のwriter/lock不調は503です。知識抽出/active化の完了は保証しません。
+
+詳しい環境設定、終了コード、復旧手順は[CLI](cli.md)を参照してください。

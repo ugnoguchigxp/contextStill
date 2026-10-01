@@ -80,6 +80,21 @@ export function TaskRoutingSettingsPanel({
             }
           />
           <RouteEditor
+            label="DeepStill manual research"
+            description="Local LLM endpoint for research started from the Research page."
+            settings={draft}
+            route={draft.taskRouting.deepStillManual}
+            effectiveTargets={sourceView?.effectiveTargets?.taskRouting.deepStillManual}
+            localOnly
+            allowDynamic={false}
+            onChange={(next) =>
+              patchDraft((current) => ({
+                ...current,
+                taskRouting: { ...current.taskRouting, deepStillManual: next },
+              }))
+            }
+          />
+          <RouteEditor
             label="episodeDistiller"
             description="Episode card generation from completed compile and vibe-memory runs."
             settings={draft}

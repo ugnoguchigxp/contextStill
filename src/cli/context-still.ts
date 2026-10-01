@@ -4,9 +4,15 @@ const [command, ...restArgs] = process.argv.slice(2);
 
 async function main(): Promise<void> {
   if (!command || command === "--help" || command === "-h") {
-    console.log("Usage: context-still landscape [options]");
+    console.log("Usage: context-still <landscape|wiki> [options]");
     console.log("");
     console.log("Deprecated alias: memory-router");
+    return;
+  }
+
+  if (command === "wiki") {
+    const { runWiki } = await import("./wiki.ts");
+    process.exitCode = await runWiki(restArgs);
     return;
   }
 
@@ -16,7 +22,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.error("Usage: context-still landscape [options]");
+  console.error("Usage: context-still <landscape|wiki> [options]");
   if (command) {
     console.error(`Unknown command: ${command}`);
   }

@@ -1,0 +1,788 @@
+<article lang="ja">
+  <h1 id="wiki-cli実装計画">Wiki CLI実装計画</h1>
+  <p>
+    作成日・改訂日: 2026-09-30。状態:
+    実装済み（四操作、SQLite索引、再試行、未対応抽出の保存前拒否を検証）。SQLite単一writerと知識抽出経路の評価を反映。
+  </p>
+  <p>
+    同じMac上のセバスチャンの作業タスクとSAAAが、ユーザーの選んだナレッジを非公開Wikiへ読み書きできるようにする。初期版は既存HTTP
+    APIを呼ぶ
+    <code>context-still wiki</code>
+    とし、一覧・読取り・作成・更新を提供する。ファイル保存、Git履歴、ソース登録、検索用断片の更新、選択したナレッジの抽出依頼はサーバーの共通処理に集約する。CLIと管理APIはSQLiteの書込み接続を所有せず、DB変更は既存の常駐Rust
+    writerへ委譲する。ファイル保存、索引反映、抽出受付、知識化完了は別々の状態として返す。
+  </p>
+  <p>
+    今回の実装は現在の /Users/y.noguchi/Code/contextStill
+    の作業ディレクトリで進める。別のcheckoutは作成せず、既存の未コミット変更を保持する。実Wikiや本番DBでは試験せず、一時ディレクトリのWiki・Git・DB・Rust
+    writerで検証する。内部計画はAGENTS.mdに従ってSpec HTMLへ移行する。
+  </p>
+  <h2 id="現状と再利用する部分">現状と再利用する部分</h2>
+  <p>
+    調査対象はCodex登録プロジェクト <code>contextStill</code>、ホスト
+    <code>local</code
+    >、<code>/Users/y.noguchi/Code/contextStill</code>。以下は現コードで確認できた機能であり、稼働確認とは区別する。
+  </p>
+  <table>
+    <caption>
+      現状と再利用する部分
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">現状・根拠</th>
+        <th scope="col">初期版で必要な追加</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>一覧・読取り</td>
+        <td>
+          <code>sources.routes.ts</code> の
+          <code>/tree</code>、<code
+            >/pages/*</code
+          >
+          GET。読取りも
+          <code>ensureSourceRuntime</code> を経由し、ディレクトリ/Git初期化を起こし得る
+        </td>
+        <td>CLI経由の読取りは初期化しない共通処理とする。領域内だけの一覧・読取り</td>
+      </tr>
+      <tr>
+        <td>作成・更新</td>
+        <td>
+          同ファイル406行のPOST、440行のPUT。作成済み409、未作成404。本文・title・metaを保存し、Gitコミット後に
+          <code>upsertSourceDocument</code>
+        </td>
+        <td>版照合、領域制限、競合の直列化、途中失敗と再試行の契約</td>
+      </tr>
+      <tr>
+        <td>Markdown保存</td>
+        <td>
+          <code>content-repo.ts</code>
+          192行の読取り、255行の保存。ページ境界とsymlinkを検証し、本文をサニタイズ。16MiB上限は現状読取り側
+        </td>
+        <td>書込み側の最終シリアライズサイズ上限、原子的置換、専用領域境界</td>
+      </tr>
+      <tr>
+        <td>Git履歴</td>
+        <td>
+          同ファイル480行の <code>commitFileChange</code>。対象をadd後、通常のgit
+          commitを実行
+        </td>
+        <td>他人がstageしたファイルを巻き込まないコミットと、Wiki全体の書込みロック</td>
+      </tr>
+      <tr>
+        <td>ソース・検索反映</td>
+        <td>
+          <code>source.repository.ts</code>
+          145行の断片置換、174行のupsert。SQLiteは別実装へ委譲
+        </td>
+        <td>
+          ソースと断片の整合更新を各backendで確認・保証。Wiki検索と
+          <code>search_knowledge</code> の違いを出力/文書に明記
+        </td>
+      </tr>
+      <tr>
+        <td>既存CLI</td>
+        <td>
+          <code>context-still.ts</code> は
+          <code>landscape</code>
+          のみ。Bun、サブコマンド分岐、<code>process.exitCode</code>。他CLIは
+          <code>--json</code> を使用
+        </td>
+        <td>
+          <code>wiki</code> 分岐と独立した引数解析・HTTPクライアント
+        </td>
+      </tr>
+      <tr>
+        <td>接続・認証</td>
+        <td>
+          <code>api/index.ts</code> 6行: standalone
+          APIは既定127.0.0.1、39170。39171は開発用。<a href="../../api/middleware/admin-auth.ts"
+            >admin-auth.ts</a
+          >
+          25行: 管理キーまたは管理セッション
+        </td>
+        <td>CLI専用のローカル接続設定。既存管理キーを使用し、秘密を引数やログに出さない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    POST/PUTのWikiソースは現状 <code>scope: global</code>、<code
+      >actor: user</code
+    >
+    固定。Wikiへの登録は、蒸留済みKnowledgeへの登録・SAAAの
+    <code>search_knowledge</code> での検索を直接保証しない。Markdown
+    importerにはFindingキューへの投入があるが、ページAPIに同じ処理があるとは扱わない。
+  </p>
+  <p>
+    前回の調査では提供されたcontext-still MCPの
+    <code>initial_instructions</code> は成功し、Codex設定にもMCP
+    URLが存在した。一方、シェルから39170/39171/39172への接続は失敗した。APIが停止しているとは断定しない。今回、サービス到達・管理キーの有効性・実稼働SAAAの設定は検証していない。MCPの接続情報をAPI接続情報として流用しない。
+  </p>
+  <h2 id="sqlite単一writerと知識抽出の評価">SQLite単一writerと知識抽出の評価</h2>
+  <p>
+    <strong
+      >推奨は、Markdownの保存に加え、既存daemon
+      writer経路でソース・索引を更新し、対象ページの知識抽出を明示依頼する方式。</strong
+    >
+    Markdownだけを保存する方式は、知識化が不要なメモやdaemon停止中の保管には向くが、contextStillの知識抽出機能を利用したい今回の目的には不足する。以下はコード上の確認であり、daemonの実稼働は未確認。
+  </p>
+  <h3 id="確認できた書込み所有権と経路">確認できた書込み所有権と経路</h3>
+  <table>
+    <caption>
+      確認できた書込み所有権と経路
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">根拠</th>
+        <th scope="col">確認できたこと</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <code>client.ts</code> 51行付近
+          <code>openSqliteCoreDatabase</code>
+        </td>
+        <td>
+          通常runtimeはSQLiteを <code>readonly: true</code> で開き、<code
+            >RemoteWriterSqliteClient</code
+          >
+          で包む。直接書込みを許す分岐はtest runtimeであり、本番CLI/APIの代替にしない
+        </td>
+      </tr>
+      <tr>
+        <td><code>remote-client.ts</code> 7行付近</td>
+        <td>
+          mutation SQLを
+          <code>executeSqliteWriterSync</code>
+          に送る。transaction中は読取りもwriterへ送る。同期transaction
+          callbackにPromiseを返すことは禁止
+        </td>
+      </tr>
+      <tr>
+        <td><code>writer-client.ts</code> 23行・101行付近</td>
+        <td>
+          既存runtime metadataからwriter URL/token pathを解決し、sync
+          workerへ依頼する。接続情報が欠ければ失敗し、ローカル書込みへfallbackしない
+        </td>
+      </tr>
+      <tr>
+        <td><code>writer-sync-worker.ts</code></td>
+        <td>
+          Bearer付きHTTP
+          POSTでwriterへSQLとparamsを送る。この内部tokenはCLI利用者へ公開せず、管理APIキーとは区別する
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <a href="../../crates/context-stilld/src/domains/mcp_lifecycle/endpoint_server.rs"
+            >endpoint_server.rs</a
+          >
+          429行付近、<a
+            href="../../crates/context-stilld/src/domains/mcp_lifecycle/endpoint_writer.rs"
+            >endpoint_writer.rs</a
+          >
+        </td>
+        <td>
+          writer metadataに <code>/writer/query</code> 経路がある。受付側はwriter
+          tokenを検証する。typed-memory専用profileはこのwriter入口を公開しない
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>service.rs</code>
+          230行付近・523行付近
+        </td>
+        <td>
+          DBに対応する排他lockを取得し、queue/threadでwriter処理を実行。transaction
+          ownerを管理し、30秒の所有期限を持つ
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <a href="../../src/modules/sources/source.repository.sqlite.ts"
+            >source.repository.sqlite.ts</a
+          >
+          137行付近、<code>runtime.ts</code>
+        </td>
+        <td>
+          Wiki APIのupsertはruntime DB
+          adapterを通るため、通常runtimeのDB変更は上記writer経路に委譲される
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    コード上の経路は
+    <code>CLI → 管理HTTP API → Wiki共通サービス → SQLite adapter → 認証済みwriter HTTP → 常駐Rust writer → SQLite</code
+    >。CLIが生SQLをwriterへ送る入口は追加しない。非writerのAPIプロセスから直接書く案も採らない。daemonが既にwriterを持つため、CLIのために所有権を分割したり別writerを起動したりする必要はない。
+  </p>
+  <p>
+    ただし既存のSQLite upsertは「source更新 → 断片delete →
+    各断片insert」を個別に行っており、単一writerであることだけでは処理全体の原子性を保証しない。transactionは既存adapter/writer経路で実行できるが、embeddingなどのawaitはその外で完了させ、短い同期DB処理をまとめる。30秒以内に収まるbatch/transaction方法を実装時に検証する。書込み接続をAPI側へ戻して解決してはならない。
+  </p>
+  <h3 id="markdown変更は自動的に知識化されるか">Markdown変更は自動的に知識化されるか</h3>
+  <p>
+    今回確認したsourcesモジュール、daemon実装、automationの範囲では、Wiki
+    Markdownの変更を常時監視してFindingへ投入する処理は見つからなかった。全リポジトリ・実運用の外部ジョブまで不在を証明したわけではないため、「監視なしと断定」せず「自動取込みは未確認」とする。ファイルを置くだけで知識が抽出される前提は置かない。
+  </p>
+  <ul>
+    <li>ページPOST/PUT: Markdown/Git/ソースと検索用断片を更新するが、Findingへの投入はない。</li>
+    <li>
+      <code>sources.routes.ts</code> 192行付近の
+      <code>/reindex</code>:
+      ページのソース/断片を再登録する。Finding投入はなく、<code>removed: 0</code>。移動/削除に伴う旧ソース清掃も保証しない。
+    </li>
+    <li>
+      <a href="../../src/modules/sources/markdown-importer.service.ts"
+        >markdown-importer.service.ts</a
+      >
+      85〜180行付近: 明示import時にソース登録、<code>wiki_file</code>
+      のFinding job検索/投入、root内のstale
+      source削除を行う。既存jobを見つけるとskipするため、編集後の新しい版が必ず再抽出される保証はない。
+    </li>
+    <li>
+      importerのURIは絶対file
+      path、ページAPIのURIはpagesからの相対path。importerのtree全体呼出しを保存APIに足すだけでは、同じページの二重sourceや意図しないstale削除を生み得る。共通のページURI/source
+      keyを決め、ページ単位の投入だけを再利用する。
+    </li>
+  </ul>
+  <h3 id="二方式の選択条件">二方式の選択条件</h3>
+  <table>
+    <caption>
+      二方式の選択条件
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">方式</th>
+        <th scope="col">利点・適用条件</th>
+        <th scope="col">制約・完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Markdownのみ</td>
+        <td>DB/daemonが使えなくても選択したメモを保管。知識化を不要とするユーザー選択がある場合</td>
+        <td>
+          CLIが専用領域のファイルとGitだけを扱う。<code>fileState: saved</code>、<code>indexState: not_requested</code>、<code>extractionState: not_requested</code>。SAAAのKnowledge検索反映を約束しない
+        </td>
+      </tr>
+      <tr>
+        <td>daemonにDB/抽出を依頼（推奨）</td>
+        <td>
+          保存した情報をcontextStillの索引と抽出へ渡す。既存管理API・writer transport・Finding
+          queueを利用
+        </td>
+        <td>
+          APIとwriterが利用可能なことが必要。保存/Git、索引、抽出受付を成功条件とし、抽出完了は非同期。停止中は依存先不調を返す
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    初期版は推奨方式を正本とし、Markdownのみのモードを同時実装することまでは決定しない。daemon停止時に自動でMarkdownのみへ切替えると呼出元が知識化済みと誤解するため、fallbackしない。将来採る場合は明示
+    <code>--files-only</code>
+    の別契約とする。移動・削除はMarkdown方式で取り得る代案として記録するに留め、初期四操作へ追加しない。
+  </p>
+  <h3 id="ソース登録と知識抽出の完了を分ける">ソース登録と知識抽出の完了を分ける</h3>
+  <p>
+    推奨仕様ではcreate/updateに <code>--extract</code> または
+    <code>--no-extract</code> の一方を必須とする。<code
+      >--no-extract</code
+    >
+    でもソース/索引はwriter経由で更新するため、Markdownのみの方式とは異なる。無指定で全会話/全Wikiを抽出しない。ユーザーが選んだページの保存版だけを対象にする。SAAAからの利用例は
+    <code>--extract</code> を選ぶ。
+  </p>
+  <p>
+    共通サービスでファイル/Git保存、source/断片登録のあと、既存queueのDB所有境界を再利用してページ単位の抽出依頼をwriter経由で永続化する。既存
+    <code>enqueueFindingJob</code>
+    を無条件には呼ばない（下記の制約）。root全体import、直接Knowledge作成、候補の自動active化はしない。既存URIとwiki
+    target
+    keyの整合、内容version単位の重複抑止、更新時の再投入可否は追加設計が必要。既存jobがあるというだけで新しい版をskipしない。schema追加が必要かはqueueの既存payload/metadata・重複規約を確認して判断する。
+  </p>
+  <p>
+    <strong>抽出経路は実装前の必須確認事項。</strong>
+    <a href="../../crates/context-stilld/src/domains/queue_lifecycle/finding_executor.rs"
+      >finding_executor.rs</a
+    >
+    の <code>execute_finding</code> は
+    <code>source_target/vibe_memory</code> 以外を
+    <code>UnsupportedInput</code> とする。<a
+      href="../../crates/context-stilld/src/domains/queue_lifecycle/finding_executor_tests.rs"
+      >finding_executor_tests.rs</a
+    >
+    では
+    <code>wiki_file</code>
+    がpausedになることを検証している。このRust経路だけではWiki抽出は進まない。別worker/legacy経路がWikiを処理できるか、実運用のroutingとローカルprovider構成を確認する。対応経路がなければ、Wiki抽出worker対応を別の明示的な実装項目として見積もり、初期版で実施するか判断する。未対応のまま抽出受付成功を返さず、<code
+      >--extract</code
+    >
+    は保存前に <code>EXTRACTION_UNSUPPORTED</code> として拒否する。<code
+      >--no-extract</code
+    >
+    は索引更新までの機能として独立して受け入れ可能。
+  </p>
+  <p>
+    <code>worker.ts</code> の
+    <code>enqueueFindingJob</code>（2265行付近）は、同じinput kind/source kind/source
+    key/distillation
+    versionのjobがあるとpendingへ戻し、locked_by/locked_at/heartbeatを消す。実行中jobの再投入には使わない。<code
+      >findFindingJob</code
+    >
+    →
+    <code>enqueueFindingJob</code>
+    の二段階呼出しだけでは、他のproducerとの競合も防げない。writerの短いtransaction内で状態を確認し、実行中なら変更せずbusyとして扱う。完了済み同一版は結果を再利用、更新版は別の版別依頼として扱う。distillation
+    versionはpipeline版であり、本文hashの代用にしない。既存制約で版別jobを持てない場合は、既存schema/契約を確認した上で最小のversion/operation対応を追加する。実行中jobへの変更はclaimを維持するだけでなく、後段結果の永続化をlease/versionで照合して古い結果を採用しない。これは要調査の変更であり「DB
+    schema変更不要」とは確定しない。
+  </p>
+  <p>
+    抽出workerが現在ファイルを読む場合、job受付後の編集で別の版を抽出する危険がある。<a
+      href="../../crates/context-stilld/src/domains/queue_lifecycle/covering_executor/source.rs"
+      >covering_executor/source.rs</a
+    >
+    は <code>source_read_root/pages</code> 以下のsource
+    keyからファイルを読む。importerのtarget keyは
+    <a href="../../src/modules/sources/markdown-importer.service.ts"
+      >markdown-importer.service.ts</a
+    >
+    の <code>readFile.root</code> 基準なので、両者の基準を同一視しない。<strong
+      >保存版を抽出する保証は、後段の証拠読取りまで含めて必要。</strong
+    >
+    採用するworkerがimmutableな保存版を読めるならcommit/versionを伝播させる。対応しない場合は、各読取り/結果永続化でexpected
+    versionを確認し、不一致をsupersededとして止める最小対応を計画する。最新ファイルを無条件に読むまま、古いversionの抽出成功を記録しない。この対応を確認できない間は
+    <code>--extract</code> の受入を保留する。
+  </p>
+  <p>
+    応答は
+    <code>fileState</code
+    >（saved）、<code>indexState</code>（ready/pending/failed）、<code>extractionState</code>（not_requested/queued/failed）、<code>jobId</code>、<code>knowledgeState</code>（unknown/not_requested）を分ける。<code
+      >queued</code
+    >
+    はjobがwriter経由で永続化された状態であり、KnowledgeやSAAA検索が完了した状態ではない。受付は202相当でもCLIの終了コード0としてよいが、短い人向け出力も「保存・索引反映・抽出受付」と明示する。初期四操作はjobの後日の状態を追跡するコマンドを持たないため、knowledgeStateは受付応答時点のunknownに留める。jobIdで既存管理UI/queue確認へ引き継ぐ。処理待ち・失敗・棄却・未active化を知識化完了と誤表示しない。
+  </p>
+  <p>
+    file/Git成功後にwriter/queue依頼が失敗した場合は部分完了（exit 7）。同じoperation
+    IDで索引/抽出投入の未完phaseだけを復旧する。別operationでの自動重複投入はしない。抽出受付前にwriter不調を検知した場合は原則として保存前に終了するが、途中停止はあり得るためphase記録は必要。Operation記録にjob
+    ID/対象versionを追加し、応答消失後の再試行で二重抽出を防ぐ。
+  </p>
+  <p>
+    評価として、DB索引更新と抽出依頼を行う方がユーザーの目的に合う。追加の抽出にはLLM/embedding処理・queue待ち・既存レビューのコストがあり（実測費用/所要時間は未確認）、保存ごとの自動知識化は採用せず、選択したページに限って依頼する。非公開性はloopbackだけでなく、抽出側のLLM・外部検索providerについてもローカル/無効であることを確認する。既存pipelineが外部調査を必須とする場合は、ローカルのみの対応方法を決めるまで
+    <code>--extract</code> の非公開受入は未成立とする。
+  </p>
+  <h2 id="httpを第一候補にする理由">HTTPを第一候補にする理由</h2>
+  <p>
+    HTTPならCLIがDB、SQLite writer、Git設定、embedding
+    providerを個別に初期化せず、UIと同じ所有者・同じ保存経路を使える。Mac上の別作業ディレクトリからも呼べる。代わりに、APIが利用可能で、管理キーを安全に渡せることが前提となる。CLIはAPIを自動起動しない。
+  </p>
+  <p>
+    内部サービスをCLIから直接呼ぶ方式はAPIへの到達を不要にするが、現状の保存手順はrouteにあり、ファイル操作だけを呼ぶとGit・DB登録が抜ける。DB設定/環境読込み、writer接続、embedding、複数プロセス競合もCLI側へ持ち込む。既存直接サービスCLIであっても本番DBへのmutationはremote
+    writerへ委譲されるため、直接サービス呼出しは「SQLite直接書込み」と同義ではない。ただし今回のCLIにこの依存を持ち込む利点は小さい。初期版では採用せず、HTTP失敗時にも自動切替しない。
+  </p>
+  <p>
+    サーバー側に小さい
+    <code>wiki-page.service.ts</code>
+    を作り、既存routeの処理を移す。HTTPと将来のMCPは同じサービスへ入力を渡せる構造にする。汎用プラグイン基盤や複数transport抽象は作らない。新しいCLI向け入口案は
+    <code>/api/sources/wiki-cli/pages</code>（一覧/作成）と
+    <code>/api/sources/wiki-cli/pages/*</code
+    >（読取り/更新）。既存管理認証をそのまま適用し、専用領域・必須版照合・operation
+    IDの契約をこの入口で強制する。URLと命名は実装時に既存routeとの順序衝突を確認する。
+  </p>
+  <h2 id="コマンドと入出力">コマンドと入出力</h2>
+  <p>
+    正式な入口は <code>context-still wiki &lt;command&gt;</code>。開発時は
+    <code>bun run context-still -- wiki ...</code>
+    とし、既存landscapeとaliasを壊さない。実装時にBunの引数渡しを確認する。任意の作業ディレクトリから呼べるよう、CLIのcwdでサーバーの保存先やDBを決めない。
+  </p>
+  <p>
+    以下の
+    <code>saaa-notes</code> は未決の専用領域名の例であり、現在の設定ではない。
+  </p>
+  <pre><code class="language-bash"># 呼出元が保存したUUIDとgetで取得した版を使用する
+REQUEST_ID=&quot;保存済みのUUID&quot;
+VERSION=&quot;sha256:getで取得したhash&quot;
+context-still wiki list --json
+context-still wiki get saaa-notes/example --json
+context-still wiki get saaa-notes/example --format markdown
+context-still wiki create saaa-notes/example --title &quot;題名&quot; --file ./note.md --extract --request-id &quot;$REQUEST_ID&quot; --json
+context-still wiki create saaa-notes/example --title &quot;題名&quot; --stdin --extract --request-id &quot;$REQUEST_ID&quot; --json
+context-still wiki update saaa-notes/example --file ./note.md --if-version &quot;$VERSION&quot; --extract --request-id &quot;$REQUEST_ID&quot; --json
+</code></pre>
+  <ul>
+    <li>
+      <code>list</code>:
+      専用領域内のslug、title、versionを返す。既存treeの全件取得後にCLIだけで隠す方式にしない。初期版はページング・全文検索を追加せず、件数/応答サイズ上限超過を明示エラーとする。
+    </li>
+    <li>
+      <code>get</code>: JSONにはbody、meta、versionを含める。<code
+        >--format markdown</code
+      >
+      は本文のみを出力し、create/updateの本文入力として往復できる。title/metaはJSONで取得する。frontmatterを含むファイル入力は曖昧な二重frontmatterを避けるため初期版では拒否する。<code
+        >--format</code
+      >
+      と <code>--json</code> の同時指定も拒否する。
+    </li>
+    <li>
+      <code>create</code>:
+      title必須。既存ページを更新するupsertは行わない。
+    </li>
+    <li>
+      <code>update</code>:
+      本文置換、titleは任意で未指定なら維持。既存metaは維持し、初期版では任意meta変更、slug変更、renameを提供しない。<code
+        >--if-version</code
+      >
+      必須、強制上書きフラグなし。
+    </li>
+    <li>
+      <code>--stdin</code> と
+      <code>--file</code>
+      は必ず一方のみ。暗黙のstdin待ちはせず、UTF-8とサイズを検証。本文をコマンドライン引数へ埋め込む
+      <code>--body</code> は提供しない。
+    </li>
+    <li>
+      書込みの <code>--extract</code> /
+      <code>--no-extract</code> は一方を必須とする推奨仕様。request
+      IDは呼出元が生成・保持して渡す。曖昧な失敗後は同じIDと同じ入力で再試行できる。SAAA/タスク向け使用例にUUID生成と保持方法を示す。
+    </li>
+    <li>
+      通常出力は短い人向け表示。<code>--json</code>
+      はstdoutに単一JSON、診断はstderr。body、認証情報、HTTPヘッダーを診断ログへ出さない。
+    </li>
+  </ul>
+  <p>JSON契約案:</p>
+  <pre><code class="language-json">{&quot;ok&quot;:true,&quot;command&quot;:&quot;update&quot;,&quot;page&quot;:{&quot;slug&quot;:&quot;saaa-notes/example&quot;,&quot;version&quot;:&quot;sha256:...&quot;},&quot;commit&quot;:&quot;...&quot;,&quot;sourceId&quot;:&quot;...&quot;,&quot;operationId&quot;:&quot;...&quot;,&quot;fileState&quot;:&quot;saved&quot;,&quot;indexState&quot;:&quot;ready&quot;,&quot;extractionState&quot;:&quot;queued&quot;,&quot;jobId&quot;:&quot;...&quot;,&quot;knowledgeState&quot;:&quot;unknown&quot;}
+</code></pre>
+  <pre><code class="language-json">{&quot;ok&quot;:false,&quot;error&quot;:{&quot;code&quot;:&quot;VERSION_CONFLICT&quot;,&quot;message&quot;:&quot;ページが更新されています&quot;,&quot;retryable&quot;:false},&quot;slug&quot;:&quot;saaa-notes/example&quot;,&quot;currentVersion&quot;:&quot;sha256:...&quot;,&quot;operationId&quot;:&quot;...&quot;}
+</code></pre>
+  <p>
+    一覧/読取りは <code>items</code> または
+    <code>page</code> を持つ。<code
+      >indexState</code
+    >
+    はソース/断片更新の結果であり、Knowledge蒸留の完了を意味しない。エラーに本文やキー、絶対内部パスを入れない。
+  </p>
+  <table>
+    <caption>
+      コマンドと入出力
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">終了コード</th>
+        <th scope="col">意味</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>0</td>
+        <td>
+          読取り成功、またはファイル・Git・ソース/断片の整合と要求した抽出の受付まで完了（知識化完了ではない）
+        </td>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td>想定外の内部エラー</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>引数・入力・領域・サイズ検証エラー、API precondition欠落428、未対応抽出422</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>接続設定/認証エラー、401/403</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>対象なし、404</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>既存ページ、版競合、request ID不一致、409/412</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>
+          接続失敗、timeout、依存先不調、変更前のlock/job busy。書込み結果が不明な場合もここで
+          <code>WRITE_OUTCOME_UNKNOWN</code> を返す
+        </td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>保存・索引・抽出受付の一部だけが完了し、同じoperationの復旧が必要</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="接続非公開領域制限">接続・非公開・領域制限</h2>
+  <p>
+    API URLはCLI専用環境変数 <code>CONTEXT_STILL_WIKI_API_URL</code>、未指定時
+    <code>http://127.0.0.1:39170</code>
+    とする案。開発用39171は明示指定し、URLの自動走査やMCP
+    URLからの推測はしない。許可ホストは数値loopback <code>127.0.0.1</code> /
+    <code>[::1]</code>
+    に限定。userinfo、query、fragment、APIパスを含むbase
+    URL、redirect、外部ホストを拒否する。schemeはhttpのみ、portは1〜65535の明示値とする。接続/read/writeのtimeoutを設定し、外部接続を行わない。初期値案はHTTP
+    60秒、ロック待ち5秒。応答サイズ上限は32MiB、本文入力は8MiB以下、JSON
+    request全体は既存API上限16MiB以下、Markdownシリアライズ後も16MiB以下。一覧は最大1000件で、超過は切り捨てずエラー。HTTP
+    timeoutはembedding処理時間と照らして実装時に確認する。
+  </p>
+  <p>
+    管理キーは既存
+    <code>CONTEXT_STILL_ADMIN_API_KEY</code>
+    を呼出元が秘密を扱う仕組みから環境へ渡す。引数指定、設定自動生成、<code>.env</code>の自動探索/表示は行わない。推奨仕様では専用CLIのキーを明示必須とし、built-inキーへの暗黙fallbackをしない。API側の既存キーは変更しない。API独自キーの場合、同じ名前の環境変数がCLI側にあるだけでは有効性を保証しない。401/403で終了し、別キーへ自動fallbackしない。
+  </p>
+  <p>
+    専用領域はサーバー設定
+    <code>CONTEXT_STILL_WIKI_CLI_NAMESPACE</code>
+    案で固定し、未設定ならCLI向け入口を無効化する。利用者の
+    <code>--root</code> /
+    <code>--namespace</code> で境界を変更させない。例:
+    <code>wiki/pages/saaa-notes/</code
+    >。一覧・読取り・作成・更新のすべてでサーバーがslugのsegment境界を検証する。<code
+      >saaa-notes-other</code
+    >
+    を許可しない。既存管理UIの権限は変えず、CLI専用入口を介した操作を限定する。
+  </p>
+  <p>
+    これは管理キー自体の権限縮小ではない。キー保有者は既存の管理APIへ直接アクセスできるため、悪意あるクライアントに対する強制隔離はできない。初期版は同一Mac・信頼する呼出元向け。権限を厳密に分ける必要があれば新規認証基盤の別計画が必要となる。
+  </p>
+  <p>
+    slugはクライアント・サーバー両方で検証する。絶対パス、空/root
+    slug、<code>.</code>/<code>..</code>、backslash、NUL/制御文字、encoded
+    slash/backslash、二重エンコードで意味の変わる値を拒否する。HTTP
+    pathはsegmentごとにencodeし、decodeは一度だけ。現状の
+    <code>sanitizeSlug</code>
+    は絶対形を相対形へ変換するため、それだけに依存しない。実パスはcanonicalなpages/専用領域内に収まり、既存祖先とtargetにsymlinkがないことを検証する。外部プロセスによるsymlink差替えを完全に防ぐOS
+    sandboxは追加しないため、所有者以外が保存先を変更できない運用を前提にする。
+  </p>
+  <p>
+    本文は自動的に全会話から採取せず、明示されたstdin/fileだけを送る。既存upsertはembeddingを呼び得るので、APIがloopbackでも情報が外部providerへ送られない保証にはならない。実装開始前に既存embedding設定がローカルまたは無効であることを秘密値を表示せず確認する。確認不能なら非公開受入条件を満たしたと扱わない。
+  </p>
+  <h2 id="版照合git失敗と再試行">版照合・Git・失敗と再試行</h2>
+  <p>
+    <code>version</code>
+    は保存されたMarkdown全体（frontmatter含む）のSHA-256とする。Git
+    HEADだけでは別ページの更新でも競合するため使わない。getの本文/meta/versionは一回の読取りから生成する。updateは共通書込みロック内で現在版と照合し、差異は412、precondition欠落は428。createの存在確認も同じロック内で行う。クライアントのget直後に通常PUTを呼ぶだけでは競合を防げない。
+  </p>
+  <p>
+    Wiki Gitリポジトリ全体を対象にしたプロセス間ロックを用いる。ページ単位ロックだけではGit
+    indexを共有する競合が残る。既存UIのcreate/updateを同じサービスへ移し、既存delete/rename等のGit変更にも同じロックを適用する（新しい削除コマンドは追加しない）。複数API/既存importerなどロックに未参加のwriterは同時利用しない。Git
+    HEAD/indexと対象ファイルの外部変更を検出した場合は停止する。手動編集と完全な原子的競合防止ができるとは約束しない。
+  </p>
+  <p>
+    処理順は「入力検証・writer/抽出capability確認 → operation登録/ロック → 版照合・Git事前確認 →
+    一時ファイルと同一ディレクトリで原子的rename → 対象ページだけGitコミット →
+    writer経由のソース/断片更新 → 要求があればwriter経由で抽出jobを受付 →
+    完了記録・結果返却」。関係ないstage済み変更がある場合は初期版では書込みを拒否し、他人のindexをreset/stashしない。現状の通常git
+    commitをそのまま再利用せず、ロック下で対象path限定の履歴を作る。対象ページが手動変更中の場合も拒否し、呼出元へ確認を促す。CLIはGit未初期化/identity未設定も変更前に拒否し、git
+    initやidentity設定を自動実行しない。未完operationがあるページへの新規IDの更新はサーバーで拒否する。読取りは未初期化のrootを作らず、明示エラーとする。
+  </p>
+  <p>
+    ファイル/Git/DBを一つのtransactionにできない。最小のoperation記録をowner-onlyの既存runtime領域へ置き、request
+    ID、入力hash、slug、旧/新version、完了phase、commit、sourceIdを原子的に保存する。本文・キーはoperationファイルに保存しない。operation記録単独ではschema追加不要だが、jobの重複抑止/版対応で必要となる可能性は残る。同じIDの別入力は409。request
+    hashにはcommand、slug、本文、title指定有無、if-version、抽出指定を含める。再試行ではoperation照合を現在版のpreconditionより先に行う。同じID・同じ入力の完了済みoperationは当時の結果を返し、二重commitを作らない（後続編集があれば現在ページの版とは異なり得る）。進行中/部分完了では新しいIDで同じページを書かず、同じIDで復旧する。
+  </p>
+  <ul>
+    <li>保存前失敗: 変更なし。ロック取得失敗は待ち時間を制限し、busyを返す。</li>
+    <li>
+      ファイル保存後/Git失敗: exit 7。手動変更がなければ同じIDでGit以降を続行。自動git
+      reset/rollbackはしない。
+    </li>
+    <li>
+      Git後/DB失敗: exit 7、phaseを示す。同じIDでソース/断片だけを再構築し、新しいcommitを作らない。
+    </li>
+    <li>
+      応答消失: exit
+      6、結果不明を示す。書込みの自動再送はしない。同じIDと入力による明示再試行だけを許可する。
+    </li>
+    <li>
+      記録更新前のプロセス終了:
+      現在のファイルhashとGitの対象path/operation識別情報で完了phaseを照合する。確証がなければ
+      <code>RECOVERY_REQUIRED</code> として停止。曖昧な結果を成功扱いしない。
+    </li>
+    <li>
+      抽出登録後/operation記録前の終了: request ID/対象versionをjobと同じwriter
+      transactionで記録し、既存jobを照合して復旧する。runtimeファイルだけの記録では二重投入を防げない。実行中jobのclaim状態を消して復旧しない。
+    </li>
+    <li>
+      ロック/operationの残骸:
+      所有プロセスの状態を確認し、勝手に破棄しない。初期版の復旧手順を文書化する。初期版ではoperation記録を自動削除せず、10000件に達したら新規書込みだけを拒否し、既存IDの再試行/読取りを許す。保持期間による自動清掃は別途設計する。古いIDを新規依頼と誤認しない。
+    </li>
+  </ul>
+  <p>
+    既存upsertをそのまま呼ぶだけでは断片のdelete/insert途中失敗が残る。embedding生成は可能ならtransaction前に行い、source本体と全断片の置換を既存writer境界に従ってまとめる。SQLiteは既存remote
+    adapterの同期transactionを使用し、writerの30秒所有期限内で完了させる。PostgreSQLは従来のDB所有境界で確認し、未対応backendはCLI書込みを明示拒否する。embedding失敗の既存fallbackは維持できるが、検索用テキスト断片の登録失敗は成功扱いしない。版は実際に保存されたMarkdown
+    bytesを対象とする。現状はWikiのサニタイズと索引の秘密除去が別処理なので、秘密除去済みの同一本文が両方に入る保証はまだない。CLI向けサービスで保存前の共通正規化を行い、その最終本文からファイルと索引を作る案を採る。既存UIの正規化仕様を無断で変えず、差分をテストする。
+  </p>
+  <h2 id="変更予定ファイル">変更予定ファイル</h2>
+  <p>すべて実装段階の予定。この計画の保存時点では変更しない。</p>
+  <table>
+    <caption>
+      変更予定ファイル
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ファイル</th>
+        <th scope="col">変更内容</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src/cli/context-still.ts</code></td>
+        <td>wikiへの分岐、help。既存alias維持</td>
+      </tr>
+      <tr>
+        <td>
+          <code>src/cli/wiki.ts</code
+          >、<code>wiki-options.ts</code>、<code
+            >wiki-client.ts</code
+          >
+        </td>
+        <td>引数/stdin/file、JSON/終了コード、loopback HTTP呼出し</td>
+      </tr>
+      <tr>
+        <td><code>src/modules/sources/wiki/wiki-page.service.ts</code></td>
+        <td>一覧/読取り/保存と整合処理。既存routeから抽出し、writer経由で索引/抽出を依頼</td>
+      </tr>
+      <tr>
+        <td>
+          <code>src/modules/sources/markdown-importer.service.ts</code
+          >、<code>src/modules/queue/core/worker.ts</code>、関連queue schema/worker（必要時）
+        </td>
+        <td>
+          ページ単位のFinding投入を再利用できる小さい関数に分離。source
+          URI/対象versionの統一、重複抑止。実行中claim維持・request
+          ID永続化。tree全体importは呼ばない
+        </td>
+      </tr>
+      <tr>
+        <td>Wiki抽出を担当するworkerと証拠読取り処理（対応経路判定後に特定）</td>
+        <td>Wiki capabilityと版照合。不足なら別途実装項目にし、未対応のまま成功扱いしない</td>
+      </tr>
+      <tr>
+        <td><code>src/modules/sources/wiki/wiki-write-state.ts</code></td>
+        <td>小さいプロセス間ロック・operation記録・復旧。必要なら一ファイルに統合</td>
+      </tr>
+      <tr>
+        <td><code>api/modules/sources/sources.routes.ts</code></td>
+        <td>CLI向け入口、領域・版照合契約、既存writerの共通サービス/ロック適用</td>
+      </tr>
+      <tr>
+        <td>
+          <code>src/modules/sources/wiki/content-repo.ts</code>、<code>slug.ts</code>
+        </td>
+        <td>final size、原子的保存、限定コミット、strict validation</td>
+      </tr>
+      <tr>
+        <td>
+          <code>src/modules/sources/source.repository.ts</code>、<code>source.repository.sqlite.ts</code>
+        </td>
+        <td>source/断片更新の整合性。既存SQLite writer所有権を維持</td>
+      </tr>
+      <tr>
+        <td>
+          <code>src/config.ts</code>、必要に応じ
+          <code>src/config.types.ts</code>
+        </td>
+        <td>サーバー固定namespace設定。秘密を含むログを増やさない</td>
+      </tr>
+      <tr>
+        <td>
+          <code>test/wiki-cli.test.ts</code
+          >、<code>test/wiki-page.service.test.ts</code>、<code
+            >test/content-repo.test.ts</code
+          >
+        </td>
+        <td>CLI契約、実Gitでの競合/失敗、境界検証</td>
+      </tr>
+      <tr>
+        <td>
+          既存source
+          backend/routeテスト、<code>spec/docs/pub/cli.md</code>、<code>api.md</code>、<code
+            >configuration.md</code
+          >
+        </td>
+        <td>backend/HTTP回帰、利用方法。ドキュメント公開・配信は行わない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    package.jsonの新規依存追加は予定しない。既存bin/スクリプトから実行できるため、wiki専用package
+    scriptは必要になった場合だけ追加する。他担当が変更中のpackage.jsonやAPI関連ファイルは、実装時に最新差分を再確認して担当範囲を調整する。
+  </p>
+  <h2 id="実装順序最小テスト受入条件">実装順序・最小テスト・受入条件</h2>
+  <ol>
+    <li>
+      到達可能なAPIの正本URL、backend、専用領域、管理キー運用、embeddingのローカル性を確認する。自動起動/設定書換えで到達問題を隠さない。
+    </li>
+    <li>
+      既存保存手順を小さいサービスへ抽出し、既存UIの挙動を維持。source/断片の整合、Git対象限定、共通ロックを先に成立させる。
+    </li>
+    <li>
+      Wiki対応workerのcapabilityと版固定/照合を確認し、不足対応を見積もる。namespace、version、operation
+      ID/復旧契約、抽出の明示選択・job受付状態をAPIへ追加。旧routeとの併用による競合をテストする。URI/版の対応と再抽出の重複規約を確認する。
+    </li>
+    <li>CLIの一覧/読取りを実装し、続いてcreate/updateを追加。既存CLI入口へ接続。</li>
+    <li>
+      隔離した一時Wiki/Gitとtest DB/writer、fake
+      HTTPで必要なテストだけ実行し、使い方と復旧手順を記載する。実Wiki/本番DBで試さない。
+    </li>
+  </ol>
+  <p>最低限の検証は次の通り。</p>
+  <ul>
+    <li>
+      CLI: help、四操作のmethod/path/body、stdin/file排他、UTF-8/上限、JSON
+      stdout、上表の終了コード、秘密を出さないこと。redirect/外部URLを拒否し、接続失敗でサービスや直接DBへfallbackしないこと。
+    </li>
+    <li>
+      境界: namespace外、似たprefix、絶対パス、dot segment、encoded/double encoded
+      traversal、backslash、symlinkを拒否。一覧も領域外を返さないこと。
+    </li>
+    <li>
+      競合:
+      同じversionで並列updateし一方だけ成功。create並列でも一件だけ作成。UI経由の先行変更はCLIの版照合が検知。同時操作は共通ロックで直列化（旧UI自体の必須版照合を保証するものではない）。他人のstage済みファイルをコミットしないこと。
+    </li>
+    <li>
+      隔離した実Git/DB:
+      create/get/update/listが一致し、対象履歴とソース/断片が反映。Git失敗、DB失敗、応答消失、phase記録直前の終了を注入し、同じIDの再試行で二重commit/二重sourceを作らないこと。
+    </li>
+    <li>
+      writer/抽出:
+      testフラグのない別プロセスと隔離writer/DBで、API/CLIが書込みSQLite接続を開かず、mutationが既存writerに委譲されること。writer不在でも直接書込みにfallbackしないこと。選択ページ/版だけFindingへ投入し、同じoperationの再試行は二重投入せず、更新版は再抽出を依頼できること。抽出受付後のLLM失敗や処理待ちをKnowledge検索完了と誤表示しないこと。
+    </li>
+    <li>
+      backend:
+      使用するbackendで断片置換途中失敗による不整合が残らないこと。未対応backendは変更前に拒否。既存source/routeの関連回帰テストとtypecheckのみを基本とし、広い全体suiteは回帰が疑われる場合だけ実行。
+    </li>
+  </ul>
+  <p>
+    <code>--extract</code>
+    の受入には、隔離環境でWikiのFinding/証拠処理が実行され、保存版に対応する候補へ到達する一件のend-to-end検証を含める。実データを外部へ送らず、最終Knowledgeのactive化や実SAAAへの接続は別の評価とする。未対応workerにjobを置いただけでは受入を通さない。
+  </p>
+  <p>
+    受入条件は「同じMacの任意の作業ディレクトリから、明示した本文だけを専用領域へ保存できる」「古い版と領域外の書込みは拒否される」「成功時はMarkdown/Git/ソースと断片が整合し、要求した抽出が対応workerへwriter経由で受付済み」「途中失敗を成功とせず再試行手順がある」「外部通信/公開を伴わない」の五点。SAAAからのKnowledge検索完了は別の蒸留経路のため受入に混ぜない。SAAAのCLI呼出し統合は初期版CLI完成後の別作業であり、本計画では接続例と入出力契約までとする。
+  </p>
+  <h2 id="初期版の実装判断">初期版の実装判断</h2>
+  <p>
+    ユーザーの実装依頼を受け、推奨HTTP方式、明示管理キー、抽出選択必須、サーバー固定namespaceを採用する。namespaceは環境設定で指定するまで無効とする。Rust常駐Finding
+    workerはWiki入力を未対応としているため、初期版の --extract は保存前に422 EXTRACTION_UNSUPPORTED
+    で拒否する。版固定のWiki抽出workerを追加するまではqueuedを返さない。
+  </p>
+  <p>
+    CLI書込みのbackendはSQLiteに限定する。テキスト索引は既存writerの同期transactionで原子的に更新する。非公開性を実証できないembedding
+    daemonの下流providerへ本文を送らないため、初期版のCLI書込みは
+    CONTEXT_STILL_EMBEDDING_PROVIDER=disabled
+    を要求する。既存UIのembedding仕様は維持する。ローカルprovider対応の拡張は別途必要である。
+  </p>
+  <h2 id="未決事項と初期範囲外">未決事項と初期範囲外</h2>
+  <p>
+    ユーザー判断が必要なのは、推奨する索引/抽出依頼方式で進めるか（Markdownのみは明示的な別案）、抽出の
+    <code>--extract</code> /
+    <code>--no-extract</code> 選択契約、専用領域名（例
+    <code>saaa-notes</code
+    >）、その領域を既存のglobal知識として扱ってよいか、管理キーを持つ信頼する呼出元向けという権限範囲でよいか、明示キー必須という推奨仕様を採用するか。領域名/キー配布を決めるまでは新規入口を無効に保つ。
+  </p>
+  <p>
+    実装前に調べる点は、API到達方法、Wiki抽出worker/routingの対応状況、readFile.rootとsourceContent.root/pagesの基準、既存writer経路の実稼働と正本DBの一致、短い同期transactionへのまとめ方、LLM/embedding/外部検索の接続先がローカルまたは無効か、ページAPI/importerのURI・版別抽出規約、runtime領域の正本とoperation記録保持期間、既存importer等の同時writerがあるか。これらは今回の計画書保存のために起動・秘密読取り・設定変更で解決しない。
+  </p>
+  <p>
+    削除、公開、rename、新規認証基盤、MCPツール追加、任意root指定、無指定の自動蒸留/会話全量保存、サービス自動起動、SAAA本体の改修は初期範囲外。保存する処理の分離は将来MCPで再利用できる程度に留める。
+  </p>
+</article>

@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -37,6 +38,7 @@ export type PageDocument = {
   body: string;
   path: string;
   meta: Record<string, unknown>;
+  version: string;
 };
 
 const pagesDirectory = (contentRoot: string) => path.resolve(contentRoot, "pages");
@@ -61,9 +63,10 @@ const assertInsidePages = (contentRoot: string, relativePath: string): string =>
   return absolute;
 };
 
-const assertNoSymlinkComponents = async (
+export const assertNoSymlinkComponents = async (
   contentRoot: string,
   absolutePath: string,
+  exactNames = false,
 ): Promise<void> => {
   const pagesRoot = pagesDirectory(contentRoot);
   const relative = path.relative(pagesRoot, absolutePath);
@@ -78,6 +81,11 @@ const assertNoSymlinkComponents = async (
       const stat = await fs.lstat(current);
       if (stat.isSymbolicLink()) {
         throw new Error("Symbolic links are not allowed in the pages directory");
+      }
+      if (component && exactNames) {
+        const names = await fs.readdir(path.dirname(current));
+        if (!names.some((name) => name.normalize("NFC") === component.normalize("NFC")))
+          throw new Error("Page path has an alternate spelling");
       }
     } catch (error) {
       if (isNotFoundError(error)) return;
@@ -189,17 +197,23 @@ const findExistingPageRelativePath = async (
   return null;
 };
 
-export const readPage = async (contentRoot: string, slug: string): Promise<PageDocument | null> => {
+export const readPage = async (
+  contentRoot: string,
+  slug: string,
+  options: { exactNames?: boolean } = {},
+): Promise<PageDocument | null> => {
   const candidates = resolveCandidateRelativePaths(slug);
   for (const candidate of candidates) {
     const absolute = assertInsidePages(contentRoot, candidate);
     try {
-      await assertNoSymlinkComponents(contentRoot, absolute);
+      await assertNoSymlinkComponents(contentRoot, absolute, options.exactNames);
       const pageStat = await fs.stat(absolute);
       if (pageStat.size > MAX_WIKI_PAGE_BYTES) {
         throw new Error(`Wiki page exceeds ${MAX_WIKI_PAGE_BYTES} bytes`);
       }
-      const raw = await fs.readFile(absolute, "utf8");
+      const bytes = await fs.readFile(absolute);
+      const raw =
+        typeof bytes === "string" ? bytes : new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       const parsed = matter(raw);
       const relativePath = path.relative(pagesDirectory(contentRoot), absolute);
       const normalizedPath = normalizePosixPath(relativePath);
@@ -214,6 +228,7 @@ export const readPage = async (contentRoot: string, slug: string): Promise<PageD
         body: parsed.content,
         path: normalizedPath,
         meta: parsed.data as Record<string, unknown>,
+        version: "sha256:" + createHash("sha256").update(bytes).digest("hex"),
       };
     } catch (error) {
       if (!isNotFoundError(error)) {
@@ -224,16 +239,23 @@ export const readPage = async (contentRoot: string, slug: string): Promise<PageD
   return null;
 };
 
-const serializeMarkdown = (title: string, body: string, meta: Record<string, unknown>): string => {
+export const serializeMarkdown = (
+  title: string,
+  body: string,
+  meta: Record<string, unknown>,
+): string => {
   const mergedMeta: Record<string, unknown> = {
     ...meta,
     title: sanitizePlainText(title),
   };
   const sanitizedBody = sanitizeMarkdownBody(body);
-  return matter.stringify(
+  const output = matter.stringify(
     sanitizedBody.endsWith("\n") ? sanitizedBody : `${sanitizedBody}\n`,
     mergedMeta,
   );
+  if (Buffer.byteLength(output) > MAX_WIKI_PAGE_BYTES)
+    throw new Error("Wiki page exceeds size limit");
+  return output;
 };
 
 const resolveWritePath = (contentRoot: string, slug: string, relativePath?: string): string => {
@@ -258,14 +280,39 @@ export const writePage = async (
   title: string,
   body: string,
   meta: Record<string, unknown>,
-  options: { relativePath?: string } = {},
+  options: { relativePath?: string; atomic?: boolean } = {},
 ): Promise<{ path: string }> => {
   const targetPath = resolveWritePath(contentRoot, slug, options.relativePath);
   await assertNoSymlinkComponents(contentRoot, targetPath);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   await assertNoSymlinkComponents(contentRoot, targetPath);
   const output = serializeMarkdown(title, body, meta);
-  await fs.writeFile(targetPath, output, "utf8");
+  if (options.atomic) {
+    const temporary = targetPath + "." + randomUUID() + ".tmp";
+    let created = false;
+    try {
+      const handle = await fs.open(temporary, "wx", 0o600);
+      created = true;
+      try {
+        await handle.writeFile(output, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await assertNoSymlinkComponents(contentRoot, targetPath);
+      await fs.rename(temporary, targetPath);
+      const directory = await fs.open(path.dirname(targetPath), "r");
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    } finally {
+      if (created) await fs.rm(temporary, { force: true });
+    }
+  } else {
+    await fs.writeFile(targetPath, output, "utf8");
+  }
   return { path: targetPath };
 };
 
@@ -485,7 +532,7 @@ export const commitFileChange = async (
   const normalizedRelative = gitPathspecForAbsolutePath(contentRoot, absolutePath);
   await runGit(contentRoot, ["add", "--", normalizedRelative]);
   try {
-    await runGit(contentRoot, ["commit", "-m", message]);
+    await runGit(contentRoot, ["commit", "--only", "-m", message, "--", normalizedRelative]);
   } catch (error) {
     if (await hasStagedChanges(contentRoot, normalizedRelative)) {
       throw error;
@@ -503,7 +550,7 @@ export const commitDeleteChange = async (
   const normalizedRelative = gitPathspecForAbsolutePath(contentRoot, absolutePath);
   await runGit(contentRoot, ["add", "-A", "--", normalizedRelative]);
   try {
-    await runGit(contentRoot, ["commit", "-m", message]);
+    await runGit(contentRoot, ["commit", "--only", "-m", message, "--", normalizedRelative]);
   } catch (error) {
     if (await hasStagedChanges(contentRoot, normalizedRelative)) {
       throw error;
@@ -523,7 +570,7 @@ export const commitPathsChange = async (
   );
   await runGit(contentRoot, ["add", "-A", "--", ...normalizedRelatives]);
   try {
-    await runGit(contentRoot, ["commit", "-m", message]);
+    await runGit(contentRoot, ["commit", "--only", "-m", message, "--", ...normalizedRelatives]);
   } catch (error) {
     if (await hasAnyStagedChanges(contentRoot, normalizedRelatives)) {
       throw error;

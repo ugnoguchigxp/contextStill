@@ -178,6 +178,7 @@ export type RuntimeSettingsEffectiveTargets = {
       vibe: RuntimeEffectiveRouteTargets;
     };
     webSourceResearch: RuntimeEffectiveRouteTargets;
+    deepStillManual: RuntimeEffectiveRouteTargets;
     episodeDistiller: RuntimeEffectiveRouteTargets;
     coverEvidence: {
       sourceSupport: RuntimeEffectiveRouteTargets;
@@ -263,6 +264,7 @@ export type RuntimeSettingsEditable = {
       throttling: FindCandidateThrottlingSettings;
     };
     webSourceResearch: RuntimeSettingsRoute;
+    deepStillManual: RuntimeSettingsRoute;
     episodeDistiller: RuntimeSettingsRoute;
     coverEvidence: {
       sourceSupport: RuntimeSettingsRoute;
@@ -622,6 +624,7 @@ export const runtimeSettingsEditableSchema = z
         }),
       }),
       webSourceResearch: runtimeRouteSchema,
+      deepStillManual: runtimeRouteSchema,
       episodeDistiller: runtimeRouteSchema,
       coverEvidence: z.object({
         sourceSupport: runtimeRouteSchema,

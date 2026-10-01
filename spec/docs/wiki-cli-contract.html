@@ -1,0 +1,61 @@
+<article lang="ja">
+  <h1>Wiki CLIの保存・索引・再試行contract</h1>
+  <p>
+    2026-09-30実装。作業は既存の作業ディレクトリで行い、別のcheckoutは作成しない。初期版はcontext-still
+    wikiのlist/get/create/updateを提供する。利用手順は<a href="pub/cli.md">CLI</a>、HTTP仕様は<a
+      href="pub/api.md"
+      >API</a
+    >、検討経緯は<a href=".archived/wiki-cli-implementation-plan.html">実装済み計画</a>に保存する。
+  </p>
+  <h2>受け入れる範囲</h2>
+  <p>
+    固定namespace、明示管理キー、数値loopback HTTP、SQLite
+    backend、無効化されたembeddingを要求する。namespace未設定では無効。既存Rust
+    writerを使い、CLI/APIは書込みSQLite接続を所有しない。writerが不在またはreaderとwriterのDBパスが異なる場合は保存前に拒否する。書込みではextractの明示選択が必要だが、現在のRust
+    Finding workerはwiki_fileを未対応としているため、trueは422
+    EXTRACTION_UNSUPPORTEDで保存前に拒否する。
+  </p>
+  <p>
+    本文入力はUTF-8の明示stdin/fileのみ。8MiBの本文、16MiBのJSON
+    requestと保存Markdown、32MiBの応答、1000件の一覧を上限とする。slugはNFC、全体1024 UTF-8
+    bytes、segmentごと255 bytesまでとし、case
+    aliasを拒否する。frontmatter入力、任意meta/root、rename/deleteのCLI操作は提供しない。titleと既存metaは共通の秘密除去とサニタイズを経た保存版を索引へ渡す。
+  </p>
+  <h2>版と排他</h2>
+  <p>
+    versionは一度に読み取った保存Markdown
+    bytes全体のSHA-256。updateはifVersion必須で、createの存在確認とともにWiki全体のプロセス間lock内で照合する。lockとruntimeの対応記録はGitディレクトリのwiki-cliに置き、別のアプリデータ領域への切替えは拒否する。既存UIのページ・folder・reindex変更にも同じlockを適用する。管理UIは既存の版照合仕様を維持する。既存importerと手動Git操作などlockに参加しないwriterは同時利用しない。
+  </p>
+  <p>
+    slugは正規化せず検証し、専用領域のsegment境界、既存祖先とtargetのsymlink、正規のpages
+    rootを検証する。CLIはGit初期化とidentity設定を行わない。他人のstage済み変更と対象の手動変更を変更前に拒否し、対象pathだけをcommitする。Markdownは同じディレクトリの一時ファイルから原子的に置換する。
+  </p>
+  <h2>部分完了と記録</h2>
+  <p>
+    本文を含まないoperation記録を既存アプリデータ領域run/wikiのowner-onlyディレクトリに保存する。request
+    IDはUUID。入力hashはcommand/slug/body/title指定有無/ifVersion/extractを含む。prepared、saved、committed、completeを原子的に記録する。同じIDの異なる入力は409、完了済みの同じ入力は当時の応答を返す。未完operationのあるページへの新規IDと、未完operationがある間の管理UI変更は拒否する。
+  </p>
+  <p>
+    保存・commit後の索引失敗は207、CLI終了7を返す。同じID/入力で未完phaseを復旧し、二重commitを作らない。phase記録前の終了では保存hashとGit
+    operation
+    markerを照合し、不明な場合はRECOVERY_REQUIREDで停止する。操作記録の型・phase・結果の整合も検証し、破損記録を新規operationと誤認しない。stage済み版を記録し、復旧時に手動で変えられたindexを上書きしない。別ページの後続commitがある場合は対象pathの履歴から照合する。応答消失はWRITE_OUTCOME_UNKNOWN、終了6とし自動再送しない。lockの残骸は自動削除せず、所有processと保存/Git/記録の確認を管理者に委ねる。記録は自動清掃せず、10000件で新規書込みだけを拒否する。
+  </p>
+  <p>
+    SQLiteのembedding生成はtransaction外で完了させ、source本体と全断片および全文検索用FTS行の置換を既存remote
+    adapterの短い同期transactionにまとめる。embeddingなしの断片はJSONを使った256KiB単位のbatchで既存writerへ送る。本文の長い行も分割し、headingも断片の上限に合わせる。upsertはexcluded列を参照して本文の二重送信を防ぐ。fileState、indexState、extractionState、knowledgeStateを分ける。readyはテキスト索引までの完了であり、蒸留済みKnowledgeのactive化やSAAA検索完了を保証しない。
+  </p>
+  <h2>検証と制約</h2>
+  <p>
+    実Gitの一時Wikiで四操作、並列競合、stage済み変更の保護、領域とsymlink、Git/索引失敗の再試行、phase記録前の終了からの照合を検証する。fake
+    HTTPでは引数、UTF-8、上限、method/path/body、redirect設定、JSONと終了コードを確認する。隔離したRust
+    writerと本番モードAPI/CLIでは、断片insert失敗時のsource/断片ロールバック、同じIDでの復旧、writer停止時の保存前拒否を確認する。
+  </p>
+  <p>
+    実Wiki・本番DB・実SAAAは受入試験に使わず、実データの外部送信は行わない。Wiki抽出workerと保存版の証拠処理、下流providerまでのローカル性を確認したembeddingへの対応、PostgreSQL書込みは今後の拡張である。
+  </p>
+  <p>
+    コードレビューでは、runtime設定によるlockの分離、破損記録、別ページの後続commit、手動stageの変更、case
+    alias、API経路と同じ文字列を含むslug、失敗応答の成功扱いを再現テストで確認して修正した。秘密除去の長い単語での過剰探索と、upsertでの本文二重送信も修正した。隔離した実Rust
+    writer経由で8MiBの本文の保存・索引反映・断片照合を約3.6秒で完了し、上限近くの長い見出しも同じ経路で検証した。これは当該隔離環境での結果であり、一般的な性能保証ではない。
+  </p>
+</article>

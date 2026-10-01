@@ -312,6 +312,7 @@ function buildRuntimeEffectiveTargets(
         settings,
         settings.taskRouting.webSourceResearch,
       ),
+      deepStillManual: resolveEffectiveRouteTargets(settings, settings.taskRouting.deepStillManual),
       episodeDistiller: resolveEffectiveRouteTargets(
         settings,
         settings.taskRouting.episodeDistiller,
@@ -367,6 +368,7 @@ function routeDiagnosticEntries(settings: RuntimeSettingsEditable): RuntimeRoute
     { path: "taskRouting.findCandidate.source", route: settings.taskRouting.findCandidate.source },
     { path: "taskRouting.findCandidate.vibe", route: settings.taskRouting.findCandidate.vibe },
     { path: "taskRouting.webSourceResearch", route: settings.taskRouting.webSourceResearch },
+    { path: "taskRouting.deepStillManual", route: settings.taskRouting.deepStillManual },
     { path: "taskRouting.episodeDistiller", route: settings.taskRouting.episodeDistiller },
     {
       path: "taskRouting.coverEvidence.sourceSupport",

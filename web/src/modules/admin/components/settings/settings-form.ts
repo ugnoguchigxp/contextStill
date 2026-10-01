@@ -367,6 +367,7 @@ export function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettin
         },
       },
       webSourceResearch: cloneRuntimeSettingsRoute(view.taskRouting.webSourceResearch),
+      deepStillManual: cloneRuntimeSettingsRoute(view.taskRouting.deepStillManual),
       episodeDistiller: cloneRuntimeSettingsRoute(view.taskRouting.episodeDistiller),
       coverEvidence: {
         sourceSupport: cloneRuntimeSettingsRoute(view.taskRouting.coverEvidence.sourceSupport),

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  DEEPSTILL_MANUAL_LLM_PATH,
   SECURITY_CANDIDATE_PATH,
   SECURITY_FEEDBACK_PATH,
   apiAuthenticationDispatcher,
@@ -39,10 +40,29 @@ function authApp() {
   app.get("/api/health", (c) => c.text("ok"));
   app.post(SECURITY_CANDIDATE_PATH, (c) => c.text("candidate"));
   app.post(SECURITY_FEEDBACK_PATH, (c) => c.text("feedback"));
+  app.post(DEEPSTILL_MANUAL_LLM_PATH, (c) => c.text("manual"));
   return app;
 }
 
 describe("Security Intelligence auth dispatcher", () => {
+  test("requires the dedicated DeepStill token for manual LLM calls", async () => {
+    const prior = process.env.DEEPSTILL_CONTEXTSTILL_TOKEN;
+    process.env.DEEPSTILL_CONTEXTSTILL_TOKEN = "a".repeat(32);
+    try {
+      const app = authApp();
+      expect((await app.request(DEEPSTILL_MANUAL_LLM_PATH, { method: "POST" })).status).toBe(401);
+      expect(
+        (
+          await app.request(DEEPSTILL_MANUAL_LLM_PATH, {
+            method: "POST",
+            headers: { authorization: `Bearer ${"a".repeat(32)}` },
+          })
+        ).status,
+      ).toBe(200);
+    } finally {
+      restore("DEEPSTILL_CONTEXTSTILL_TOKEN", prior);
+    }
+  });
   test("keeps health public and fails closed when integration token is unset", async () => {
     Reflect.deleteProperty(process.env, "CONTEXT_STILL_SECURITY_INTELLIGENCE_CANDIDATE_TOKEN");
     const app = authApp();

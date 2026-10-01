@@ -8,7 +8,7 @@ use crate::domains::vector_index;
 // additive schema revision, so keeping this at v1 allows a v1 binary to open a database after a
 // rollback. Additive revisions are tracked independently in `schema_migrations`.
 pub const CURRENT_SCHEMA_VERSION: i64 = 1;
-pub const CURRENT_SCHEMA_REVISION: i64 = 8;
+pub const CURRENT_SCHEMA_REVISION: i64 = 9;
 
 const TYPESCRIPT_SCHEMA_SOURCE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -83,7 +83,9 @@ pub fn migrate(connection: &mut Connection, vector_dimension: usize) -> Result<i
             INSERT OR IGNORE INTO schema_migrations(version, name)
             VALUES (7, 'curation_v2_ledger_v1');
             INSERT OR IGNORE INTO schema_migrations(version, name)
-            VALUES ({CURRENT_SCHEMA_REVISION}, 'covering_v2_revision_ledger_v1');
+            VALUES (8, 'covering_v2_revision_ledger_v1');
+            INSERT OR IGNORE INTO schema_migrations(version, name)
+            VALUES ({CURRENT_SCHEMA_REVISION}, 'manual_research_runs_v1');
             PRAGMA user_version = {CURRENT_SCHEMA_VERSION};
             "#
         ))

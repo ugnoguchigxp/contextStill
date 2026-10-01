@@ -1,3 +1,7 @@
+import { wikiCliRouter } from "./wiki-cli.routes.js";
+import { withWikiWriteLock } from "../../../src/modules/sources/wiki/wiki-write-state.js";
+import { assertWikiOperationsComplete } from "../../../src/modules/sources/wiki/wiki-page.service.js";
+import { WikiError } from "../../../src/modules/sources/wiki/wiki-contract.js";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -144,6 +148,26 @@ const searchableMetaText = (meta: Record<string, unknown>): string => {
 };
 
 export const sourcesRouter = new Hono()
+  .route("/cli", wikiCliRouter)
+  .use("*", async (c, next) => {
+    if (
+      !["POST", "PUT", "DELETE"].includes(c.req.method) ||
+      !/\/(pages|folders|reindex)(\/|$)/.test(c.req.path)
+    )
+      return next();
+    // Existing UI mutations share the CLI lock before any file/Git changes.
+    await ensureContentRoot(groupedConfig.sourceContent.root);
+    await ensureGitRepo(groupedConfig.sourceContent.root);
+    try {
+      return await withWikiWriteLock(groupedConfig.sourceContent.root, async () => {
+        await assertWikiOperationsComplete(groupedConfig.sourceContent.root);
+        await next();
+      });
+    } catch (error) {
+      if (error instanceof WikiError) return c.json({ message: error.code }, error.status);
+      throw error;
+    }
+  })
   .get("/health", async (c) => {
     await ensureSourceRuntime();
     const git = await getGitSummary(groupedConfig.sourceContent.root);
@@ -416,6 +440,7 @@ export const sourcesRouter = new Hono()
       payload.title,
       payload.body,
       payload.meta ?? {},
+      { atomic: true },
     );
     const commit = await commitFileChange(
       groupedConfig.sourceContent.root,
@@ -463,7 +488,7 @@ export const sourcesRouter = new Hono()
       title,
       payload.body,
       meta,
-      targetSlug === slug ? { relativePath: existing.path } : undefined,
+      targetSlug === slug ? { relativePath: existing.path, atomic: true } : { atomic: true },
     );
     let commit: string | null;
     if (targetSlug === slug) {

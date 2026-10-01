@@ -167,3 +167,9 @@ PostgreSQL / pgvector remains an advanced backend for compatibility and future s
 - SQLite mode covers primary `register_candidates`, `search_knowledge`, source search, `context_compile` run/snapshot path, runtime settings, audit logs, `compile_eval`, and several landscape/overview paths.
 - PostgreSQL remains available for advanced queue/distillation/admin compatibility while remaining stores are migrated.
 - Integration tests truncate data and must target a dedicated test database.
+
+## Wiki CLI
+
+サーバーのCONTEXT_STILL_WIKI_CLI_NAMESPACEを専用slugに設定するとCLI入口が有効になります。未設定では無効です。CLI書込みはCONTEXT_STILL_DB_BACKEND=sqliteとCONTEXT_STILL_EMBEDDING_PROVIDER=disabledを要求し、既存Rust writerが不在なら保存前に拒否します。本文は既存SOURCE_CONTENT_ROOTのpages以下へ保存し、CLIのcwdでは保存先を決めません。
+
+呼出元にはCONTEXT_STILL_ADMIN_API_KEYを環境で明示して渡します。CONTEXT_STILL_WIKI_API_URLは明示portを持つ数値loopback HTTPのみ、既定 `http://127.0.0.1:39170` です。キーの引数指定・暗黙fallbackはありません。詳細は[CLI](cli.md)を参照してください。

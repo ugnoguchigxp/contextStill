@@ -7,7 +7,7 @@ const URL_SECRET_QUERY_PATTERN =
 const ENV_ASSIGNMENT_PATTERN =
   /(^|[\s;])((?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|\[REMOVED SENSITIVE DATA\]|[^\s;]+)/gim;
 const LABELED_VALUE_PATTERN =
-  /(["']?)([A-Za-z_][A-Za-z0-9_.-]*)(["']?)(\s*:\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|\[REMOVED SENSITIVE DATA\]|[^\r\n,}\]]+)/gim;
+  /(?<![A-Za-z0-9_.-])(["']?)([A-Za-z0-9_.-]+)(["']?)(\s*:\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|\[REMOVED SENSITIVE DATA\]|[^\r\n,}\]]+)/gim;
 
 const SECRET_PATTERNS: RegExp[] = [
   PRIVATE_KEY_BLOCK_PATTERN,

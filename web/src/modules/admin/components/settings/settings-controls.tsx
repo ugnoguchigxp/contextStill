@@ -13,6 +13,8 @@ import {
   type RouteEndpointOption,
   fallbackRouteEndpointValue,
   isLarmAgentConnectionRoute,
+  localLlmRouteModelOptions,
+  normalizeSelectedLocalLlmRouteValue,
   primaryRouteTargetValue,
   providerPoolTargetKey,
   providerPoolTargetLabel,
@@ -45,6 +47,7 @@ export function RouteEditor({
   effectiveTargets,
   onChange,
   allowDynamic = true,
+  localOnly = false,
 }: {
   label: string;
   description: string;
@@ -53,19 +56,41 @@ export function RouteEditor({
   effectiveTargets?: RuntimeEffectiveRouteTargets;
   onChange: (next: RuntimeSettingsRoute) => void;
   allowDynamic?: boolean;
+  localOnly?: boolean;
 }) {
   const isDynamicRoute = isLarmAgentConnectionRoute(route);
-  const endpointOptions = routeEndpointOptions(settings);
+  const endpointOptions: RouteEndpointOption[] = localOnly
+    ? localLlmRouteModelOptions(settings).map((option) => ({
+        value: `local-llm:${option.value}`,
+        label: option.label,
+        provider: "local-llm",
+        model: option.value,
+        localLlmModel: option.value,
+      }))
+    : routeEndpointOptions(settings);
   const endpointOptionByValue = new Map(endpointOptions.map((option) => [option.value, option]));
-  const targetOptions = routeTargetOptions(settings).filter(
+  const targetOptions = (
+    localOnly
+      ? endpointOptions.map((endpoint) => ({
+          kind: "endpoint" as const,
+          value: `endpoint:${endpoint.value}`,
+          label: endpoint.label,
+          endpoint,
+        }))
+      : routeTargetOptions(settings)
+  ).filter(
     (option) =>
-      allowDynamic ||
-      (option.kind !== "larm-agent-connection" &&
-        (option.kind !== "pool" ||
-          option.pool.targets.every((target) => target.provider !== "larm-agent-connection"))),
+      (localOnly ? option.kind === "endpoint" && option.endpoint.provider === "local-llm" : true) &&
+      (allowDynamic ||
+        (option.kind !== "larm-agent-connection" &&
+          (option.kind !== "pool" ||
+            option.pool.targets.every((target) => target.provider !== "larm-agent-connection")))),
   );
   const targetOptionByValue = new Map(targetOptions.map((option) => [option.value, option]));
-  const primaryTargetValue = primaryRouteTargetValue(settings, route);
+  const primaryTargetValue =
+    localOnly && !isDynamicRoute
+      ? `endpoint:local-llm:${normalizeSelectedLocalLlmRouteValue(settings, route.model)}`
+      : primaryRouteTargetValue(settings, route);
   const selectedFallbackValues = [
     fallbackRouteEndpointValue(settings, route, 0),
     fallbackRouteEndpointValue(settings, route, 1),
@@ -149,54 +174,58 @@ export function RouteEditor({
             )}
           </Select>
         </label>
-        <label className="settings-field">
-          <span>Fallback 1 Endpoint</span>
-          <Select
-            value={selectedFallbackValues[0]}
-            onChange={(event) => {
-              onChange(
-                routeWithFallbackEndpoint(
-                  settings,
-                  route,
-                  0,
-                  endpointOptionByValue.get(event.target.value),
-                ),
-              );
-            }}
-            disabled={isDynamicRoute}
-          >
-            <option value="">none</option>
-            {fallbackOptionsFor(0).map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label className="settings-field">
-          <span>Fallback 2 Endpoint</span>
-          <Select
-            value={selectedFallbackValues[1]}
-            onChange={(event) => {
-              onChange(
-                routeWithFallbackEndpoint(
-                  settings,
-                  route,
-                  1,
-                  endpointOptionByValue.get(event.target.value),
-                ),
-              );
-            }}
-            disabled={isDynamicRoute}
-          >
-            <option value="">none</option>
-            {fallbackOptionsFor(1).map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-        </label>
+        {localOnly ? null : (
+          <label className="settings-field">
+            <span>Fallback 1 Endpoint</span>
+            <Select
+              value={selectedFallbackValues[0]}
+              onChange={(event) => {
+                onChange(
+                  routeWithFallbackEndpoint(
+                    settings,
+                    route,
+                    0,
+                    endpointOptionByValue.get(event.target.value),
+                  ),
+                );
+              }}
+              disabled={isDynamicRoute}
+            >
+              <option value="">none</option>
+              {fallbackOptionsFor(0).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </label>
+        )}
+        {localOnly ? null : (
+          <label className="settings-field">
+            <span>Fallback 2 Endpoint</span>
+            <Select
+              value={selectedFallbackValues[1]}
+              onChange={(event) => {
+                onChange(
+                  routeWithFallbackEndpoint(
+                    settings,
+                    route,
+                    1,
+                    endpointOptionByValue.get(event.target.value),
+                  ),
+                );
+              }}
+              disabled={isDynamicRoute}
+            >
+              <option value="">none</option>
+              {fallbackOptionsFor(1).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </label>
+        )}
       </div>
       <div className="settings-route-chain" aria-label={`${label} effective route`}>
         {routeChain.map((item) => (

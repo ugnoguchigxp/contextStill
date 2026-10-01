@@ -15,6 +15,7 @@ const navItems = [
   { to: "/candidates", label: "Candidates" },
   { to: "/queue", label: "Queue" },
   { to: "/knowledge", label: "Knowledge" },
+  { to: "/research", label: "調査" },
   { to: "/landscape", label: "Landscape" },
   { to: "/graph", label: "Graph" },
   { to: "/compile", label: "Compile" },
@@ -170,6 +171,7 @@ export function AppShell() {
           pathname.startsWith("/graph") ||
           pathname.startsWith("/landscape") ||
           pathname.startsWith("/knowledge") ||
+          pathname.startsWith("/research") ||
           pathname.startsWith("/candidates") ||
           pathname.startsWith("/queue") ||
           pathname.startsWith("/audit") ||

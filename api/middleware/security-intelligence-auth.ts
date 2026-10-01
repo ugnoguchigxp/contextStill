@@ -7,6 +7,7 @@ import { ADMIN_SESSION_PATH } from "./admin-session.js";
 export const SECURITY_CANDIDATE_PATH =
   "/api/integrations/security-intelligence/v1/candidate-batches";
 export const SECURITY_FEEDBACK_PATH = "/api/integrations/security-intelligence/v1/feedback-batches";
+export const DEEPSTILL_MANUAL_LLM_PATH = "/api/integrations/deepstill/manual/v1/chat/completions";
 
 type IntegrationKind = "candidate" | "feedback";
 
@@ -62,6 +63,19 @@ export function apiAuthenticationDispatcher(): MiddlewareHandler {
   return async (ctx, next) => {
     if (ctx.req.method === "OPTIONS" || isPublicHealthPath(ctx.req.path)) return next();
     if (isAdminSessionPath(ctx.req.path)) return next();
+    if (ctx.req.path === DEEPSTILL_MANUAL_LLM_PATH) {
+      ctx.header("Cache-Control", "no-store");
+      const expected = (
+        process.env.DEEPSTILL_CONTEXTSTILL_TOKEN ?? readProjectEnv("DEEPSTILL_CONTEXTSTILL_TOKEN")
+      )?.trim();
+      if (!expected || expected.length < 32)
+        return ctx.json({ error: "integration_unavailable" }, 503);
+      const provided = bearer(ctx.req.header("authorization"));
+      if (!provided || !equalSecret(expected, provided)) {
+        return ctx.json({ error: "unauthorized" }, 401);
+      }
+      return next();
+    }
     const kind = integrationKind(ctx.req.path);
     if (!kind) return adminAuth(ctx, next);
     ctx.header("Cache-Control", "no-store");

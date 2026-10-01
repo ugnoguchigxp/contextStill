@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { SqliteCoreDatabase } from "./client.js";
 import {
   sqliteCoreVectorMetadata,
@@ -195,18 +195,18 @@ export class SqliteCoreRepository {
       .onConflictDoUpdate({
         target: sqliteSources.id,
         set: {
-          sourceKind: values.sourceKind,
-          classificationStatus: values.classificationStatus,
-          scope: values.scope,
-          projectRef: values.projectRef,
-          repoKey: values.repoKey,
-          repoPath: values.repoPath,
-          uri: values.uri,
-          title: values.title,
-          body: values.body,
-          metadata: values.metadata,
-          updatedAt: values.updatedAt,
-          lastIndexedAt: values.lastIndexedAt,
+          sourceKind: sql.raw("excluded.source_kind"),
+          classificationStatus: sql.raw("excluded.classification_status"),
+          scope: sql.raw("excluded.scope"),
+          projectRef: sql.raw("excluded.project_ref"),
+          repoKey: sql.raw("excluded.repo_key"),
+          repoPath: sql.raw("excluded.repo_path"),
+          uri: sql.raw("excluded.uri"),
+          title: sql.raw("excluded.title"),
+          body: sql.raw("excluded.body"),
+          metadata: sql.raw("excluded.metadata"),
+          updatedAt: sql.raw("excluded.updated_at"),
+          lastIndexedAt: sql.raw("excluded.last_indexed_at"),
         },
       })
       .run();
@@ -242,6 +242,41 @@ export class SqliteCoreRepository {
 
     const vector = normalizeVector(input.embedding);
     if (vector) this.upsertSourceFragmentVector(input.id, vector, contentHash(input.content));
+  }
+
+  /** Insert bounded text batches through the existing writer transport. Caller owns the transaction. */
+  insertSourceTextFragments(
+    sourceId: string,
+    rows: Array<{ id: string; locator: string; heading: string | null; content: string }>,
+    metadata: Record<string, unknown>,
+  ): void {
+    const insert = this.database.db.query(
+      "INSERT INTO source_fragments(id, source_id, locator, heading, content, metadata, created_at) " +
+        "SELECT json_extract(value,'$.id'), ?, json_extract(value,'$.locator'), json_extract(value,'$.heading'), " +
+        "json_extract(value,'$.content'), ?, ? FROM json_each(?)",
+    );
+    const createdAt = nowIso();
+    const serializedMetadata = JSON.stringify(metadata);
+    let batch: typeof rows = [];
+    let bytes = 0;
+    const flush = () => {
+      if (!batch.length) return;
+      insert.run(sourceId, serializedMetadata, createdAt, JSON.stringify(batch));
+      batch = [];
+      bytes = 0;
+    };
+    for (const row of rows) {
+      const size = Buffer.byteLength(JSON.stringify(row));
+      if (batch.length && bytes + size > 256 * 1024) flush();
+      batch.push(row);
+      bytes += size;
+    }
+    flush();
+    this.database.db
+      .query(
+        "INSERT INTO source_fragments_fts(id, heading, content) SELECT id, heading, content FROM source_fragments WHERE source_id = ?",
+      )
+      .run(sourceId);
   }
 
   rebuildKnowledgeVectors(

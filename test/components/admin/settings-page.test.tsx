@@ -131,6 +131,7 @@ function buildSettingsView(): RuntimeSettingsView {
           vibe: openAiTarget,
         },
         webSourceResearch: localPoolTarget,
+        deepStillManual: localPoolTarget,
         episodeDistiller: localPoolTarget,
         coverEvidence: {
           sourceSupport: localPoolTarget,
@@ -238,6 +239,11 @@ function buildSettingsView(): RuntimeSettingsView {
         model: "gemma-4-e4b-it",
         providerPoolId: "local-llm-default",
         fallback: ["azure-openai"],
+      },
+      deepStillManual: {
+        provider: "local-llm",
+        model: "qwen-3.6-14b-it",
+        fallback: [],
       },
       episodeDistiller: {
         provider: "local-llm",
@@ -1300,6 +1306,25 @@ describe("SettingsPage", () => {
         name: /qwen-3\.6-14b-it/,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("saves a pooled Local LLM endpoint as the direct DeepStill manual route", async () => {
+    routerState.pathname = "/setting/taskrouting";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+    const row = within(getRouteRow("DeepStill manual research"));
+    const target = row.getByLabelText("Routing Target");
+    expect(within(target).getByRole("option", { name: /gemma-4-e4b-it/ })).toBeInTheDocument();
+    expect(row.queryByLabelText("Fallback 1 Endpoint")).not.toBeInTheDocument();
+    fireEvent.change(target, { target: { value: "endpoint:local-llm:gemma-4-e4b-it" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const saved = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(saved.settings.taskRouting.deepStillManual).toMatchObject({
+      provider: "local-llm",
+      model: "gemma-4-e4b-it",
+      fallback: [],
+    });
   });
 
   it("saves Local LLM queue pool targets and concurrency from LLM Pool", async () => {

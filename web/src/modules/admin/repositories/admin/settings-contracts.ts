@@ -201,6 +201,7 @@ export type RuntimeSettingsEditable = {
       throttling: FindCandidateThrottlingSettings;
     };
     webSourceResearch: RuntimeSettingsRoute;
+    deepStillManual: RuntimeSettingsRoute;
     episodeDistiller: RuntimeSettingsRoute;
     coverEvidence: {
       sourceSupport: RuntimeSettingsRoute;
@@ -287,6 +288,7 @@ export type RuntimeSettingsView = RuntimeSettingsEditable & {
         vibe: RuntimeEffectiveRouteTargets;
       };
       webSourceResearch: RuntimeEffectiveRouteTargets;
+      deepStillManual: RuntimeEffectiveRouteTargets;
       episodeDistiller: RuntimeEffectiveRouteTargets;
       coverEvidence: {
         sourceSupport: RuntimeEffectiveRouteTargets;

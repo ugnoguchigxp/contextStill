@@ -46,6 +46,15 @@ const knowledgeRoute = createRoute({
   ),
 });
 
+const manualResearchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/research",
+  component: lazyRouteComponent(
+    () => import("./modules/manual-research/manual-research.page"),
+    "ManualResearchPage",
+  ),
+});
+
 const candidatesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/candidates",
@@ -192,6 +201,7 @@ const routeTree = rootRoute.addChildren([
   candidatesRoute,
   queueRoute,
   knowledgeRoute,
+  manualResearchRoute,
   landscapeRoute,
   graphRoute,
   vibeMemoryRoute,

@@ -50,3 +50,13 @@ describe("ingest service sensitive data filter", () => {
     });
   });
 });
+
+it("redaction handles long non-secret words and preserves labeled secret removal", () => {
+  const word = "abcdefghij".repeat(100_000);
+  expect(redactSecrets(word)).toBe(word);
+  const input = `${word}\n123.api_key: short-secret\n\"clientSecret\": \"other-secret\"`;
+  const redacted = redactSecrets(input);
+  expect(redacted.startsWith(word)).toBe(true);
+  expect(redacted).not.toContain("short-secret");
+  expect(redacted).not.toContain("other-secret");
+});

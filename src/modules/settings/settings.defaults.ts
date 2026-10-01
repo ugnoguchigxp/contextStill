@@ -482,6 +482,11 @@ export const bootstrap: BootstrapConfig = {
       model: groupedConfig.localLlm.model,
       fallback: [...localLlmAzureFallback],
     },
+    deepStillManual: {
+      provider: "local-llm",
+      model: groupedConfig.localLlm.model,
+      fallback: [],
+    },
     episodeDistiller: {
       provider: "local-llm",
       model: groupedConfig.localLlm.model,
@@ -646,6 +651,7 @@ export function cloneDefaultSettings(): RuntimeSettingsEditable {
         throttling: { ...bootstrap.taskRouting.findCandidate.throttling },
       },
       webSourceResearch: cloneRoute(bootstrap.taskRouting.webSourceResearch),
+      deepStillManual: cloneRoute(bootstrap.taskRouting.deepStillManual),
       episodeDistiller: cloneRoute(bootstrap.taskRouting.episodeDistiller),
       coverEvidence: {
         sourceSupport: cloneRoute(bootstrap.taskRouting.coverEvidence.sourceSupport),
@@ -917,6 +923,10 @@ function mergeRuntimeSettings(
         defaults.taskRouting.webSourceResearch,
         asRecord(input.taskRouting).webSourceResearch,
       ),
+      deepStillManual: mergeRoute(
+        defaults.taskRouting.deepStillManual,
+        asRecord(input.taskRouting).deepStillManual,
+      ),
       episodeDistiller: mergeRoute(
         defaults.taskRouting.episodeDistiller,
         rawTaskRouting.episodeDistiller,
@@ -1012,6 +1022,7 @@ function mergeRuntimeSettings(
     merged,
     merged.taskRouting.webSourceResearch,
   );
+  merged.taskRouting.deepStillManual = sanitizeRoute(merged, merged.taskRouting.deepStillManual);
   merged.taskRouting.episodeDistiller = sanitizeRoute(merged, merged.taskRouting.episodeDistiller);
   merged.taskRouting.coverEvidence.sourceSupport = sanitizeRoute(
     merged,
