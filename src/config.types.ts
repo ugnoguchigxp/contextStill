@@ -34,12 +34,14 @@ export type GroupedConfig = {
     apiBaseUrl: string;
     apiPath: string;
     apiKey: string;
+    apiKeyError?: string;
     model: string;
     models: Array<{
       name: string;
       apiBaseUrl: string;
       apiPath: string;
       apiKey?: string;
+      apiKeyError?: string;
       model: string;
     }>;
   };

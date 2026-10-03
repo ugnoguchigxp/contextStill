@@ -27,6 +27,10 @@ const OPENAI_PROTOCOL: &str = "openai.chat-completions.v1";
 const LARM_API_TOKEN_ENV: &str = "LARM_API_TOKEN";
 const LEGACY_STATIC_LLM_PORT: u16 = 44_448;
 
+fn default_request_capacity() -> u64 {
+    1
+}
+
 #[derive(Clone, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LarmConnectionConfig {
@@ -39,6 +43,8 @@ pub struct LarmConnectionConfig {
     pub ready_timeout_ms: u64,
     pub ttl_seconds: u64,
     pub request_timeout_ms: u64,
+    #[serde(default = "default_request_capacity")]
+    pub max_concurrent_requests: u64,
     #[serde(skip)]
     pub(crate) control_bearer_token: Option<Zeroizing<String>>,
 }
@@ -56,6 +62,7 @@ impl fmt::Debug for LarmConnectionConfig {
             .field("ready_timeout_ms", &self.ready_timeout_ms)
             .field("ttl_seconds", &self.ttl_seconds)
             .field("request_timeout_ms", &self.request_timeout_ms)
+            .field("max_concurrent_requests", &self.max_concurrent_requests)
             .field(
                 "control_bearer_token",
                 &self.control_bearer_token.as_ref().map(|_| "[REDACTED]"),
@@ -120,8 +127,6 @@ impl LarmConnectionConfig {
             "saaa-desktop"
         }
         .to_string();
-        config.ttl_seconds = 300;
-        config.request_timeout_ms = config.request_timeout_ms.min(240_000);
         config.control_bearer_token =
             control_bearer_token_from_environment(|name| std::env::var(name));
         config.validate()?;
@@ -131,14 +136,17 @@ impl LarmConnectionConfig {
     pub fn validate(&self) -> Result<(), LarmControlError> {
         validate_identifier("connection id", &self.id)?;
         validate_identifier("audience", &self.audience)?;
-        if !matches!(self.audience.as_str(), "same-host" | "saaa-desktop")
-            || self.ttl_seconds != 300
-        {
+        if !matches!(self.audience.as_str(), "same-host" | "saaa-desktop") {
             return Err(LarmControlError::configuration(
-                "ContextStill LARM connections require a supported audience and ttlSeconds 300",
+                "ContextStill LARM connections require a supported audience",
             ));
         }
         validate_control_origin(&self.control_base_url)?;
+        if !(1..=4).contains(&self.max_concurrent_requests) {
+            return Err(LarmControlError::configuration(
+                "maxConcurrentRequests must be between 1 and 4",
+            ));
+        }
         if !(1_000..=300_000).contains(&self.availability_poll_ms) {
             return Err(LarmControlError::configuration(
                 "availabilityPollMs must be between 1000 and 300000",
@@ -237,6 +245,32 @@ struct LarmAgentProfileProvider {
     endpoint: String,
     model: String,
     streaming_protocol: Option<String>,
+    #[serde(default)]
+    context_window: Option<LarmContextWindow>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LarmContextWindow {
+    pub max_tokens: u64,
+    pub output_reserve_tokens: u64,
+    pub safety_margin_tokens: u64,
+}
+
+impl LarmContextWindow {
+    fn validate(&self) -> Result<(), LarmControlError> {
+        if self.max_tokens == 0
+            || self
+                .output_reserve_tokens
+                .checked_add(self.safety_margin_tokens)
+                .is_none_or(|reserved| reserved >= self.max_tokens)
+        {
+            return Err(LarmControlError::protocol(
+                "LARM context window has no usable input budget",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Deserialize)]
@@ -264,6 +298,8 @@ pub struct PublicLarmConnectionProvider {
     pub public_model: String,
     pub readiness: LarmConnectionStatus,
     pub claimable: bool,
+    #[serde(default)]
+    pub context_window: Option<LarmContextWindow>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
@@ -311,6 +347,16 @@ pub struct LarmConnectionProviderHealth {
     pub capability: String,
     pub ready: bool,
     pub accepting_requests: bool,
+    #[serde(default)]
+    pub capacity: Option<LarmRequestCapacity>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LarmRequestCapacity {
+    pub ready: bool,
+    pub max_concurrent_requests: u64,
+    pub completion_guaranteed: bool,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -321,6 +367,7 @@ pub struct ClaimedLarmTarget {
     pub model: String,
     pub bearer_token: Zeroizing<String>,
     pub expires_at: String,
+    pub context_window: Option<LarmContextWindow>,
 }
 
 impl fmt::Debug for ClaimedLarmTarget {
@@ -366,6 +413,8 @@ struct LarmClaimProvider {
     credential: LarmClaimCredential,
     configuration: LarmClaimConfiguration,
     streaming: Option<Value>,
+    #[serde(default)]
+    context_window: Option<LarmContextWindow>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
@@ -564,11 +613,19 @@ impl fmt::Display for LarmControlError {
 impl std::error::Error for LarmControlError {}
 
 #[derive(Clone)]
+struct DiscoveredLarmProfile {
+    canonical_profile: String,
+    model: String,
+    catalog_revision: String,
+    context_window: Option<LarmContextWindow>,
+}
+
+#[derive(Clone)]
 pub struct LarmControlClient {
     config: LarmConnectionConfig,
     control_origin: Url,
     client: Client,
-    discovered_profile: Arc<Mutex<Option<(String, String, String)>>>,
+    discovered_profile: Arc<Mutex<Option<DiscoveredLarmProfile>>>,
 }
 
 impl fmt::Debug for LarmControlClient {
@@ -646,11 +703,17 @@ impl LarmControlClient {
         let catalog: LarmAgentProfileCatalog = parse_json_response(response, StatusCode::OK)?;
         self.validate_profile_catalog(&catalog, expected_config_revision)?;
         let profile = &catalog.profiles[0];
-        *self.discovered_profile.lock().unwrap() = Some((
-            profile.id.clone(),
-            profile.providers[0].model.clone(),
-            catalog.catalog_revision.clone(),
-        ));
+        let provider = profile
+            .providers
+            .iter()
+            .find(|provider| provider.name == "llm" && provider.protocol == OPENAI_PROTOCOL)
+            .expect("validated llm provider");
+        *self.discovered_profile.lock().unwrap() = Some(DiscoveredLarmProfile {
+            canonical_profile: profile.id.clone(),
+            model: provider.model.clone(),
+            catalog_revision: catalog.catalog_revision.clone(),
+            context_window: provider.context_window.clone(),
+        });
         Ok(())
     }
 
@@ -665,6 +728,7 @@ impl LarmControlClient {
             ttl_seconds: u64,
             allow_fallback: bool,
             deployment_policy: &'static str,
+            providers: [&'static str; 1],
             #[serde(skip_serializing_if = "Option::is_none")]
             expected_catalog_revision: Option<String>,
         }
@@ -679,15 +743,16 @@ impl LarmControlClient {
                 profile: "contextStill",
                 audience: &self.config.audience,
                 client: "contextstill",
-                ttl_seconds: 300,
+                ttl_seconds: self.config.ttl_seconds,
                 allow_fallback: false,
                 deployment_policy: "existing-only",
+                providers: ["llm"],
                 expected_catalog_revision: self
                     .discovered_profile
                     .lock()
                     .unwrap()
                     .as_ref()
-                    .map(|entry| entry.2.clone()),
+                    .map(|entry| entry.catalog_revision.clone()),
             })
             .send()
             .map_err(|error| LarmControlError::transport(format!("create failed: {error}")))?;
@@ -1054,14 +1119,22 @@ impl LarmControlClient {
         if !is_valid_identifier(&profile.id)
             || profile.canonical_profile != profile.id
             || profile.selection_policy != "explicit-only"
-            || profile.providers.len() != 1
-            || !profile.services.is_empty()
+            || profile
+                .providers
+                .iter()
+                .filter(|provider| provider.name == "llm")
+                .count()
+                != 1
         {
             return Err(LarmControlError::protocol(
                 "configured LARM agent profile does not describe one explicit-only canonical provider",
             ));
         }
-        let provider = &profile.providers[0];
+        let provider = profile
+            .providers
+            .iter()
+            .find(|provider| provider.name == "llm")
+            .expect("validated llm cardinality");
         if provider.name != "llm"
             || provider.protocol != OPENAI_PROTOCOL
             || provider.endpoint != "/v1/chat/completions"
@@ -1076,6 +1149,9 @@ impl LarmControlClient {
             return Err(LarmControlError::protocol(
                 "configured LARM agent profile is not OpenAI chat-completions compatible",
             ));
+        }
+        if let Some(window) = &provider.context_window {
+            window.validate()?;
         }
         if !catalog.audiences.is_empty()
             && !catalog
@@ -1138,6 +1214,9 @@ impl LarmControlClient {
             ));
         }
         let provider = &connection.providers[0];
+        if let Some(window) = &provider.context_window {
+            window.validate()?;
+        }
         if provider.name != "llm"
             || !is_bounded_nonempty(&provider.capability, MAX_PROTOCOL_FIELD_BYTES)
             || provider.protocol != OPENAI_PROTOCOL
@@ -1149,7 +1228,9 @@ impl LarmControlClient {
                 .unwrap()
                 .as_ref()
                 .is_some_and(|entry| {
-                    connection.agent_profile != entry.0 || provider.model != entry.1
+                    connection.agent_profile != entry.canonical_profile
+                        || provider.model != entry.model
+                        || provider.context_window != entry.context_window
                 })
             || (connection.status == LarmConnectionStatus::Ready
                 && (provider.readiness != LarmConnectionStatus::Ready || !provider.claimable))
@@ -1211,7 +1292,7 @@ impl LarmControlClient {
                 .lock()
                 .unwrap()
                 .as_ref()
-                .is_some_and(|entry| provider.model != entry.1)
+                .is_some_and(|entry| provider.model != entry.model)
             || provider.api_style != "openai"
             || provider.protocol != OPENAI_PROTOCOL
             || provider.health.kind != "semantic-inference"
@@ -1223,6 +1304,7 @@ impl LarmControlClient {
             || provider.configuration.fields.base_url != provider.base_url
             || provider.configuration.fields.model != provider.model
             || provider.configuration.secret_fields.api_key != "credential.token"
+            || provider.context_window != public_provider.context_window
             || provider.base_url.len() > MAX_CONTROL_URL_BYTES
             || provider.health.url.len() > MAX_CONTROL_URL_BYTES
             || !is_bounded_nonempty(&provider.model, MAX_PROTOCOL_FIELD_BYTES)
@@ -1262,6 +1344,7 @@ impl LarmControlClient {
             model: provider.model,
             bearer_token: provider.credential.token,
             expires_at: provider.credential.expires_at,
+            context_window: provider.context_window,
         })
     }
 }
@@ -1289,6 +1372,8 @@ pub(crate) fn ensure_same_connection_identity(
                 &provider.protocol,
                 &provider.endpoint,
                 &provider.model,
+                &provider.public_model,
+                &provider.context_window,
             )
         }) != actual_provider.map(|provider| {
             (
@@ -1298,6 +1383,8 @@ pub(crate) fn ensure_same_connection_identity(
                 &provider.protocol,
                 &provider.endpoint,
                 &provider.model,
+                &provider.public_model,
+                &provider.context_window,
             )
         })
     {

@@ -2,24 +2,38 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { getSettingsForApi } from "../api/modules/settings/settings.service.js";
+import { groupedConfig } from "../src/config.js";
 import {
   getRuntimeSqliteCoreDatabase,
   resetRuntimeSqliteCoreDatabaseForTests,
 } from "../src/db/sqlite/runtime.js";
 import {
   type SecretStoreClient,
+  SecretStoreError,
   resolveSecretRows,
 } from "../src/modules/settings/secret-store.client.js";
+import { secretStoreClient } from "../src/modules/settings/secret-store.client.js";
 import {
   migrateLegacySecrets,
   saveSecretUpdate,
 } from "../src/modules/settings/settings-secret.service.js";
+import { cloneDefaultSettings } from "../src/modules/settings/settings.defaults.js";
 import {
+  SETTINGS_DOCUMENT_KEY,
+  SETTINGS_DOCUMENT_NAMESPACE,
   SETTINGS_SECRET_NAMESPACE,
   findSettingsRow,
   upsertSettingsRow,
 } from "../src/modules/settings/settings.repository.js";
-import { resolveSecretValue } from "../src/modules/settings/settings.runtime-cache.js";
+import {
+  applyRuntimeSettingsToProcess,
+  resolveSecretValue,
+} from "../src/modules/settings/settings.runtime-cache.js";
+import {
+  invalidateRuntimeSettingsCache,
+  reloadRuntimeSettingsCache,
+} from "../src/modules/settings/settings.service.js";
 let directory = "";
 let sequence = 0;
 const entries = new Map<string, string>();
@@ -187,4 +201,74 @@ test("environment fallback requires an explicit persisted choice after clear", a
   expect(row.value).toEqual({ environment: true });
   expect((await resolveSecretRows([row], store))[0]?.secretRef).toBeNull();
   expect(entries.size).toBe(0);
+});
+
+test("isolates denied Azure references, keeps other credentials and never falls back to environment", async () => {
+  await saveSecretUpdate("azureOpenAiApiKey", { value: "azure-synthetic" }, null, store);
+  await saveSecretUpdate("localLlmApiKey", { value: "local-synthetic" }, null, store);
+  const azure = await findSettingsRow(SETTINGS_SECRET_NAMESPACE, "azureOpenAiApiKey");
+  const local = await findSettingsRow(SETTINGS_SECRET_NAMESPACE, "localLlmApiKey");
+  if (!azure || !local) throw new Error("missing rows");
+  const denied: SecretStoreClient = {
+    ...store,
+    async get(key, ref) {
+      if (key === "azureOpenAiApiKey") throw new SecretStoreError("secret_store_denied");
+      return store.get(key, ref);
+    },
+  };
+  await expect(resolveSecretRows([azure, local], denied)).rejects.toThrow("secret_store_denied");
+  const resolved = await resolveSecretRows([azure, local], denied, { isolateFailures: true });
+  const bad = resolveSecretValue("azureOpenAiApiKey", resolved[0]);
+  const good = resolveSecretValue("localLlmApiKey", resolved[1]);
+  expect(bad).toMatchObject({ value: "", source: "db", error: "secret_store_denied" });
+  expect(good?.value).toBe("local-synthetic");
+  expect((await findSettingsRow(SETTINGS_SECRET_NAMESPACE, "azureOpenAiApiKey"))?.value).toEqual(
+    azure.value,
+  );
+  const settings = cloneDefaultSettings();
+  settings.providers["local-llm"].enabled = true;
+  applyRuntimeSettingsToProcess(settings, { azureOpenAiApiKey: bad, localLlmApiKey: good });
+  expect(groupedConfig.azureOpenAi.apiKey).toBe("");
+  expect(groupedConfig.localLlm.apiKey).toBe("local-synthetic");
+});
+
+test("settings API remains readable with a denied Keychain reference and reports its reason", async () => {
+  await saveSecretUpdate("azureOpenAiApiKey", { value: "azure-synthetic" }, null, store);
+  const persisted = cloneDefaultSettings();
+  persisted.advanced.doctorFreshnessThresholdMinutes = 123;
+  persisted.providers["azure-openai"].enabled = true;
+  await upsertSettingsRow({
+    namespace: SETTINGS_DOCUMENT_NAMESPACE,
+    key: SETTINGS_DOCUMENT_KEY,
+    value: { settings: persisted },
+    schemaVersion: 7,
+  });
+  const original = secretStoreClient.get;
+  secretStoreClient.get = async () => {
+    throw new SecretStoreError("secret_store_denied");
+  };
+  invalidateRuntimeSettingsCache();
+  try {
+    const result = await getSettingsForApi();
+    expect(result.settings.providers["azure-openai"].apiKeySecret).toMatchObject({
+      configured: false,
+      source: "db",
+      maskedValue: null,
+      error: "secret_store_denied",
+    });
+    expect(result.revision).toBe(7);
+    expect(result.settings.advanced.doctorFreshnessThresholdMinutes).toBe(123);
+    expect(groupedConfig.azureOpenAi.apiKey).toBe("");
+    secretStoreClient.get = store.get;
+    await reloadRuntimeSettingsCache();
+    const recovered = await getSettingsForApi();
+    expect(recovered.settings.providers["azure-openai"].apiKeySecret).toMatchObject({
+      configured: true,
+    });
+    expect(recovered.settings.providers["azure-openai"].apiKeySecret.error).toBeUndefined();
+    expect(groupedConfig.azureOpenAi.apiKey).toBe("azure-synthetic");
+  } finally {
+    secretStoreClient.get = original;
+    invalidateRuntimeSettingsCache();
+  }
 });

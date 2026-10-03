@@ -72,7 +72,7 @@ pub fn claim_next_job_with_provider_lease_for_connection(
         .targets
         .iter()
         .filter(|target| {
-            !active_targets.contains(*target)
+            (is_shared_larm_pool(pool) || !active_targets.contains(*target))
                 && !cooling_targets.contains(*target)
                 && !exhausted_targets.contains(*target)
         })
@@ -97,7 +97,7 @@ pub fn claim_next_job_with_provider_lease_for_connection(
 
     for (queue_order, queue_spec) in priority_queues.iter().enumerate() {
         if queue_active_lease_count(&tx, &pool.pool_id, &queue_spec.queue_name)?
-            >= queue_concurrency_limit(&queue_spec.queue_name, capacity)
+            >= queue_concurrency_limit(&queue_spec.queue_name, capacity, is_shared_larm_pool(pool))
         {
             continue;
         }
@@ -117,6 +117,13 @@ pub fn claim_next_job_with_provider_lease_for_connection(
         )?);
     }
 
+    // Pick an unoccupied runnable queue first; when all available kinds are occupied,
+    // distribute the remaining slots by current load. Claim and ranking are atomic.
+    let candidates = if is_shared_larm_pool(pool) {
+        prefer_least_busy_queues(&tx, &pool.pool_id, candidates, &free_targets)?
+    } else {
+        candidates
+    };
     let candidates = apply_bounded_queue_fairness(&tx, &pool.pool_id, candidates)?;
     let Some((picked, selected_target_id)) = pick_provider_candidate(candidates, &free_targets)
     else {
@@ -286,8 +293,17 @@ pub fn count_available_provider_pool_slots_for_connection(
     Ok(active_pool_capacity(pool).saturating_sub(active_lease_count as u64))
 }
 
+fn is_shared_larm_pool(pool: &ProviderPoolClaimConfig) -> bool {
+    pool.pool_id.starts_with("larm-agent-connection:")
+        && matches!(pool.targets.as_slice(), [target] if target == &pool.pool_id)
+}
+
 fn active_pool_capacity(pool: &ProviderPoolClaimConfig) -> u64 {
-    pool.max_concurrent.max(1).min(pool.targets.len() as u64)
+    if is_shared_larm_pool(pool) {
+        pool.max_concurrent.clamp(1, 4)
+    } else {
+        pool.max_concurrent.max(1).min(pool.targets.len() as u64)
+    }
 }
 
 fn normalized_stale_lease_seconds(pool: &ProviderPoolClaimConfig) -> u64 {
@@ -375,47 +391,14 @@ fn runnable_provider_candidates(
     now_unix_seconds: i64,
     aging_seconds: i64,
 ) -> Result<Vec<RunnableProviderCandidate>, CliError> {
-    let route_target_column = route_target_column_sql(queue_spec.route_target_column)?;
-    let allowed_route_values = queue_spec
-        .allowed_route_values
-        .as_deref()
-        .unwrap_or_default();
-    if queue_spec.allowed_route_values.is_some() && allowed_route_values.is_empty() {
+    let Some((sql, query_parameters)) = runnable_provider_query(queue_spec, table_name)? else {
         return Ok(Vec::new());
-    }
-    if !allowed_route_values.is_empty() && route_target_column.is_none() {
-        return Err(CliError::invalid_arguments(format!(
-            "queue {} restricts route values without a route target column",
-            queue_spec.queue_name
-        )));
-    }
-    let sql = runnable_provider_sql(
-        &queue_spec.queue_name,
-        table_name,
-        route_target_column,
-        allowed_route_values.len(),
-        queue_spec.candidate_polarity_filter,
-        queue_spec
-            .allowed_job_ids
-            .as_deref()
-            .unwrap_or_default()
-            .len(),
-    );
+    };
     let mut statement = tx.prepare(&sql).map_err(|error| {
         CliError::io(format!(
             "failed to prepare runnable provider query: {error}"
         ))
     })?;
-    let query_parameters = allowed_route_values
-        .iter()
-        .chain(
-            queue_spec
-                .allowed_job_ids
-                .as_deref()
-                .unwrap_or_default()
-                .iter(),
-        )
-        .collect::<Vec<_>>();
     let rows = statement
         .query_map(rusqlite::params_from_iter(query_parameters), |row| {
             let id = row.get::<_, String>(0)?;
@@ -441,6 +424,59 @@ fn runnable_provider_candidates(
         })?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| CliError::io(format!("failed to read runnable provider jobs: {error}")))
+}
+
+fn runnable_provider_query<'a>(
+    spec: &'a ProviderQueueClaimSpec,
+    table: &str,
+) -> Result<Option<(String, Vec<&'a String>)>, CliError> {
+    let column = route_target_column_sql(spec.route_target_column)?;
+    let routes = spec.allowed_route_values.as_deref().unwrap_or_default();
+    let ids = spec.allowed_job_ids.as_deref().unwrap_or_default();
+    if (spec.allowed_route_values.is_some() && routes.is_empty())
+        || (spec.allowed_job_ids.is_some() && ids.is_empty())
+    {
+        return Ok(None);
+    }
+    if !routes.is_empty() && column.is_none() {
+        return Err(CliError::invalid_arguments(format!(
+            "queue {} restricts route values without a route target column",
+            spec.queue_name
+        )));
+    }
+    Ok(Some((
+        runnable_provider_sql(
+            &spec.queue_name,
+            table,
+            column,
+            routes.len(),
+            spec.candidate_polarity_filter,
+            ids.len(),
+        ),
+        routes.iter().chain(ids.iter()).collect(),
+    )))
+}
+
+pub(super) fn has_runnable_provider_job(
+    connection: &Connection,
+    spec: &ProviderQueueClaimSpec,
+) -> Result<bool, CliError> {
+    let table = queue_table_name(&spec.queue_name)?;
+    let Some((sql, params)) = runnable_provider_query(spec, table)? else {
+        return Ok(false);
+    };
+    connection
+        .query_row(
+            &format!("select exists({sql})"),
+            rusqlite::params_from_iter(params),
+            |row| row.get(0),
+        )
+        .map_err(|error| {
+            CliError::io(format!(
+                "failed to inspect runnable {} job: {error}",
+                spec.queue_name
+            ))
+        })
 }
 
 fn route_target_column_sql(column: Option<&'static str>) -> Result<Option<&'static str>, CliError> {
@@ -557,12 +593,43 @@ fn queue_active_lease_count(
     ).map(|count| count.max(0) as u64).map_err(|error| CliError::io(format!("failed to count active {queue_name} leases: {error}")))
 }
 
-fn queue_concurrency_limit(queue_name: &str, pool_capacity: u64) -> u64 {
-    if queue_name == "landscapeCuration" {
+fn queue_concurrency_limit(queue_name: &str, pool_capacity: u64, larm_shared: bool) -> u64 {
+    if queue_name == "landscapeCuration" || (larm_shared && queue_name == "episodeDistiller") {
         1
     } else {
         pool_capacity.max(1)
     }
+}
+
+fn prefer_least_busy_queues(
+    tx: &Transaction<'_>,
+    pool_id: &str,
+    candidates: Vec<RunnableProviderCandidate>,
+    free_targets: &[String],
+) -> Result<Vec<RunnableProviderCandidate>, CliError> {
+    let mut eligible = Vec::new();
+    let mut minimum = u64::MAX;
+    let mut loads = std::collections::BTreeMap::new();
+    for candidate in candidates {
+        if select_target_for_candidate(&candidate, free_targets).is_none() {
+            continue;
+        }
+        let active = match loads.get(&candidate.queue_name) {
+            Some(count) => *count,
+            None => {
+                let count = queue_active_lease_count(tx, pool_id, &candidate.queue_name)?;
+                loads.insert(candidate.queue_name.clone(), count);
+                count
+            }
+        };
+        minimum = minimum.min(active);
+        eligible.push((active, candidate));
+    }
+    Ok(eligible
+        .into_iter()
+        .filter(|(active, _)| *active == minimum)
+        .map(|(_, candidate)| candidate)
+        .collect())
 }
 
 fn queue_burst_limit(queue_name: &str) -> usize {

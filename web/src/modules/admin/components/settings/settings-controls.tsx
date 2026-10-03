@@ -25,6 +25,7 @@ import {
 } from "./settings-routing";
 
 export function SecretStatusBadge({ status }: { status: RuntimeSecretStatus }) {
+  if (status.error) return <Badge variant="destructive">key unavailable</Badge>;
   if (!status.configured) return <Badge variant="outline">unset</Badge>;
   if (status.source === "db") return <Badge variant="success">db</Badge>;
   if (status.source === "env") return <Badge variant="secondary">env</Badge>;

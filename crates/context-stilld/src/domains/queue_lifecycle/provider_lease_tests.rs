@@ -986,3 +986,267 @@ fn equal_pool_excludes_only_exhausted_targets_and_recovers() {
         "spark"
     );
 }
+
+#[test]
+fn larm_shared_target_allows_four_leases_and_waits_for_fifth() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    create_provider_claim_queue_table(&connection, "finding_candidate_queue");
+    create_provider_lease_table(&connection);
+    for index in 0..5 {
+        connection.execute("insert into finding_candidate_queue(id,status,priority,created_at,updated_at,source_kind) values(?1,'pending',10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'source')",[format!("job-{index}")]).unwrap();
+    }
+    let mut pool = provider_pool();
+    pool.pool_id = "larm-agent-connection:test".into();
+    pool.targets = vec![pool.pool_id.clone()];
+    pool.max_concurrent = 4;
+    let mut spec = finding_candidate_spec();
+    spec.route_target_preferences.clear();
+    let specs = [spec];
+    for index in 0..4 {
+        let claimed = claim_next_job_with_provider_lease_for_connection(
+            &mut connection,
+            &pool,
+            &specs,
+            &format!("worker-{index}"),
+            &format!("lease-{index}"),
+            90,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(claimed.provider_lease.target_id, pool.pool_id);
+    }
+    assert!(claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &specs,
+        "worker-5",
+        "lease-5",
+        90
+    )
+    .unwrap()
+    .is_none());
+    release_provider_lease_for_connection(&connection, "lease-0", "worker_finished").unwrap();
+    assert!(claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &specs,
+        "worker-5",
+        "lease-5",
+        90
+    )
+    .unwrap()
+    .is_some());
+}
+
+fn shared_larm_queue_fixture(
+    queues: &[&str],
+) -> (
+    Connection,
+    super::types::ProviderPoolClaimConfig,
+    Vec<super::types::ProviderQueueClaimSpec>,
+) {
+    let connection = Connection::open_in_memory().unwrap();
+    create_provider_lease_table(&connection);
+    let mut specs = Vec::new();
+    for queue in queues {
+        let table = super::common::queue_table_name(queue).unwrap();
+        create_provider_claim_queue_table(&connection, table);
+        for index in 0..6 {
+            connection.execute(&format!("insert into {table}(id,status,priority,created_at,updated_at,source_kind) values(?1,'pending',?2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'source')"),rusqlite::params![format!("{queue}-{index}"),if *queue=="findingCandidate" {10000} else {1}]).unwrap();
+        }
+        let mut spec = finding_candidate_spec();
+        spec.queue_name = (*queue).to_string();
+        specs.push(spec);
+    }
+    let mut pool = provider_pool();
+    pool.pool_id = "larm-agent-connection:distinct-test".into();
+    pool.targets = vec![pool.pool_id.clone()];
+    pool.max_concurrent = 4;
+    for spec in &mut specs {
+        spec.route_target_preferences.clear();
+        spec.preferred_target_ids = pool.targets.clone();
+    }
+    (connection, pool, specs)
+}
+
+#[test]
+fn shared_larm_prefers_four_different_runnable_queues() {
+    let queues = [
+        "findingCandidate",
+        "coveringEvidence",
+        "episodeDistiller",
+        "landscapeCuration",
+    ];
+    let (mut connection, pool, specs) = shared_larm_queue_fixture(&queues);
+    let mut selected = Vec::new();
+    for index in 0..4 {
+        let job = claim_next_job_with_provider_lease_for_connection(
+            &mut connection,
+            &pool,
+            &specs,
+            &format!("worker-{index}"),
+            &format!("lease-{index}"),
+            90,
+        )
+        .unwrap()
+        .unwrap();
+        selected.push(job.queue_name);
+    }
+    assert_eq!(selected, queues);
+}
+
+#[test]
+fn shared_larm_fills_remaining_slots_with_parallel_finding_and_covering() {
+    let (mut connection, pool, specs) =
+        shared_larm_queue_fixture(&["findingCandidate", "coveringEvidence"]);
+    let mut selected = Vec::new();
+    for index in 0..4 {
+        let job = claim_next_job_with_provider_lease_for_connection(
+            &mut connection,
+            &pool,
+            &specs,
+            &format!("worker-{index}"),
+            &format!("lease-{index}"),
+            90,
+        )
+        .unwrap()
+        .unwrap();
+        selected.push(job.queue_name);
+    }
+    assert_eq!(
+        selected,
+        vec![
+            "findingCandidate",
+            "coveringEvidence",
+            "findingCandidate",
+            "coveringEvidence"
+        ]
+    );
+    assert!(claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &specs,
+        "worker-5",
+        "lease-5",
+        90
+    )
+    .unwrap()
+    .is_none());
+}
+
+#[test]
+fn shared_larm_new_queue_wins_over_an_occupied_high_priority_queue() {
+    let (mut connection, pool, specs) =
+        shared_larm_queue_fixture(&["findingCandidate", "coveringEvidence", "episodeDistiller"]);
+    let first = claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &specs[..1],
+        "worker-0",
+        "lease-0",
+        90,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(first.queue_name, "findingCandidate");
+    let second = claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &specs,
+        "worker-1",
+        "lease-1",
+        90,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(second.queue_name, "coveringEvidence");
+    let third = claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &specs,
+        "worker-2",
+        "lease-2",
+        90,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(third.queue_name, "episodeDistiller");
+    let fourth = claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &specs,
+        "worker-3",
+        "lease-3",
+        90,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        fourth.queue_name.as_str(),
+        "findingCandidate" | "coveringEvidence"
+    ));
+}
+
+#[test]
+fn shared_larm_uses_all_four_slots_when_only_finding_or_covering_is_runnable() {
+    for queue in ["findingCandidate", "coveringEvidence"] {
+        let (mut connection, pool, specs) = shared_larm_queue_fixture(&[queue]);
+        for index in 0..4 {
+            let job = claim_next_job_with_provider_lease_for_connection(
+                &mut connection,
+                &pool,
+                &specs,
+                &format!("worker-{index}"),
+                &format!("lease-{index}"),
+                90,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(job.queue_name, queue);
+        }
+    }
+}
+
+#[test]
+fn static_pool_cannot_gain_shared_capacity_by_using_larm_prefix() {
+    let (mut connection, mut pool, mut specs) = shared_larm_queue_fixture(&["findingCandidate"]);
+    pool.targets = vec!["local-a".into()];
+    specs[0].preferred_target_ids = pool.targets.clone();
+    assert!(claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &specs,
+        "worker-0",
+        "lease-0",
+        90
+    )
+    .unwrap()
+    .is_some());
+    assert!(claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &specs,
+        "worker-1",
+        "lease-1",
+        90
+    )
+    .unwrap()
+    .is_none());
+    assert!(connection.execute("insert into llm_provider_leases(id,pool_id,target_id,queue_name,queue_job_id,worker_id,expires_at) values('fake-lease',?1,'local-a','findingCandidate','fake-job','fake-worker',CURRENT_TIMESTAMP)",[pool.pool_id]).is_err());
+}
+
+#[test]
+fn empty_job_allowlist_never_claims_any_job() {
+    let (mut connection, pool, mut specs) = shared_larm_queue_fixture(&["findingCandidate"]);
+    specs[0].allowed_job_ids = Some(vec![]);
+    assert!(claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &specs,
+        "worker",
+        "lease",
+        90
+    )
+    .unwrap()
+    .is_none());
+}

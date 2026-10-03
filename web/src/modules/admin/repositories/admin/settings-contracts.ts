@@ -20,6 +20,7 @@ export type RuntimeSecretStatus = {
   source: RuntimeSecretSource;
   maskedValue: string | null;
   updatedAt: string | null;
+  error?: string;
 };
 
 export type StaticRuntimeSettingsRoute = {

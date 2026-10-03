@@ -255,7 +255,12 @@ export function useSettingsController() {
           <strong>{label}</strong>
           <div className="settings-secret-status">
             <SecretStatusBadge status={status} />
-            <span>{status.maskedValue ?? "not configured"}</span>
+            <span>
+              {status.error
+                ? "保存済みキーを読み込めません。Keychainのロックとアクセス許可を確認してください。"
+                : (status.maskedValue ?? "not configured")}
+            </span>
+            {status.error && <span>{status.error}</span>}
             <span>updated {formatDateTime(status.updatedAt)}</span>
           </div>
         </div>

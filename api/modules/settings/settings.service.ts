@@ -64,6 +64,15 @@ export async function reloadRuntimeCacheForApi() {
 export async function testProviderForApi(providerRaw: string) {
   await ensureRuntimeSettingsLoaded();
   const provider = providerNameSchema.parse(providerRaw);
+  const view = getRuntimeSettingsViewSnapshot().settings;
+  const secretError =
+    provider === "openai"
+      ? view.providers.openai.apiKeySecret.error
+      : provider === "azure-openai" &&
+          !view.providers["azure-openai"].apiKeySecrets.some((key) => key.configured)
+        ? view.providers["azure-openai"].apiKeySecrets.find((key) => key.error)?.error
+        : undefined;
+  if (secretError) return { provider, configured: false, reachable: false, error: secretError };
   switch (provider) {
     case "openai":
       return createOpenAiProvider({ timeoutMs: 10_000 }).healthCheck();
@@ -128,6 +137,7 @@ async function testLocalLlmProviderPoolForApi() {
             apiPath: model.apiPath,
             model: model.model,
             apiKey: runtime?.apiKey ?? "",
+            apiKeyError: runtime?.apiKeyError,
           },
         }).healthCheck()),
       };
@@ -155,6 +165,17 @@ async function testLocalLlmProviderPoolForApi() {
 export async function testAzureOpenAiDeploymentForApi(deploymentRaw: string | number) {
   await ensureRuntimeSettingsLoaded();
   const deployment = azureOpenAiDeploymentSchema.parse(deploymentRaw);
+  const secret =
+    getRuntimeSettingsViewSnapshot().settings.providers["azure-openai"].apiKeySecrets[
+      deployment - 1
+    ];
+  if (secret?.error)
+    return {
+      provider: "azure-openai" as const,
+      configured: false,
+      reachable: false,
+      error: secret.error,
+    };
   return createAzureOpenAiProvider({
     timeoutMs: 10_000,
     deploymentIndex: deployment - 1,

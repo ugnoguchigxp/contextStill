@@ -33,6 +33,7 @@ import {
   type DistillationPriorityTargetKind,
   type RuntimeProviderPool,
   type RuntimeSecretKey,
+  type RuntimeSecretStatus,
   type RuntimeSettingsEditable,
   type RuntimeSettingsUpdateRequest,
   type RuntimeSettingsView,
@@ -56,7 +57,9 @@ async function loadRuntimeSettingsInternal(): Promise<void> {
   ]);
 
   const settings = parseDocumentValue(documentRow);
-  const secretRowMap = buildSecretMap(await resolveSecretRows(secretRows));
+  const secretRowMap = buildSecretMap(
+    await resolveSecretRows(secretRows, undefined, { isolateFailures: true }),
+  );
   const resolvedSecrets: Partial<Record<RuntimeSecretKey, ReturnType<typeof resolveSecretValue>>> =
     {
       openaiApiKey: resolveSecretValue("openaiApiKey", secretRowMap.openaiApiKey),
@@ -77,56 +80,28 @@ async function loadRuntimeSettingsInternal(): Promise<void> {
     resolvedSecrets[key] = resolveSecretValue(key, secretRowMap[key]);
   }
 
+  const secretStatus = (key: RuntimeSecretKey): RuntimeSecretStatus => {
+    const secret = resolvedSecrets[key];
+    return {
+      configured: Boolean(secret?.value),
+      source: secret?.source ?? "none",
+      maskedValue: maskSecret(secret?.value),
+      updatedAt: secret?.updatedAt ?? null,
+      ...(secret?.error ? { error: secret.error } : {}),
+    };
+  };
   const secretStatuses = {
-    openaiApiKey: {
-      configured: Boolean(resolvedSecrets.openaiApiKey?.value),
-      source: resolvedSecrets.openaiApiKey?.source ?? "none",
-      maskedValue: maskSecret(resolvedSecrets.openaiApiKey?.value),
-      updatedAt: resolvedSecrets.openaiApiKey?.updatedAt ?? null,
-    },
-    azureOpenAiApiKey: {
-      configured: Boolean(resolvedSecrets.azureOpenAiApiKey?.value),
-      source: resolvedSecrets.azureOpenAiApiKey?.source ?? "none",
-      maskedValue: maskSecret(resolvedSecrets.azureOpenAiApiKey?.value),
-      updatedAt: resolvedSecrets.azureOpenAiApiKey?.updatedAt ?? null,
-    },
-    azureOpenAiApiKeys: settings.providers["azure-openai"].deployments.map((_deployment, index) => {
-      const key =
-        index === 0 ? "azureOpenAiApiKey" : (`azureOpenAiApiKey${index + 1}` as RuntimeSecretKey);
-      return {
-        configured: Boolean(resolvedSecrets[key]?.value),
-        source: resolvedSecrets[key]?.source ?? "none",
-        maskedValue: maskSecret(resolvedSecrets[key]?.value),
-        updatedAt: resolvedSecrets[key]?.updatedAt ?? null,
-      };
-    }),
-    localLlmApiKey: {
-      configured: Boolean(resolvedSecrets.localLlmApiKey?.value),
-      source: resolvedSecrets.localLlmApiKey?.source ?? "none",
-      maskedValue: maskSecret(resolvedSecrets.localLlmApiKey?.value),
-      updatedAt: resolvedSecrets.localLlmApiKey?.updatedAt ?? null,
-    },
-    localLlmApiKeys: settings.providers["local-llm"].models.map((_model, index) => {
-      const key = localLlmSecretKey(index);
-      return {
-        configured: Boolean(resolvedSecrets[key]?.value),
-        source: resolvedSecrets[key]?.source ?? "none",
-        maskedValue: maskSecret(resolvedSecrets[key]?.value),
-        updatedAt: resolvedSecrets[key]?.updatedAt ?? null,
-      };
-    }),
-    braveApiKey: {
-      configured: Boolean(resolvedSecrets.braveApiKey?.value),
-      source: resolvedSecrets.braveApiKey?.source ?? "none",
-      maskedValue: maskSecret(resolvedSecrets.braveApiKey?.value),
-      updatedAt: resolvedSecrets.braveApiKey?.updatedAt ?? null,
-    },
-    exaApiKey: {
-      configured: Boolean(resolvedSecrets.exaApiKey?.value),
-      source: resolvedSecrets.exaApiKey?.source ?? "none",
-      maskedValue: maskSecret(resolvedSecrets.exaApiKey?.value),
-      updatedAt: resolvedSecrets.exaApiKey?.updatedAt ?? null,
-    },
+    openaiApiKey: secretStatus("openaiApiKey"),
+    azureOpenAiApiKey: secretStatus("azureOpenAiApiKey"),
+    azureOpenAiApiKeys: settings.providers["azure-openai"].deployments.map((_deployment, index) =>
+      secretStatus(index === 0 ? "azureOpenAiApiKey" : `azureOpenAiApiKey${index + 1}`),
+    ),
+    localLlmApiKey: secretStatus("localLlmApiKey"),
+    localLlmApiKeys: settings.providers["local-llm"].models.map((_model, index) =>
+      secretStatus(localLlmSecretKey(index)),
+    ),
+    braveApiKey: secretStatus("braveApiKey"),
+    exaApiKey: secretStatus("exaApiKey"),
     bedrockCredential: resolveBedrockCredentialStatus(settings),
   };
 

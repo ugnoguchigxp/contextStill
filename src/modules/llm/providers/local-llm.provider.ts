@@ -40,6 +40,7 @@ type LocalLlmProviderOptions = {
     apiBaseUrl: string;
     apiPath?: string;
     apiKey?: string;
+    apiKeyError?: string;
     model: string;
   };
 };
@@ -50,6 +51,7 @@ function resolveProviderConfig(providerOptions: LocalLlmProviderOptions, model?:
       apiBaseUrl: providerOptions.modelConfig.apiBaseUrl.replace(/\/+$/, ""),
       apiPath: providerOptions.modelConfig.apiPath?.trim() || "/v1/chat/completions",
       apiKey: providerOptions.modelConfig.apiKey ?? "",
+      apiKeyError: providerOptions.modelConfig.apiKeyError,
       model: providerOptions.modelConfig.model,
     };
   }
@@ -110,6 +112,7 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const config = resolveProviderConfig(options, request.model);
+        if (config.apiKeyError) throw new Error(config.apiKeyError);
         if (isAgentSessionApiPath(config.apiPath)) {
           return await runAgentSessionChat(config, request, controller.signal);
         }
@@ -162,6 +165,7 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
       if (!result.configured) {
         return { ...result, error: "local-llm is not configured" };
       }
+      if (config.apiKeyError) return { ...result, reachable: false, error: config.apiKeyError };
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);

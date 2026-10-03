@@ -43,6 +43,7 @@ pub struct LarmConnectionManager {
     state_path: Option<PathBuf>,
     pending_reason: Option<String>,
     create_attempted: bool,
+    request_capacity: Option<u64>,
 }
 
 impl LarmConnectionManager {
@@ -59,6 +60,7 @@ impl LarmConnectionManager {
             state_path: None,
             pending_reason: None,
             create_attempted: false,
+            request_capacity: None,
         })
     }
 
@@ -122,6 +124,62 @@ impl LarmConnectionManager {
         self.target.as_ref()
     }
 
+    pub(crate) fn reusable_target(&self) -> Option<&ClaimedLarmTarget> {
+        self.target.as_ref().filter(|target| {
+            self.state == LarmConnectionManagerState::Ready
+                && self.request_capacity.is_some()
+                && self.client.target_requires_renewal(target) == Ok(false)
+        })
+    }
+
+    pub(crate) fn cached_request_capacity(&self) -> Option<u64> {
+        self.request_capacity
+    }
+
+    pub(crate) fn request_capacity(&mut self) -> Result<u64, LarmControlError> {
+        if let Some(capacity) = self.request_capacity {
+            return Ok(capacity);
+        }
+        let capacity = if self.config().max_concurrent_requests == 1 {
+            1
+        } else {
+            let health =
+                self.client.health(self.connection_id().ok_or_else(|| {
+                    LarmControlError::configuration("no ready LARM connection")
+                })?)?;
+            let provider = health
+                .providers
+                .iter()
+                .find(|provider| provider.name == "llm")
+                .ok_or_else(|| LarmControlError::protocol("LARM health omitted llm"))?;
+            if health.id != self.connection_id().unwrap_or_default()
+                || health.status != LarmConnectionStatus::Ready
+                || !health.ready
+                || !health.accepting_requests
+                || !provider.ready
+                || !provider.accepting_requests
+            {
+                return Err(LarmControlError::protocol(
+                    "LARM is not accepting LLM requests",
+                ));
+            }
+            match &provider.capacity {
+                Some(capacity) if capacity.ready && capacity.max_concurrent_requests > 0 => {
+                    capacity.max_concurrent_requests
+                }
+                Some(_) => return Err(LarmControlError::protocol("invalid LARM request capacity")),
+                None => 1,
+            }
+        }
+        .min(self.config().max_concurrent_requests);
+        self.request_capacity = Some(capacity);
+        Ok(capacity)
+    }
+
+    pub(crate) fn connection(&self) -> Option<&PublicLarmConnection> {
+        self.connection.as_ref()
+    }
+
     pub fn connection_id(&self) -> Option<&str> {
         self.connection
             .as_ref()
@@ -150,6 +208,7 @@ impl LarmConnectionManager {
             self.next_poll_at = None;
         }
 
+        self.request_capacity = None;
         self.state = LarmConnectionManagerState::WaitingActivity;
         let activity = match self.client.service_activity() {
             Ok(activity) => activity,
@@ -205,6 +264,9 @@ impl LarmConnectionManager {
             ) {
                 self.release()?;
             } else {
+                if current.status != LarmConnectionStatus::Ready {
+                    self.target = None;
+                }
                 self.connection = Some(current);
             }
         }
@@ -238,6 +300,7 @@ impl LarmConnectionManager {
     }
 
     pub fn renew_and_reclaim(&mut self) -> Result<(), LarmControlError> {
+        self.request_capacity = None;
         let connection_id = self
             .connection_id()
             .map(str::to_string)
@@ -290,6 +353,7 @@ impl LarmConnectionManager {
     }
 
     pub fn release(&mut self) -> Result<(), LarmControlError> {
+        self.request_capacity = None;
         self.target = None;
         if self.connection_id().is_none() && self.create_attempted {
             let key = self.pending_create_key.clone().ok_or_else(|| {
@@ -338,6 +402,7 @@ impl LarmConnectionManager {
     }
 
     fn acquire_target(&mut self, activity: &LarmServiceActivity) -> Result<(), LarmControlError> {
+        self.request_capacity = None;
         let ready = if let Some(connection) = self.connection.clone() {
             if connection.boot_epoch != activity.boot_epoch
                 || connection.catalog_revision != activity.config_revision
@@ -496,6 +561,44 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
     use zeroize::Zeroizing;
+
+    #[test]
+    fn request_capacity_uses_advertised_limit_and_defaults_to_one() {
+        for (advertised, expected) in [
+            (None, Some(1)),
+            (Some(2), Some(2)),
+            (Some(8), Some(4)),
+            (Some(0), None),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let origin = format!("http://{}", listener.local_addr().unwrap());
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                assert!(read_request(&mut stream)
+                    .starts_with("GET /v1/agent-connections/aconn_epoch_1/health"));
+                let mut provider = serde_json::json!({"name":"llm","capability":"llm.coding","ready":true,"acceptingRequests":true});
+                if let Some(limit) = advertised {
+                    provider["capacity"] = serde_json::json!({"ready":true,"maxConcurrentRequests":limit,"completionGuaranteed":false});
+                }
+                stream.write_all(json_response(serde_json::json!({"id":"aconn_epoch_1","status":"ready","ready":true,"acceptingRequests":true,"checkedAt":"2026-10-03T00:00:00Z","providers":[provider]})).as_bytes()).unwrap();
+            });
+            let mut config = config(&origin);
+            config.max_concurrent_requests = 4;
+            let mut manager = LarmConnectionManager::new(config).unwrap();
+            manager.connection = Some(public_connection("epoch-1"));
+            match expected {
+                Some(limit) => {
+                    assert_eq!(manager.request_capacity().unwrap(), limit);
+                    assert_eq!(manager.request_capacity().unwrap(), limit);
+                }
+                None => {
+                    assert!(manager.request_capacity().is_err());
+                    assert_eq!(manager.cached_request_capacity(), None);
+                }
+            }
+            server.join().unwrap();
+        }
+    }
 
     #[test]
     fn desired_connection_reconciles_even_when_queue_is_idle() {
@@ -659,6 +762,7 @@ mod tests {
         let mut manager = LarmConnectionManager::new(config(&origin)).unwrap();
         manager.connection = Some(public_connection("epoch-1"));
         manager.target = Some(ClaimedLarmTarget {
+            context_window: None,
             connection_id: "aconn_epoch_1".into(),
             allocation_id: "alloc_epoch_1".into(),
             api_base_url: format!("{origin}/v1"),
@@ -868,6 +972,7 @@ mod tests {
         let mut manager = LarmConnectionManager::new(config(&format!("http://{address}"))).unwrap();
         manager.connection = Some(public_connection("epoch-1"));
         manager.target = Some(ClaimedLarmTarget {
+            context_window: None,
             connection_id: "aconn_epoch_1".to_string(),
             allocation_id: "alloc_epoch_1".to_string(),
             api_base_url: format!("http://{address}/v1"),
@@ -901,6 +1006,7 @@ mod tests {
         let mut manager = LarmConnectionManager::new(config(&format!("http://{address}"))).unwrap();
         manager.connection = Some(public_connection("epoch-1"));
         manager.target = Some(ClaimedLarmTarget {
+            context_window: None,
             connection_id: "aconn_epoch_1".to_string(),
             allocation_id: "alloc_epoch_1".to_string(),
             api_base_url: format!("http://{address}/v1"),
@@ -941,6 +1047,7 @@ mod tests {
         let mut manager = LarmConnectionManager::new(config(&origin)).unwrap();
         manager.connection = Some(public_connection("epoch-1"));
         manager.target = Some(ClaimedLarmTarget {
+            context_window: None,
             connection_id: "aconn_epoch_1".to_string(),
             allocation_id: "alloc_epoch_1".to_string(),
             api_base_url: format!("{origin}/v1"),
@@ -987,6 +1094,7 @@ mod tests {
         let mut manager = LarmConnectionManager::new(config(&origin)).unwrap();
         manager.connection = Some(public_connection("epoch-1"));
         manager.target = Some(ClaimedLarmTarget {
+            context_window: None,
             connection_id: "aconn_epoch_1".to_string(),
             allocation_id: "alloc_epoch_1".to_string(),
             api_base_url: format!("{origin}/v1"),
@@ -1024,6 +1132,7 @@ mod tests {
             ready_timeout_ms: 180_000,
             ttl_seconds: 300,
             request_timeout_ms: 240_000,
+            max_concurrent_requests: 1,
             control_bearer_token: Some(Zeroizing::new("test-control-credential".to_string())),
         }
     }
@@ -1111,6 +1220,7 @@ mod tests {
             audience_revision: "2".repeat(64),
             status: LarmConnectionStatus::Ready,
             providers: vec![PublicLarmConnectionProvider {
+                context_window: None,
                 name: "llm".to_string(),
                 capability: "llm.coding".to_string(),
                 route: "llm-agent-worker".to_string(),

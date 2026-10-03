@@ -116,6 +116,7 @@ describe("settings runtime cache", () => {
           controlTimeoutMs: 5_000,
           readyTimeoutMs: 180_000,
           ttlSeconds: 900,
+          maxConcurrentRequests: 4,
           requestTimeoutMs: 300_000,
         },
       ],
@@ -127,6 +128,9 @@ describe("settings runtime cache", () => {
 
     const normalized = normalizeRuntimeSettingsEditable(input);
 
+    expect(
+      normalized.providers["larm-agent-connection"].connections[0]?.maxConcurrentRequests,
+    ).toBe(4);
     expect(normalized.providers["larm-agent-connection"].connections[0]).not.toHaveProperty(
       "agentProfile",
     );
@@ -186,8 +190,9 @@ describe("settings runtime cache", () => {
       normalizeRuntimeSettingsEditable(legacy).providers["larm-agent-connection"].connections[0];
     expect(connection).not.toHaveProperty("agentProfile");
     expect(connection?.audience).toBe("saaa-desktop");
-    expect(connection?.ttlSeconds).toBe(300);
-    expect(connection?.requestTimeoutMs).toBe(240_000);
+    expect(connection?.maxConcurrentRequests).toBe(1);
+    expect(connection?.ttlSeconds).toBe(900);
+    expect(connection?.requestTimeoutMs).toBe(300_000);
   });
 
   test("rejects mixed static and LARM route fields", () => {
@@ -211,6 +216,7 @@ describe("settings runtime cache", () => {
           controlTimeoutMs: 5_000,
           readyTimeoutMs: 180_000,
           ttlSeconds: 900,
+          maxConcurrentRequests: 1,
           requestTimeoutMs: 300_000,
         },
       ],
@@ -239,6 +245,7 @@ describe("settings runtime cache", () => {
           controlTimeoutMs: 5_000,
           readyTimeoutMs: 180_000,
           ttlSeconds: 900,
+          maxConcurrentRequests: 1,
           requestTimeoutMs: 300_000,
         },
       ],
@@ -274,6 +281,7 @@ describe("settings runtime cache", () => {
           controlTimeoutMs: 5_000,
           readyTimeoutMs: 180_000,
           ttlSeconds: 900,
+          maxConcurrentRequests: 1,
           requestTimeoutMs: 300_000,
         },
       ],
@@ -303,6 +311,7 @@ describe("settings runtime cache", () => {
           controlTimeoutMs: 5_000,
           readyTimeoutMs: 180_000,
           ttlSeconds: 900,
+          maxConcurrentRequests: 1,
           requestTimeoutMs: 300_000,
         },
       ],
@@ -358,6 +367,7 @@ describe("settings runtime cache", () => {
           controlTimeoutMs: 5_000,
           readyTimeoutMs: 180_000,
           ttlSeconds: 900,
+          maxConcurrentRequests: 1,
           requestTimeoutMs: 300_000,
         },
       ],
@@ -399,6 +409,7 @@ describe("settings runtime cache", () => {
           controlTimeoutMs: 5_000,
           readyTimeoutMs: 180_000,
           ttlSeconds: 900,
+          maxConcurrentRequests: 1,
           requestTimeoutMs: 300_000,
         },
       ],

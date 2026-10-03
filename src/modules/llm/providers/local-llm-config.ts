@@ -4,6 +4,7 @@ export type ResolvedLocalLlmModelConfig = {
   apiBaseUrl: string;
   apiPath: string;
   apiKey?: string;
+  apiKeyError?: string;
   model: string;
 };
 
@@ -57,6 +58,7 @@ export function resolveLocalLlmModelConfig(model?: string): ResolvedLocalLlmMode
       "/v1/chat/completions",
     apiKey:
       selected && "apiKey" in selected ? selected.apiKey : groupedConfig.localLlm.apiKey || "",
+    apiKeyError: selected ? selected.apiKeyError : groupedConfig.localLlm.apiKeyError,
     model:
       selected?.model || requestedTarget?.model || requestedModel || groupedConfig.localLlm.model,
   };

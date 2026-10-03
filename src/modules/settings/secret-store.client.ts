@@ -91,15 +91,25 @@ export const secretStoreClient: SecretStoreClient = {
 export async function resolveSecretRows(
   rows: SettingsRow[],
   store = secretStoreClient,
+  options: { isolateFailures?: boolean } = {},
 ): Promise<SettingsRow[]> {
   return Promise.all(
     rows.map(async (row) => {
       if (row.value.disabled === true || row.value.environment === true) return row;
       if (row.valueKind !== "secret_ref") return row;
-      const reference = row.secretRef;
-      if (!reference || row.value.secretRef !== reference)
-        throw new SecretStoreError("secret_reference_invalid");
-      return { ...row, value: { value: await store.get(row.key, reference) } };
+      try {
+        const reference = row.secretRef;
+        if (!reference || row.value.secretRef !== reference)
+          throw new SecretStoreError("secret_reference_invalid");
+        return { ...row, value: { value: await store.get(row.key, reference) } };
+      } catch (error) {
+        if (!options.isolateFailures || !(error instanceof SecretStoreError)) throw error;
+        // Ephemeral status only: retain the persisted reference and never use an env fallback.
+        const code = /^secret_[a-z_]+$/.test(error.message)
+          ? error.message
+          : "secret_store_unavailable";
+        return { ...row, value: { secretError: code } };
+      }
     }),
   );
 }

@@ -24,6 +24,7 @@ use super::covering_executor::{
 };
 use super::dynamic_provider::{
     claim_dynamic_provider_execution_for_path, dynamic_provider_routes_configured,
+    dynamic_worker_capacity, prepare_dynamic_provider_connections,
 };
 use super::episode_executor::{
     run_episode_distiller_job_for_connection, run_episode_distiller_job_for_path,
@@ -388,8 +389,14 @@ fn run_split_provider_executor_tick_for_path(
     let capacity: u64 = provider_pools(&settings)
         .iter()
         .map(|pool| pool.max_concurrent.min(pool.targets.len() as u64))
-        .sum();
+        .sum::<u64>()
+        + dynamic_worker_capacity(&settings)?;
     drop(reader);
+    prepare_dynamic_provider_connections(
+        sqlite_path,
+        config.rust_covering_mode.as_str(),
+        &config.covering_canary_job_ids,
+    )?;
     let workers = capacity.max(1).min(config.max_claims).clamp(1, 32);
     let remaining = AtomicU64::new(config.max_claims);
     let reports = thread::scope(|scope| {
@@ -510,6 +517,14 @@ fn run_pool_covering_job(
     let Some(execution) = execution else {
         return Ok(None);
     };
+    execute_and_persist_covering(sqlite_path, config, execution).map(Some)
+}
+
+fn execute_and_persist_covering(
+    sqlite_path: &std::path::Path,
+    config: &ExecutorTickConfig,
+    execution: NegativeCoveringExecution,
+) -> Result<NegativeCoveringPersistStatus, CliError> {
     let _claim_guard = ProviderClaimGuard {
         sqlite_path: sqlite_path.to_path_buf(),
         job: super::types::ClaimedProviderLeaseJob {
@@ -532,9 +547,7 @@ fn run_pool_covering_job(
         Err(_) => covering_worker_failure_result("covering_executor_panicked"),
     };
     sqlite_writer::execute_for_path(sqlite_path, "queue.covering_persist", move |connection| {
-        persist_negative_covering_result(connection, &execution, &result)
-            .map(Some)
-            .map_err(|e| e.to_string())
+        persist_negative_covering_result(connection, &execution, &result).map_err(|e| e.to_string())
     })
     .map_err(|e| CliError::io(format!("SQLite writer covering persistence failed: {e}")))
 }
@@ -565,8 +578,12 @@ fn run_split_provider_worker_tick_for_path(
                 continue;
             }
         }
-        let dynamic_setup =
-            claim_dynamic_provider_execution_for_path(sqlite_path, config.queue_stale_seconds)?;
+        let dynamic_setup = claim_dynamic_provider_execution_for_path(
+            sqlite_path,
+            config.queue_stale_seconds,
+            config.rust_covering_mode.as_str(),
+            &config.covering_canary_job_ids,
+        )?;
         let (setup, _dynamic_manager) = match dynamic_setup {
             Some(dynamic) => (
                 PreparedProviderClaim {
@@ -602,6 +619,34 @@ fn run_split_provider_worker_tick_for_path(
             sqlite_path: sqlite_path.to_path_buf(),
             job: setup.job.clone(),
         };
+        if setup.job.queue_name == "coveringEvidence" {
+            let reader = open_query_only_connection(sqlite_path)?;
+            let settings = load_settings_document(&reader)?.unwrap_or_else(|| json!({}));
+            let execution = match load_covering_execution(
+                &reader,
+                &settings,
+                setup.job.clone(),
+                setup.target.clone(),
+                setup.api_key.as_deref().map(|s| s.to_string()),
+                &config,
+            ) {
+                Ok(execution) => execution,
+                Err(error) => {
+                    return_provider_setup_failure(sqlite_path, &setup, &error.to_string())?;
+                    retried += 1;
+                    continue;
+                }
+            };
+            let mut covering_config = config.clone();
+            covering_config.llm_timeout_seconds = setup.request_timeout_seconds;
+            let outcome = execute_and_persist_covering(sqlite_path, &covering_config, execution)?;
+            match outcome {
+                NegativeCoveringPersistStatus::Completed => completed += 1,
+                NegativeCoveringPersistStatus::Failed => failed += 1,
+                _ => retried += 1,
+            }
+            continue;
+        }
         if setup.job.queue_name == "landscapeCuration" {
             let reader = open_query_only_connection(sqlite_path)?;
             let settings = load_settings_document(&reader)?.unwrap_or_else(|| json!({}));
@@ -1254,53 +1299,7 @@ fn claim_covering_with_connection(
                     None
                 }
             });
-            let low_importance_reject_threshold = settings
-                .pointer("/distillationRuntime/lowImportanceRejectThreshold")
-                .and_then(Value::as_f64)
-                .unwrap_or(50.0)
-                .round() as i64;
-            let provider_order = settings
-                .pointer("/search/providerOrder")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .filter(|provider| {
-                    settings
-                        .pointer(&format!("/search/providers/{provider}/enabled"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(true)
-                })
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>();
-            let external_search = CoveringExternalSearchConfig {
-                provider_order: if provider_order.is_empty() {
-                    vec!["duckduckgo".to_string()]
-                } else {
-                    provider_order
-                },
-                max_provider_attempts: settings
-                    .pointer("/search/maxProviderAttempts")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1)
-                    .clamp(1, 3) as usize,
-                result_count: settings
-                    .pointer("/search/resultCount")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(3)
-                    .clamp(1, 8) as usize,
-                brave_api_key: load_secret_value(connection, "braveApiKey"),
-                exa_api_key: load_secret_value(connection, "exaApiKey"),
-            };
-            load_claimed_negative_execution(
-                connection,
-                claimed,
-                target,
-                api_key,
-                low_importance_reject_threshold,
-                config.source_read_root.clone(),
-                external_search,
-            )
+            load_covering_execution(connection, &settings, claimed, target, api_key, config)
         })();
         match execution {
             Ok(execution) => return Ok(Some(execution)),
@@ -1322,6 +1321,63 @@ fn claim_covering_with_connection(
         }
     }
     Ok(None)
+}
+
+fn load_covering_execution(
+    connection: &Connection,
+    settings: &Value,
+    claimed: super::types::ClaimedProviderLeaseJob,
+    target: LocalLlmTargetConfig,
+    api_key: Option<String>,
+    config: &ExecutorTickConfig,
+) -> Result<NegativeCoveringExecution, CliError> {
+    let low_importance_reject_threshold = settings
+        .pointer("/distillationRuntime/lowImportanceRejectThreshold")
+        .and_then(Value::as_f64)
+        .unwrap_or(50.0)
+        .round() as i64;
+    let provider_order = settings
+        .pointer("/search/providerOrder")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|provider| {
+            settings
+                .pointer(&format!("/search/providers/{provider}/enabled"))
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+        })
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let external_search = CoveringExternalSearchConfig {
+        provider_order: if provider_order.is_empty() {
+            vec!["duckduckgo".to_string()]
+        } else {
+            provider_order
+        },
+        max_provider_attempts: settings
+            .pointer("/search/maxProviderAttempts")
+            .and_then(Value::as_u64)
+            .unwrap_or(1)
+            .clamp(1, 3) as usize,
+        result_count: settings
+            .pointer("/search/resultCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(3)
+            .clamp(1, 8) as usize,
+        brave_api_key: load_secret_value(connection, "braveApiKey"),
+        exa_api_key: load_secret_value(connection, "exaApiKey"),
+    };
+    load_claimed_negative_execution(
+        connection,
+        claimed,
+        target,
+        api_key,
+        low_importance_reject_threshold,
+        config.source_read_root.clone(),
+        external_search,
+    )
 }
 
 fn covering_turn_due(connection: &Connection, min_interval_seconds: u64) -> Result<bool, CliError> {

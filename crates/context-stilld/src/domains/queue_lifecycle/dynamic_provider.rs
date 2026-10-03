@@ -18,7 +18,8 @@ use super::episode_executor::LocalLlmTargetConfig;
 use super::events::append_queue_event_for_connection;
 use super::provider_execution::open_query_only_connection;
 use super::provider_lease::{
-    claim_next_job_with_provider_lease_for_connection, heartbeat_provider_lease_for_connection,
+    claim_next_job_with_provider_lease_for_connection, has_runnable_provider_job,
+    heartbeat_provider_lease_for_connection,
 };
 use super::state::heartbeat_queue_job_for_connection;
 use super::types::{
@@ -86,15 +87,26 @@ struct LarmManagerEntry {
     checked_out: bool,
     draining: bool,
     cleanup_failed: bool,
+    active_requests: u64,
 }
 
 struct LarmManagerCheckout {
     entry: Arc<Mutex<LarmManagerEntry>>,
     manager: Option<LarmConnectionManager>,
+    request_permit: bool,
+    expected_config: LarmConnectionConfig,
 }
 
 impl LarmManagerCheckout {
     fn take(sqlite_path: &Path, config: &LarmConnectionConfig) -> Result<Option<Self>, CliError> {
+        Self::take_for_reconcile(sqlite_path, config, false)
+    }
+
+    fn take_for_reconcile(
+        sqlite_path: &Path,
+        config: &LarmConnectionConfig,
+        refresh: bool,
+    ) -> Result<Option<Self>, CliError> {
         let registry = LARM_CONNECTION_MANAGERS.get_or_init(|| Mutex::new(BTreeMap::new()));
         let key = larm_manager_registry_key(sqlite_path, &config.id);
         let state_path = sqlite_path.with_extension(format!("larm-{}.json", config.id));
@@ -117,6 +129,7 @@ impl LarmManagerCheckout {
                         checked_out: false,
                         draining: false,
                         cleanup_failed: false,
+                        active_requests: 0,
                     }))
                 })
                 .clone()
@@ -128,10 +141,27 @@ impl LarmManagerCheckout {
             return Ok(None);
         }
         if entry.cleanup_failed {
-            return Err(CliError::runtime(format!(
-                "LARM connection {} has an unconfirmed remote cleanup; refusing a new manager",
-                config.id
-            )));
+            // Retry release of the retained identity before allowing another connection.
+            // A transient DELETE failure must not require restarting the resident.
+            entry.draining = true;
+        }
+        if !refresh
+            && !entry.draining
+            && entry.manager.as_ref().is_some_and(|manager| {
+                manager.config() == config && manager.reusable_target().is_some()
+            })
+        {
+            drop(entry);
+            return Ok(Some(Self {
+                entry: entry_handle,
+                manager: None,
+                request_permit: false,
+                expected_config: config.clone(),
+            }));
+        }
+        // Renew, reconfigure and release only after every request using the old token ends.
+        if entry.active_requests > 0 {
+            return Ok(None);
         }
         let mut manager = entry
             .manager
@@ -162,10 +192,13 @@ impl LarmManagerCheckout {
                 .lock()
                 .map_err(|_| CliError::runtime("LARM connection manager entry is poisoned"))?;
             entry.draining = false;
+            entry.cleanup_failed = false;
         }
         Ok(Some(Self {
             entry: entry_handle,
             manager: Some(manager),
+            request_permit: false,
+            expected_config: config.clone(),
         }))
     }
 
@@ -179,26 +212,89 @@ impl LarmManagerCheckout {
         ),
         LarmControlError,
     > {
-        let manager = self
+        if self.request_permit {
+            return Err(LarmControlError::configuration(
+                "checkout already has a request permit",
+            ));
+        }
+        // Control-plane HTTP runs only while this checkout exclusively owns the manager.
+        let controlled_result = if let Some(manager) = self.manager.as_mut() {
+            let result = manager.reconcile(due_job_exists)?;
+            if result.ready {
+                manager.request_capacity()?;
+            }
+            Some(result)
+        } else {
+            None
+        };
+        let mut entry = self
+            .entry
+            .lock()
+            .map_err(|_| LarmControlError::configuration("LARM entry poisoned"))?;
+        if let Some(manager) = self.manager.take() {
+            entry.manager = Some(manager);
+            entry.checked_out = false;
+        }
+        if let Some(result) = controlled_result.as_ref().filter(|result| !result.ready) {
+            return Ok((result.clone(), None));
+        }
+        if entry.checked_out || entry.draining || entry.cleanup_failed {
+            return Ok((waiting_request_permit(), None));
+        }
+        let Some(manager) = entry
             .manager
-            .as_mut()
-            .expect("checked-out LARM manager must exist");
-        // Reconciliation performs control-plane HTTP.  The registry entry is not
-        // locked here, so unrelated connections and drain requests can progress.
-        let reconciled = manager.reconcile(due_job_exists)?;
-        Ok((reconciled, manager.target().cloned()))
+            .as_ref()
+            .filter(|manager| manager.config() == &self.expected_config)
+        else {
+            return Ok((waiting_request_permit(), None));
+        };
+        let Some(target) = manager.reusable_target().cloned() else {
+            return Ok((waiting_request_permit(), None));
+        };
+        let capacity = manager.cached_request_capacity().unwrap_or(0);
+        if due_job_exists {
+            if entry.active_requests >= capacity {
+                return Ok((waiting_request_permit(), None));
+            }
+            // Validate the target and acquire the permit under the same lock. A renewal,
+            // release or settings replacement cannot intervene between these operations.
+            entry.active_requests += 1;
+            self.request_permit = true;
+        }
+        Ok((
+            controlled_result.unwrap_or_else(|| {
+                crate::domains::provider_connection::LarmReconcileResult {
+                    state: crate::domains::provider_connection::LarmConnectionManagerState::Ready,
+                    ready: true,
+                    reason_code: Some("connection_ready".into()),
+                    retry_after_ms: 0,
+                }
+            }),
+            Some(target),
+        ))
     }
 }
 
 impl Drop for LarmManagerCheckout {
     fn drop(&mut self) {
-        let Some(manager) = self.manager.take() else {
-            return;
-        };
         if let Ok(mut entry) = self.entry.lock() {
-            entry.manager = Some(manager);
-            entry.checked_out = false;
+            if self.request_permit {
+                entry.active_requests = entry.active_requests.saturating_sub(1);
+            }
+            if let Some(manager) = self.manager.take() {
+                entry.manager = Some(manager);
+                entry.checked_out = false;
+            }
         }
+    }
+}
+
+fn waiting_request_permit() -> crate::domains::provider_connection::LarmReconcileResult {
+    crate::domains::provider_connection::LarmReconcileResult {
+        state: crate::domains::provider_connection::LarmConnectionManagerState::Ready,
+        ready: false,
+        reason_code: Some("waiting_request_capacity".into()),
+        retry_after_ms: 1000,
     }
 }
 
@@ -251,7 +347,7 @@ fn release_unreferenced_larm_managers(
                 continue;
             };
             entry.draining = true;
-            if entry.checked_out {
+            if entry.checked_out || entry.active_requests > 0 {
                 // The active request owns the connection.  Its checkout will put
                 // the manager back; the next maintenance pass can release it.
                 continue;
@@ -396,9 +492,47 @@ pub(crate) fn dynamic_provider_routes_configured(
     Ok(configured)
 }
 
+pub(crate) fn dynamic_worker_capacity(settings: &Value) -> Result<u64, CliError> {
+    Ok(dynamic_provider_plans(settings, &HashSet::new())?
+        .iter()
+        .map(|plan| plan.connection.max_concurrent_requests)
+        .sum())
+}
+
+// Resolve once before starting the worker batch, so the first create/claim cannot cause
+// the other workers to exit before a shared target exists.
+pub(crate) fn prepare_dynamic_provider_connections(
+    sqlite_path: &Path,
+    covering_mode: &str,
+    canary_job_ids: &[String],
+) -> Result<(), CliError> {
+    let reader = open_query_only_connection(sqlite_path)?;
+    let settings = load_settings_document(&reader)?.unwrap_or_else(|| json!({}));
+    let paused = load_paused_queues(&reader)?;
+    for mut plan in dynamic_provider_plans(&settings, &paused)? {
+        apply_covering_mode(&mut plan, covering_mode, canary_job_ids);
+        if !dynamic_plan_has_runnable_job(&reader, &plan)? {
+            continue;
+        }
+        if let Some(mut checkout) =
+            LarmManagerCheckout::take_for_reconcile(sqlite_path, &plan.connection, true)?
+        {
+            if let Err(error) = checkout.reconcile(false) {
+                eprintln!(
+                    "LARM connection {} preparation failed: {error}",
+                    plan.connection.id
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn claim_dynamic_provider_execution_for_path(
     sqlite_path: &std::path::Path,
     queue_stale_seconds: u64,
+    covering_mode: &str,
+    canary_job_ids: &[String],
 ) -> Result<Option<DynamicProviderClaim>, CliError> {
     let reader = open_query_only_connection(sqlite_path)?;
     let Some(settings) = load_settings_document(&reader)? else {
@@ -412,12 +546,16 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
         .collect::<BTreeSet<_>>();
     release_unreferenced_larm_managers(Some(sqlite_path), &active_connection_ids);
 
-    for plan in plans {
+    for mut plan in plans {
+        apply_covering_mode(&mut plan, covering_mode, canary_job_ids);
         let due_job_exists = dynamic_plan_has_runnable_job(&reader, &plan)?;
+        if !due_job_exists {
+            continue;
+        }
         let Some(mut manager) = LarmManagerCheckout::take(sqlite_path, &plan.connection)? else {
             continue;
         };
-        let (target, api_key) = match manager.reconcile(due_job_exists) {
+        let (target, api_key, telemetry) = match manager.reconcile(due_job_exists) {
             Ok((reconciled, claimed_target)) if due_job_exists && reconciled.ready => {
                 let claimed_target = claimed_target
                     .as_ref()
@@ -434,18 +572,8 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
                     Some(Zeroizing::new(
                         claimed_target.bearer_token.as_str().to_string(),
                     )),
+                    json!({"requestedProfile":"contextStill", "connectionId":claimed_target.connection_id, "allocationId":claimed_target.allocation_id, "providerName":"llm", "publicModel":claimed_target.model, "contextWindow":claimed_target.context_window}),
                 )
-            }
-            Err(error) if error.kind == "transport" && due_job_exists => {
-                let Some(local) = local_ornith_fallback(&settings, &reader, &plan.pool.targets[0])
-                else {
-                    eprintln!(
-                        "LARM connection {} and local ornith are unavailable: {error}",
-                        plan.connection.id
-                    );
-                    continue;
-                };
-                local
             }
             Err(error) => {
                 eprintln!(
@@ -465,12 +593,46 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
             unique_suffix()
         );
         let lease_id = format!("rust-lease-{}", unique_suffix());
-        let pool = plan.pool.clone();
-        let priority_queues = plan.priority_queues.clone();
+        let mut pool = plan.pool.clone();
+        pool.max_concurrent = manager
+            .entry
+            .lock()
+            .map_err(|_| CliError::runtime("LARM entry poisoned"))?
+            .manager
+            .as_ref()
+            .and_then(|manager| manager.cached_request_capacity())
+            .ok_or_else(|| CliError::runtime("shared LARM manager capacity missing"))?;
+        let mut telemetry = telemetry;
+        if let Some(connection) = manager
+            .entry
+            .lock()
+            .map_err(|_| CliError::runtime("LARM entry poisoned"))?
+            .manager
+            .as_ref()
+            .and_then(|manager| manager.connection())
+        {
+            telemetry["canonicalProfile"] = json!(connection.agent_profile);
+            telemetry["catalogRevision"] = json!(connection.catalog_revision);
+            telemetry["bootEpoch"] = json!(connection.boot_epoch);
+        }
+        telemetry["requestId"] = json!(lease_id);
+        telemetry["maxConcurrentRequests"] = json!(pool.max_concurrent);
+        let expected_config = plan.connection.clone();
+        let covering_mode = covering_mode.to_string();
+        let canary_job_ids = canary_job_ids.to_vec();
         let job = sqlite_writer::execute_for_path(
             sqlite_path,
             "queue.dynamic_provider_claim",
             move |connection| {
+                // Control-plane waits can outlast a pause or route change. Re-read the
+                // authoritative settings on the writer immediately before claiming.
+                let priority_queues = revalidated_claim_queues(
+                    connection,
+                    &expected_config,
+                    &covering_mode,
+                    &canary_job_ids,
+                )
+                .map_err(|error| error.to_string())?;
                 let job = claim_next_job_with_provider_lease_for_connection(
                     connection,
                     &pool,
@@ -481,7 +643,7 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
                 )
                 .map_err(|error| error.to_string())?;
                 if let Some(job) = job.as_ref() {
-                    append_claimed_event(connection, job, &worker_id);
+                    append_claimed_event(connection, job, &worker_id, &telemetry);
                     heartbeat_claim(connection, job);
                 }
                 Ok(job)
@@ -502,7 +664,32 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
     Ok(None)
 }
 
-fn append_claimed_event(connection: &Connection, job: &ClaimedProviderLeaseJob, worker_id: &str) {
+fn revalidated_claim_queues(
+    connection: &Connection,
+    expected: &LarmConnectionConfig,
+    covering_mode: &str,
+    canary_job_ids: &[String],
+) -> Result<Vec<ProviderQueueClaimSpec>, CliError> {
+    let Some(settings) = load_settings_document(connection)? else {
+        return Ok(Vec::new());
+    };
+    let paused = load_paused_queues(connection)?;
+    let Some(mut plan) = dynamic_provider_plans(&settings, &paused)?
+        .into_iter()
+        .find(|plan| plan.connection == *expected)
+    else {
+        return Ok(Vec::new());
+    };
+    apply_covering_mode(&mut plan, covering_mode, canary_job_ids);
+    Ok(plan.priority_queues)
+}
+
+fn append_claimed_event(
+    connection: &Connection,
+    job: &ClaimedProviderLeaseJob,
+    worker_id: &str,
+    telemetry: &Value,
+) {
     if let Err(error) = append_queue_event_for_connection(
         connection,
         &format!("rust-queue-event-{}", unique_suffix()),
@@ -514,7 +701,8 @@ fn append_claimed_event(connection: &Connection, job: &ClaimedProviderLeaseJob, 
             &json!({
                 "workerId": worker_id,
                 "executor": "rust",
-                "providerKind": "larm-agent-connection"
+                "providerKind": "larm-agent-connection",
+                "larm": telemetry
             })
             .to_string(),
         ),
@@ -540,6 +728,31 @@ fn heartbeat_claim(connection: &Connection, job: &ClaimedProviderLeaseJob) {
             job.provider_lease.id
         );
     }
+}
+
+fn apply_covering_mode(plan: &mut DynamicProviderPlan, mode: &str, canary_job_ids: &[String]) {
+    let mut queues = Vec::new();
+    for mut spec in std::mem::take(&mut plan.priority_queues) {
+        if spec.queue_name == "coveringEvidence" {
+            match mode {
+                "negative" => spec.candidate_polarity_filter = CandidatePolarityFilter::Negative,
+                "canary" => {
+                    let mut negative = spec.clone();
+                    negative.candidate_polarity_filter = CandidatePolarityFilter::Negative;
+                    queues.push(negative);
+                    if canary_job_ids.is_empty() {
+                        continue;
+                    }
+                    spec.candidate_polarity_filter = CandidatePolarityFilter::NonNegative;
+                    spec.allowed_job_ids = Some(canary_job_ids.to_vec());
+                }
+                "all" => {}
+                _ => continue,
+            }
+        }
+        queues.push(spec);
+    }
+    plan.priority_queues = queues;
 }
 
 fn dynamic_provider_plans(
@@ -571,6 +784,27 @@ fn dynamic_provider_plans(
             &target_id,
             &mut priority_queues,
         );
+        if !paused_queues.contains("coveringEvidence")
+            && [
+                "/taskRouting/coverEvidence/sourceSupport",
+                "/taskRouting/coverEvidence/externalEvidence",
+                "/taskRouting/coverEvidence/mcpEvidence",
+            ]
+            .iter()
+            .all(|pointer| {
+                route_connection_id(settings, pointer).as_deref() == Some(connection_id.as_str())
+            })
+        {
+            priority_queues.push(ProviderQueueClaimSpec {
+                queue_name: "coveringEvidence".into(),
+                preferred_target_ids: vec![target_id.clone()],
+                route_target_column: Some("provider_policy"),
+                route_target_preferences: vec![],
+                allowed_route_values: Some(vec!["default".into()]),
+                candidate_polarity_filter: CandidatePolarityFilter::Any,
+                allowed_job_ids: None,
+            });
+        }
         push_episode_plan(
             settings,
             paused_queues,
@@ -599,7 +833,7 @@ fn dynamic_provider_plans(
             pool: ProviderPoolClaimConfig {
                 pool_id: target_id.clone(),
                 targets: vec![target_id],
-                max_concurrent: 1,
+                max_concurrent: connection.max_concurrent_requests,
                 stale_lease_seconds: connection.ttl_seconds.min(900),
                 low_priority_aging_seconds: 1800,
             },
@@ -680,129 +914,11 @@ fn dynamic_plan_has_runnable_job(
         if !table_exists(connection, table_name)? {
             continue;
         }
-        let allowed = queue.allowed_route_values.as_deref().unwrap_or_default();
-        let (route_condition, parameters) = route_filter(queue, allowed)?;
-        let sql = format!(
-            "select exists(
-               select 1 from {table_name}
-               where (
-                 (status = 'pending' and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP))
-                 or (status = 'paused' and next_run_at is not null and datetime(next_run_at) <= CURRENT_TIMESTAMP)
-               )
-               {route_condition}
-             )"
-        );
-        let exists = connection
-            .query_row(&sql, rusqlite::params_from_iter(parameters), |row| {
-                row.get::<_, i64>(0)
-            })
-            .map_err(|error| {
-                CliError::io(format!(
-                    "failed to inspect dynamic {} queue: {error}",
-                    queue.queue_name
-                ))
-            })?;
-        if exists != 0 {
+        if has_runnable_provider_job(connection, queue)? {
             return Ok(true);
         }
     }
     Ok(false)
-}
-
-fn local_ornith_fallback(
-    settings: &Value,
-    reader: &Connection,
-    target_id: &str,
-) -> Option<(LocalLlmTargetConfig, Option<Zeroizing<String>>)> {
-    let models = settings
-        .pointer("/providers/local-llm/models")?
-        .as_array()?;
-    let model = models.iter().find(|model| {
-        if !model
-            .get("model")
-            .and_then(Value::as_str)
-            .is_some_and(|name| name.starts_with("ornith-"))
-        {
-            return false;
-        }
-        let Some(base_url) = model.get("apiBaseUrl").and_then(Value::as_str) else {
-            return false;
-        };
-        reqwest::Url::parse(base_url).ok().is_some_and(|url| {
-            url.scheme() == "http"
-                && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
-                && url.port_or_known_default().is_some()
-        })
-    })?;
-    let base_url = model.get("apiBaseUrl")?.as_str()?.trim_end_matches('/');
-    let health = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_millis(700))
-        .no_proxy()
-        .build()
-        .ok()?
-        .get(format!("{base_url}/health"))
-        .send()
-        .ok()?;
-    if !health.status().is_success()
-        || health
-            .json::<Value>()
-            .ok()?
-            .get("ready")
-            .and_then(Value::as_bool)
-            != Some(true)
-    {
-        return None;
-    }
-    let api_key = crate::domains::secret_store::row_token(reader, "localLlmApiKey")
-        .or_else(|| std::env::var("LOCAL_LLM_API_KEY").ok())
-        .map(Zeroizing::new);
-    Some((
-        LocalLlmTargetConfig {
-            codex: false,
-            quota_db: None,
-            target_id: target_id.to_string(),
-            api_base_url: base_url.to_string(),
-            api_path: model
-                .get("apiPath")
-                .and_then(Value::as_str)
-                .unwrap_or("/v1/chat/completions")
-                .to_string(),
-            model: model.get("model")?.as_str()?.to_string(),
-        },
-        api_key,
-    ))
-}
-
-fn route_filter<'a>(
-    queue: &ProviderQueueClaimSpec,
-    allowed: &'a [String],
-) -> Result<(String, Vec<&'a String>), CliError> {
-    if allowed.is_empty() {
-        return Ok((String::new(), Vec::new()));
-    }
-    let column = match queue.route_target_column {
-        Some("source_kind") => "source_kind",
-        Some("provider_policy") => "provider_policy",
-        Some(other) => {
-            return Err(CliError::invalid_arguments(format!(
-                "unsupported dynamic route column: {other}"
-            )))
-        }
-        None => {
-            return Err(CliError::invalid_arguments(format!(
-                "dynamic queue {} restricts route values without a route column",
-                queue.queue_name
-            )))
-        }
-    };
-    let placeholders = (1..=allowed.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Ok((
-        format!("and {column} in ({placeholders})"),
-        allowed.iter().collect(),
-    ))
 }
 
 fn load_settings_document(connection: &Connection) -> Result<Option<Value>, CliError> {
@@ -909,37 +1025,22 @@ fn table_exists(connection: &Connection, table_name: &str) -> Result<bool, CliEr
 }
 
 fn unique_suffix() -> String {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    format!("{}-{millis}", std::process::id())
+    format!(
+        "{}-{millis}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::executor::{executor_priority_queues_for_pool, provider_pools};
     use super::*;
-
-    #[test]
-    fn local_ornith_is_available_only_when_its_loopback_health_is_ready() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            use std::io::{Read, Write};
-            let mut request = [0_u8; 1024];
-            let size = stream.read(&mut request).unwrap();
-            assert!(String::from_utf8_lossy(&request[..size]).starts_with("GET /health"));
-            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 14\r\nConnection: close\r\n\r\n{\"ready\":true}").unwrap();
-        });
-        let settings = json!({"providers":{"local-llm":{"models":[{"apiBaseUrl":format!("http://127.0.0.1:{port}"),"apiPath":"/v1/chat/completions","model":"ornith-1.0-9b-4bit"}]}}});
-        let db = Connection::open_in_memory().unwrap();
-        let (target, _) = local_ornith_fallback(&settings, &db, "fallback").unwrap();
-        assert_eq!(target.model, "ornith-1.0-9b-4bit");
-        assert_eq!(target.target_id, "fallback");
-        server.join().unwrap();
-    }
 
     fn larm_connection_config(id: &str) -> LarmConnectionConfig {
         let settings = json!({
@@ -983,6 +1084,211 @@ mod tests {
 
         let second = LarmManagerCheckout::take(scope, &config).unwrap().unwrap();
         assert!(Arc::ptr_eq(&first_entry, &second.entry));
+    }
+
+    #[test]
+    fn shared_checkout_waits_while_control_checkout_owns_manager() {
+        let config = larm_connection_config("control-race-test");
+        let entry = Arc::new(Mutex::new(LarmManagerEntry {
+            manager: None,
+            checked_out: true,
+            draining: false,
+            cleanup_failed: false,
+            active_requests: 0,
+        }));
+        let mut checkout = LarmManagerCheckout {
+            entry: entry.clone(),
+            manager: None,
+            request_permit: false,
+            expected_config: config,
+        };
+        let (result, target) = checkout.reconcile(true).unwrap();
+        assert!(!result.ready);
+        assert!(target.is_none());
+        assert_eq!(entry.lock().unwrap().active_requests, 0);
+        assert!(entry.lock().unwrap().checked_out);
+    }
+
+    #[test]
+    fn shared_checkout_rejects_reconfigured_manager_before_admission() {
+        let config = larm_connection_config("settings-race-test");
+        let mut changed = config.clone();
+        changed.ttl_seconds = 1200;
+        let entry = Arc::new(Mutex::new(LarmManagerEntry {
+            manager: Some(LarmConnectionManager::new(changed).unwrap()),
+            checked_out: false,
+            draining: false,
+            cleanup_failed: false,
+            active_requests: 0,
+        }));
+        let mut checkout = LarmManagerCheckout {
+            entry: entry.clone(),
+            manager: None,
+            request_permit: false,
+            expected_config: config,
+        };
+        assert!(!checkout.reconcile(true).unwrap().0.ready);
+        assert_eq!(entry.lock().unwrap().active_requests, 0);
+    }
+
+    #[test]
+    fn checkout_retries_failed_cleanup_before_admitting_a_new_connection() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut config = larm_connection_config("cleanup-retry-test");
+        config.control_base_url = format!("http://{}", listener.local_addr().unwrap());
+        config.control_bearer_token = Some(Zeroizing::new("test-control-token".into()));
+        let server = std::thread::spawn(move || {
+            for status in ["503 Service Unavailable", "204 No Content"] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = BufReader::new(&mut stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert!(line.starts_with("DELETE /v1/agent-connections/retained-connection "));
+                loop {
+                    line.clear();
+                    assert!(reader.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .unwrap();
+            }
+        });
+        let scope = std::env::temp_dir().join(format!(
+            "context-stilld-cleanup-retry-{}.sqlite",
+            unique_suffix()
+        ));
+        let state_path = scope.with_extension(format!("larm-{}.json", config.id));
+        std::fs::write(
+            &state_path,
+            json!({"key":"retained-key","id":"retained-connection","createAttempted":true})
+                .to_string(),
+        )
+        .unwrap();
+        let checkout = LarmManagerCheckout::take(&scope, &config).unwrap().unwrap();
+        let entry = checkout.entry.clone();
+        drop(checkout);
+        release_unreferenced_larm_managers(Some(&scope), &BTreeSet::new());
+        assert!(entry.lock().unwrap().cleanup_failed);
+
+        let checkout = LarmManagerCheckout::take(&scope, &config).unwrap().unwrap();
+        assert!(!entry.lock().unwrap().cleanup_failed);
+        assert!(!entry.lock().unwrap().draining);
+        assert!(checkout.manager.as_ref().unwrap().connection_id().is_none());
+        drop(checkout);
+        server.join().unwrap();
+        std::fs::remove_file(state_path).unwrap();
+    }
+
+    fn four_queue_settings() -> Value {
+        let route = json!({"kind":"larm-agent-connection","connectionId":"four-queues"});
+        json!({"providers":{"larm-agent-connection":{"enabled":true,"connections":[{
+            "id":"four-queues","controlBaseUrl":"http://127.0.0.1:9810","audience":"same-host",
+            "availabilityPollMs":5000,"availabilityTimeoutMs":2000,"controlTimeoutMs":5000,"readyTimeoutMs":180000,
+            "ttlSeconds":900,"requestTimeoutMs":300000,"maxConcurrentRequests":4
+        }]}},"taskRouting":{"findCandidate":{"source":route,"vibe":route},"episodeDistiller":route,
+            "coverEvidence":{"sourceSupport":route,"externalEvidence":route,"mcpEvidence":route},"landscapeCuration":route}})
+    }
+
+    #[test]
+    fn claim_revalidation_observes_pause_route_and_connection_changes() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "create table settings(namespace text,key text,value text,unique(namespace,key));",
+            )
+            .unwrap();
+        let mut settings = four_queue_settings();
+        let expected = LarmConnectionConfig::from_settings(&settings, "four-queues")
+            .unwrap()
+            .unwrap();
+        connection
+            .execute(
+                "insert into settings values('runtime','settings.v1',?1)",
+                [settings.to_string()],
+            )
+            .unwrap();
+        assert_eq!(
+            revalidated_claim_queues(&connection, &expected, "all", &[])
+                .unwrap()
+                .len(),
+            4
+        );
+        connection.execute("insert into settings values('runtime','queue.controls.v1',?1)",[json!({"queues":{"findingCandidate":{"paused":true},"episodeDistiller":{"paused":true}}}).to_string()]).unwrap();
+        let queues = revalidated_claim_queues(&connection, &expected, "all", &[]).unwrap();
+        assert_eq!(
+            queues
+                .iter()
+                .map(|s| s.queue_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["coveringEvidence", "landscapeCuration"]
+        );
+        settings["taskRouting"]["coverEvidence"]["externalEvidence"] =
+            json!({"provider":"local-llm"});
+        connection
+            .execute(
+                "update settings set value=?1 where key='settings.v1'",
+                [settings.to_string()],
+            )
+            .unwrap();
+        assert_eq!(
+            revalidated_claim_queues(&connection, &expected, "all", &[]).unwrap()[0].queue_name,
+            "landscapeCuration"
+        );
+        settings["providers"]["larm-agent-connection"]["connections"][0]["maxConcurrentRequests"] =
+            json!(3);
+        connection
+            .execute(
+                "update settings set value=?1 where key='settings.v1'",
+                [settings.to_string()],
+            )
+            .unwrap();
+        assert!(revalidated_claim_queues(&connection, &expected, "all", &[])
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn preparation_due_check_uses_covering_mode_polarity_and_canary_ids() {
+        let connection = Connection::open_in_memory().unwrap();
+        super::super::test_support::create_provider_claim_queue_table(
+            &connection,
+            "covering_evidence_queue",
+        );
+        connection.execute_batch(r#"alter table covering_evidence_queue add column found_candidate_id text;create table found_candidates(id text,origin text);insert into found_candidates values('positive','{"polarity":"positive"}');insert into covering_evidence_queue(id,status,created_at,updated_at,provider_policy,found_candidate_id) values('positive-job','pending',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'default','positive');"#).unwrap();
+        let original = dynamic_provider_plans(&four_queue_settings(), &HashSet::new())
+            .unwrap()
+            .remove(0);
+        for (mode, ids, expected) in [
+            ("all", vec![], true),
+            ("off", vec![], false),
+            ("negative", vec![], false),
+            ("canary", vec![], false),
+            ("canary", vec!["other-job".into()], false),
+            ("canary", vec!["positive-job".into()], true),
+            ("invalid", vec![], false),
+        ] {
+            let mut plan = original.clone();
+            apply_covering_mode(&mut plan, mode, &ids);
+            assert_eq!(
+                dynamic_plan_has_runnable_job(&connection, &plan).unwrap(),
+                expected,
+                "{mode} {ids:?}"
+            );
+        }
     }
 
     #[test]
@@ -1045,6 +1351,34 @@ mod tests {
         assert!(startup_lines[0]
             .contains("routes=findCandidate.source,findCandidate.vibe,episodeDistiller"));
         assert!(!startup_lines[0].to_ascii_lowercase().contains("token"));
+    }
+
+    #[test]
+    fn four_queue_types_share_one_dynamic_connection_capacity() {
+        let route = json!({"kind":"larm-agent-connection","connectionId":"four-queues"});
+        let settings = json!({"providers":{"larm-agent-connection":{"enabled":true,"connections":[{
+            "id":"four-queues","controlBaseUrl":"http://127.0.0.1:9810","audience":"same-host",
+            "availabilityPollMs":5000,"availabilityTimeoutMs":2000,"controlTimeoutMs":5000,"readyTimeoutMs":180000,
+            "ttlSeconds":900,"requestTimeoutMs":300000,"maxConcurrentRequests":4
+        }]}},"taskRouting":{"findCandidate":{"source":route,"vibe":route},"episodeDistiller":route,
+            "coverEvidence":{"sourceSupport":route,"externalEvidence":route,"mcpEvidence":route},"landscapeCuration":route}});
+        let plans = dynamic_provider_plans(&settings, &HashSet::new()).unwrap();
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].pool.max_concurrent, 4);
+        assert_eq!(
+            plans[0]
+                .priority_queues
+                .iter()
+                .map(|s| s.queue_name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "findingCandidate",
+                "coveringEvidence",
+                "episodeDistiller",
+                "landscapeCuration"
+            ]
+        );
+        assert_eq!(dynamic_worker_capacity(&settings).unwrap(), 4);
     }
 
     #[test]

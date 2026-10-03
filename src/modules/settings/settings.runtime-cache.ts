@@ -24,6 +24,7 @@ export type SecretValueEntry = {
   value: string;
   source: RuntimeSecretSource;
   updatedAt: string | null;
+  error?: string;
 };
 
 export type RuntimeSettingsCache = {
@@ -551,6 +552,14 @@ export function resolveSecretValue(
   secretRow: SettingsRow | undefined,
 ): SecretValueEntry | null {
   if (secretRow?.value.disabled === true) return null;
+  if (typeof secretRow?.value.secretError === "string") {
+    return {
+      value: "",
+      source: "db",
+      updatedAt: secretRow.updatedAt.toISOString(),
+      error: secretRow.value.secretError,
+    };
+  }
   const dbValue = getSecretStringFromRow(secretRow);
   if (dbValue) {
     return {
@@ -633,6 +642,7 @@ export function applyRuntimeSettingsToProcess(
           apiBaseUrl: model.apiBaseUrl.replace(/\/+$/, ""),
           apiPath: model.apiPath.trim() || "/v1/chat/completions",
           apiKey: secrets[localLlmSecretKey(index)]?.value ?? "",
+          apiKeyError: secrets[localLlmSecretKey(index)]?.error,
           model: model.model,
         }))
         .filter((model) => model.apiBaseUrl.trim() && model.model.trim())
@@ -642,12 +652,14 @@ export function applyRuntimeSettingsToProcess(
     apiPath: settings.providers["local-llm"].apiPath.trim() || "/v1/chat/completions",
     model: localLlmEnabled ? settings.providers["local-llm"].model : "",
     apiKey: localLlmEnabled ? (secrets.localLlmApiKey?.value ?? "") : "",
+    apiKeyError: secrets.localLlmApiKey?.error,
   };
   groupedConfig.localLlm.apiBaseUrl = primaryLocalLlm.apiBaseUrl;
   groupedConfig.localLlm.apiPath = primaryLocalLlm.apiPath;
   groupedConfig.localLlm.model = primaryLocalLlm.model;
   groupedConfig.localLlm.models = localLlmModels;
   groupedConfig.localLlm.apiKey = primaryLocalLlm.apiKey;
+  groupedConfig.localLlm.apiKeyError = primaryLocalLlm.apiKeyError;
   groupedConfig.embedding.provider = settings.embedding.provider;
   groupedConfig.embedding.daemonUrl = settings.embedding.daemonUrl.replace(/\/+$/, "");
   groupedConfig.embedding.openaiModel = settings.embedding.openaiModel;

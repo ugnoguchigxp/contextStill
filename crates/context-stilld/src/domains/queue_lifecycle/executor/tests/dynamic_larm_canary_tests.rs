@@ -85,6 +85,10 @@ fn profile_response() -> String {
                     "protocol": "openai.chat-completions.v1",
                     "endpoint": "/v1/chat/completions",
                     "model": "qwen-agent-worker"
+                }, {
+                    "name":"system-one", "capability":"llm.general", "protocol":"openai.chat-completions.v1", "endpoint":"/v1/chat/completions", "model":"laya-system-one"
+                }, {
+                    "name":"embedding", "capability":"embedding.text", "protocol":"larm.embedding.v1", "endpoint":"/v1/embed", "model":"embedding-default"
                 }]
             }],
             "audiences": ["same-host", "same-host"]
@@ -200,30 +204,50 @@ impl Drop for ScopedLarmTokenEnvironment {
 
 #[test]
 fn dynamic_larm_canary_uses_claimed_json_target_and_releases_on_shutdown() {
+    run_mock_queue_jobs(1);
+}
+
+#[test]
+fn dynamic_larm_connection_executes_four_jobs_concurrently() {
+    run_mock_queue_jobs(4);
+}
+
+fn run_mock_queue_jobs(job_count: usize) {
     let _token_environment = ScopedLarmTokenEnvironment::set_for_test();
     let provider_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let provider_address = provider_listener.local_addr().unwrap();
     let provider_origin = format!("http://{provider_address}");
     let (provider_request_tx, provider_request_rx) = mpsc::channel();
     let provider_server = thread::spawn(move || {
-        let (mut stream, _) = provider_listener.accept().unwrap();
-        provider_request_tx.send(read_request(&mut stream)).unwrap();
-        let content = json!([{
-            "type": "rule",
-            "polarity": "positive",
-            "title": "Use the claimed Provider",
-            "content": "Use only the endpoint and credential returned by the active claim."
-        }])
-        .to_string();
-        stream
-            .write_all(
-                json_response(
-                    200,
-                    json!({"choices": [{"finish_reason":"stop","message": {"content": content}}]}),
-                )
-                .as_bytes(),
-            )
-            .unwrap();
+        provider_listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut streams = Vec::new();
+        while streams.len() < job_count {
+            match provider_listener.accept() {
+                Ok((mut stream, _)) => {
+                    provider_request_tx.send(read_request(&mut stream)).unwrap();
+                    streams.push(stream);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "not all LLM requests arrived concurrently"
+                    );
+                    thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+        // Hold every response until all requests have arrived: serial execution fails.
+        for (index, mut stream) in streams.into_iter().enumerate() {
+            let content = json!([{
+                "type": "rule", "polarity": "positive",
+                "title": format!("Use the claimed Provider {index}"),
+                "content": "Use only the endpoint and credential returned by the active claim."
+            }])
+            .to_string();
+            stream.write_all(json_response(200, json!({"choices": [{"finish_reason":"stop","message": {"content": content}}]})).as_bytes()).unwrap();
+        }
     });
 
     let control_listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -231,7 +255,7 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_on_shutdown() {
     let (control_requests_tx, control_requests_rx) = mpsc::channel();
     let claimed_origin = provider_origin.clone();
     let control_server = thread::spawn(move || {
-        for index in 0..5 {
+        for index in 0..(if job_count == 1 { 5 } else { 6 }) {
             let (mut stream, _) = control_listener.accept().unwrap();
             control_requests_tx.send(read_request(&mut stream)).unwrap();
             let response = match index {
@@ -239,8 +263,20 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_on_shutdown() {
                 1 => profile_response(),
                 2 => connection_response(),
                 3 => claim_response(&claimed_origin, provider_address.port()),
-                4 => "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                    .to_string(),
+                4 if job_count > 1 => json_response(
+                    200,
+                    json!({
+                        "id":"aconn_canary", "status":"ready", "ready":true, "acceptingRequests":true,
+                        "checkedAt":"2026-10-03T00:00:00Z", "providers":[{
+                            "name":"llm", "capability":"llm.coding", "ready":true, "acceptingRequests":true,
+                            "capacity":{"ready":true,"maxConcurrentRequests":4,"completionGuaranteed":false,"maxConcurrentAllocations":4}
+                        }]
+                    }),
+                ),
+                4 | 5 => {
+                    "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_string()
+                }
                 _ => unreachable!(),
             };
             stream.write_all(response.as_bytes()).unwrap();
@@ -265,7 +301,7 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_on_shutdown() {
                 "audience": "same-host",
                 "availabilityPollMs": 1_000, "availabilityTimeoutMs": 2_000,
                 "controlTimeoutMs": 5_000, "readyTimeoutMs": 30_000,
-                "ttlSeconds": 300, "requestTimeoutMs": 240_000
+                "ttlSeconds": 900, "requestTimeoutMs": 30_000, "maxConcurrentRequests":job_count
             }]}
         },
         "taskRouting": {
@@ -289,6 +325,9 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_on_shutdown() {
         ) values ('finding-larm-canary','source_target','vibe_memory','memory-larm-canary',
           'vibe_memory:memory-larm-canary','v1','pending',100,0,'{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
     "#).unwrap();
+    for index in 1..job_count {
+        connection.execute("insert into finding_candidate_queue (id,input_kind,source_kind,source_key,source_uri,distillation_version,status,priority,attempt_count,metadata,created_at,updated_at) values (?1,'source_target','vibe_memory','memory-larm-canary','vibe_memory:memory-larm-canary','v1','pending',100,0,'{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", [format!("finding-larm-canary-{index}")]).unwrap();
+    }
     drop(connection);
 
     let env = MapEnv::from_pairs(vec![
@@ -298,8 +337,14 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_on_shutdown() {
             sqlite_path.to_str().unwrap(),
         ),
         ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
-        ("CONTEXT_STILL_RUST_QUEUE_EXECUTOR_MAX_CLAIMS", "1"),
+        (
+            "CONTEXT_STILL_RUST_QUEUE_EXECUTOR_MAX_CLAIMS",
+            if job_count == 1 { "1" } else { "4" },
+        ),
     ]);
+    let writer =
+        crate::domains::sqlite_writer::SqliteWriterRuntime::start(&sqlite_path, 32, 3).unwrap();
+    crate::domains::sqlite_writer::install_global_writer(writer.handle()).unwrap();
     let first = run_executor_tick_report(&env).unwrap();
     super::super::super::dynamic_provider::release_dynamic_provider_connections();
     provider_server.join().unwrap();
@@ -307,9 +352,11 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_on_shutdown() {
 
     assert_eq!(
         (first.status.as_str(), first.claimed, first.completed),
-        ("executed", 1, 1)
+        ("executed", job_count as u64, job_count as u64)
     );
-    let provider_request = provider_request_rx.recv().unwrap();
+    let provider_requests = provider_request_rx.try_iter().collect::<Vec<_>>();
+    assert_eq!(provider_requests.len(), job_count);
+    let provider_request = &provider_requests[0];
     assert!(provider_request.starts_with("POST /v1/chat/completions HTTP/1.1"));
     let provider_headers = provider_request.to_ascii_lowercase();
     assert!(provider_headers.contains("authorization: bearer "));
@@ -330,15 +377,20 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_on_shutdown() {
     assert!(!provider_request.contains("44448"));
 
     let control_requests = control_requests_rx.try_iter().collect::<Vec<_>>();
-    assert_eq!(control_requests.len(), 5);
+    assert_eq!(control_requests.len(), if job_count == 1 { 5 } else { 6 });
     assert!(control_requests[0].starts_with("GET /v1/activity HTTP/1.1"));
     assert!(control_requests[1].starts_with("GET /v3/agent-profiles?profile=contextStill HTTP/1.1"));
     assert!(control_requests[2].starts_with("POST /v1/agent-connections HTTP/1.1"));
     assert!(control_requests[2].contains("\"profile\":\"contextStill\""));
+    assert!(control_requests[2].contains("\"providers\":[\"llm\"]"));
+    assert!(control_requests[2].contains("\"ttlSeconds\":900"));
     assert!(!control_requests[2].contains("\"agentProfile\""));
     assert!(!control_requests[2].contains("\"explicitAgentProfile\""));
     assert!(control_requests[3].contains("/claim HTTP/1.1"));
-    assert!(control_requests[4].starts_with("DELETE /v1/agent-connections/aconn_canary"));
+    assert!(control_requests
+        .last()
+        .unwrap()
+        .starts_with("DELETE /v1/agent-connections/aconn_canary"));
     assert!(control_requests
         .iter()
         .all(|request| !request.contains("44448")));
@@ -369,8 +421,18 @@ fn dynamic_larm_canary_uses_claimed_json_target_and_releases_on_shutdown() {
         )
         .unwrap();
     assert_eq!(status, "completed");
-    assert_eq!(candidates, 1);
+    assert!(candidates >= 1);
+    let completed: i64 = connection
+        .query_row(
+            "select count(*) from finding_candidate_queue where status='completed'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(completed, job_count as i64);
     assert_eq!(active_leases, 0);
+    crate::domains::sqlite_writer::clear_global_writer(&sqlite_path);
+    writer.shutdown().unwrap();
     std::fs::remove_dir_all(app_dir).unwrap();
 }
 

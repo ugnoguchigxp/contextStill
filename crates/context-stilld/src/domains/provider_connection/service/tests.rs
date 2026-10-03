@@ -266,6 +266,7 @@ fn readiness_poll_rejects_connection_identity_changes() {
 fn target_renewal_is_required_before_request_lifetime_becomes_too_short() {
     let client = LarmControlClient::new(config("http://127.0.0.1:9")).unwrap();
     let target = |expires_at| ClaimedLarmTarget {
+        context_window: None,
         connection_id: "aconn_epoch_1".to_string(),
         allocation_id: "alloc_epoch_1".to_string(),
         api_base_url: "http://127.0.0.1:9/v1".to_string(),
@@ -354,6 +355,7 @@ fn config(origin: &str) -> LarmConnectionConfig {
         ready_timeout_ms: 180_000,
         ttl_seconds: 300,
         request_timeout_ms: 240_000,
+        max_concurrent_requests: 1,
         control_bearer_token: Some(Zeroizing::new("test-control-credential".to_string())),
     }
 }
@@ -493,11 +495,12 @@ fn discovery_maps_unauthorized_and_unknown_profile_to_non_retryable_errors() {
 #[test]
 fn connection_model_conflicting_with_discovery_is_rejected_before_claim() {
     let client = LarmControlClient::new(config("http://127.0.0.1:9810")).unwrap();
-    *client.discovered_profile.lock().unwrap() = Some((
-        "contextstill-background".to_string(),
-        "expected-model".to_string(),
-        "catalog-1".to_string(),
-    ));
+    *client.discovered_profile.lock().unwrap() = Some(DiscoveredLarmProfile {
+        canonical_profile: "contextstill-background".into(),
+        model: "expected-model".into(),
+        catalog_revision: "catalog-1".into(),
+        context_window: None,
+    });
     let connection: PublicLarmConnection = serde_json::from_value(connection_json()).unwrap();
     assert!(client.validate_connection(&connection).is_err());
 }
@@ -580,4 +583,60 @@ fn read_request(stream: &mut TcpStream) -> String {
         request.push_str(&String::from_utf8(body).unwrap());
     }
     request
+}
+
+#[test]
+fn context_window_must_match_discovery_and_remain_stable() {
+    let client = LarmControlClient::new(config("http://127.0.0.1:9810")).unwrap();
+    let mut raw = connection_json();
+    let window = LarmContextWindow {
+        max_tokens: 32768,
+        output_reserve_tokens: 4096,
+        safety_margin_tokens: 0,
+    };
+    raw["providers"][0]["contextWindow"] = serde_json::to_value(&window).unwrap();
+    let connection: PublicLarmConnection = serde_json::from_value(raw).unwrap();
+    *client.discovered_profile.lock().unwrap() = Some(DiscoveredLarmProfile {
+        canonical_profile: connection.agent_profile.clone(),
+        model: connection.providers[0].model.clone(),
+        catalog_revision: connection.catalog_revision.clone(),
+        context_window: Some(window.clone()),
+    });
+    assert!(client.validate_connection(&connection).is_ok());
+    let mut changed = connection.clone();
+    changed.providers[0]
+        .context_window
+        .as_mut()
+        .unwrap()
+        .max_tokens = 16384;
+    assert!(client.validate_connection(&changed).is_err());
+    assert!(ensure_same_connection_identity(&connection, &changed).is_err());
+    changed.providers[0].context_window = None;
+    assert!(client.validate_connection(&changed).is_err());
+    let mut claim = claim_json("http://127.0.0.1:9810");
+    claim["providers"][0]["contextWindow"] = serde_json::to_value(&window).unwrap();
+    assert!(client
+        .validate_claim(&connection, serde_json::from_value(claim.clone()).unwrap())
+        .is_ok());
+    claim["providers"][0]["contextWindow"]["maxTokens"] = serde_json::json!(16384);
+    assert!(client
+        .validate_claim(&connection, serde_json::from_value(claim).unwrap())
+        .is_err());
+}
+
+#[test]
+fn discovery_rejects_empty_or_overflowing_context_window_budgets() {
+    let client = LarmControlClient::new(config("http://127.0.0.1:9810")).unwrap();
+    for (max, reserve, margin) in [
+        (0, 0, 0),
+        (32768, 32768, 0),
+        (32768, 4096, 32768),
+        (u64::MAX, u64::MAX, 1),
+    ] {
+        let mut catalog = profile_catalog_json("catalog-1");
+        catalog["profiles"][0]["providers"][0]["contextWindow"] = serde_json::json!({"maxTokens":max,"outputReserveTokens":reserve,"safetyMarginTokens":margin});
+        assert!(client
+            .validate_profile_catalog(&serde_json::from_value(catalog).unwrap(), "catalog-1")
+            .is_err());
+    }
 }

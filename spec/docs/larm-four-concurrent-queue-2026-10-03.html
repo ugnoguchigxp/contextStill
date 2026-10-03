@@ -1,0 +1,188 @@
+<article lang="ja">
+  <h1>LARM 接続を共有する4並列Queueの実装と反映状況</h1>
+  <p>
+    2026年10月3日。ContextStillのfindingCandidate、coveringEvidence、episodeDistiller、landscapeCurationが、1つのLARM
+    Agent
+    Connectionを共有して最大4ジョブを同時実行できるよう変更した。Queueはユーザーの指示で全7レーンを一時停止している。ContextStill側のバイナリと設定は反映済み。LARM実機が広告する上限は1件なので、本番4並列の有効化は未完了。
+  </p>
+  <h2>接続と実行の契約</h2>
+  <ol>
+    <li>
+      GET
+      /v3/agent-profiles?profile=contextStillでselectorを発見する。複数Providerのprofileからname=llmとOpenAI
+      Chat Completions protocolを選ぶ。
+    </li>
+    <li>
+      POST
+      /v1/agent-connectionsでprofile=contextStill、client=contextstill、providers=[llm]、audience=saaa-desktop、ttlSeconds=900、allowFallback=false、deploymentPolicy=existing-onlyを送る。discoveryのcatalogRevisionをexpectedCatalogRevisionへ渡し、同じcreateを再試行するときは同じIdempotency-Keyを使う。
+    </li>
+    <li>
+      readyとclaimableを確認してclaimする。返されたconfiguration.fields.baseURL/modelとcredential.tokenを使い、モデル名や物理ポートを固定しない。
+    </li>
+    <li>
+      同時実行上限はmin(ContextStill設定maxConcurrentRequests, LARM
+      healthのllm.capacity.maxConcurrentRequests)。capacity広告がない旧サーバーは1件として扱う。
+    </li>
+    <li>
+      共有claimを各ジョブが独立したリクエストとして使う。空きがなければジョブはclaimしない。更新・再claim・設定変更・解放は古いcredentialを使う全リクエストが完了してから行う。
+    </li>
+    <li>
+      各実行バッチの開始時にactivityとconnectionを再確認し、bootEpoch、catalogRevision、期限切れ、drainingを検出する。障害時に別モデルへ暗黙にfallbackしない。
+    </li>
+  </ol>
+  <p>
+    claimイベントにはqueue/job、worker、request ID、requested/canonical
+    profile、connection/allocation、bootEpoch、catalogRevision、public
+    model、contextWindow、採用した同時実行上限を保存する。credentialは保存しない。
+  </p>
+  <h2>4セッションのQueue選択方針</h2>
+  <p>
+    空きsessionを割り当てるとき、runnableなジョブを持つQueueのうち、現在のactive
+    lease数が最小の種類を優先する。まずfinding、covering、episode、curationを各1件へ分散し、他の種類に実行可能ジョブがなければfindingとcoveringを並列実行して残りの枠を使う。片方だけにジョブがある場合は同じQueueを最大4件並列にできる。
+  </p>
+  <p>
+    選択とclaimを同じSQLite Writer
+    transaction内で行うため、4workerが同時に動いても古いactive件数を使って同じQueueへ集中しない。既存のpriority・aging・burst
+    fairnessは同じ負荷のQueue間で適用する。実行中ジョブの差し替えはしない。episodeとcurationはそれぞれ同Queue内1件までとする。
+  </p>
+  <h2>実装上の変更</h2>
+  <ul>
+    <li>
+      RustのLARM managerはcontrol操作の排他と、最大4件のrequest
+      permitを分離する。最初のdiscovery/create/claimをworker起動前に行う。
+    </li>
+    <li>
+      SQLite Provider leaseはLARMの同じtarget IDに複数のactive leaseを許可する。static
+      Providerには従来のtarget単位排他を維持する。SQLite
+      Writerでclaimを直列化し、5件目を待機させる。schema revisionは10。
+    </li>
+    <li>
+      coveringの全3ルートが同じLARM connectionを指す場合、他のQueueと同じ共有枠で実行する。covering
+      modeとcanary
+      job制約は維持する。landscapeCurationは台帳更新の競合を避けるため同Queue内1件を維持する。
+    </li>
+    <li>
+      同時実行時のworker/lease/event
+      IDの衝突を防ぐため、時刻に加えて単調なプロセス内sequenceを使う。
+    </li>
+  </ul>
+  <h2>稼働設定</h2>
+  <table>
+    <caption>
+      ContextStill側へ反映した接続と実行設定
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">反映値</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>connection ID</td>
+        <td>contextstill-background</td>
+      </tr>
+      <tr>
+        <td>LARM control origin</td>
+        <td>http://192.168.0.130:9810</td>
+      </tr>
+      <tr>
+        <td>maxConcurrentRequests</td>
+        <td>4</td>
+      </tr>
+      <tr>
+        <td>TTL / request timeout</td>
+        <td>900秒 / 300秒</td>
+      </tr>
+      <tr>
+        <td>resident max claims</td>
+        <td>4（以前は3）</td>
+      </tr>
+      <tr>
+        <td>LLM Queue routing</td>
+        <td>
+          finding source/vibe、episode、covering
+          sourceSupport/externalEvidence/mcpEvidence、curationを上記connectionへ変更
+        </td>
+      </tr>
+      <tr>
+        <td>settings revision</td>
+        <td>144</td>
+      </tr>
+      <tr>
+        <td>Queue controls</td>
+        <td>全7レーン停止。自動再開していない。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    webSourceResearch、deadZoneMergeReview、finalize関連の独立ルート設定は今回の4種のRust実行対象と分けている。今回これらの未対応LLM実行経路を追加したものではない。
+  </p>
+  <h2>実機で確認した未完了条件</h2>
+  <p>
+    公開discoveryはcontextstill-backgroundのllm=qwen-agent-workerを返し、catalogRevisionは7545f8b0f5ed778abced40014d61ef9f97a3e20b40f0d66e49cb8ca1e99e7784。LLM
+    subsetでcreateは202、ready後のhealthとclaimは200、解放は204。healthはmaxConcurrentRequests=1を返した。検証接続は解放済み。
+  </p>
+  <p>
+    LARMリポジトリにはOrnithのContextStill専用runtime、4スロット、KV総容量262144、ContextWindow
+    32768の設定があるが、現在の稼働リリースdbbe3237171218d94a9c1f3eeba8aef586288637には未反映。LARM作業ツリーには今回の設定以外も含む多数の未コミット変更があり、本タスクでは別サービスの配備を変更していない。
+  </p>
+  <p>
+    4並列の実機完了条件は、新しいLARM releaseの公開profile/claimがOrnithを返すこと、llm
+    healthが上限4を返すこと、1接続から4リクエストが同時実行されること。これを確認してから、停止した4種のQueueを再開する。
+  </p>
+  <h2>ContextWindowとKVの区別</h2>
+  <p>
+    64K×4はサーバーの各slotに割り当てるKV容量。32Kは1回のLLM呼び出しにおける入力と最大出力の合計上限であり、4ジョブの累計ではない。今回contextWindow契約の受信とclaim照合・記録を追加したが、実tokenizerで最終promptを測り32K以内に再構成する処理は追加していない。
+  </p>
+  <p>
+    Ornith専用runtimeでは、consumerが利用できるcanonical
+    tokenizer測定の提供が未確認。既存LARMのcontext-measurementsはmanaged-context認証済みruntime向けで、このruntimeにはその認証がない。従って、32K上限の厳密な保証や入力超過時の分割は別の未完了条件として扱い、文字数推定や物理backendへの直接接続で代用しない。
+  </p>
+  <h2>検証</h2>
+  <ul>
+    <li>
+      mock LARMの3 Provider discoveryに対してllm
+      subsetを要求し、1接続で4件のfindingリクエストが全て到着するまでresponseを保留するテストを通過した。直列送信ではこのテストは失敗する。
+    </li>
+    <li>
+      4件の同target leaseが成立し、5件目はclaimされず、1枠解放後にclaimできるテストを通過した。
+    </li>
+    <li>finding、covering、episode、curationが同じconnectionの4枠を使うplanを検証した。</li>
+    <li>
+      Rust library testsは528件成功、9件は既存のignored。設定関連27件、TypeScript typecheck、Rust
+      Clippyも成功。4種類への分散、finding/covering各2件による補充、新しいQueueを高priorityの実行中Queueより優先するケースを検証した。
+    </li>
+  </ul>
+  <h2>コードレビューで修正した問題</h2>
+  <p>
+    共有接続、ジョブ取得、停止・再設定、接続解放、ContextWindow契約を再レビューした。以下の問題を修正し、回帰テストを追加した。修正後の再レビューで、今回の差分に追加の修正指摘は残っていない。前述のLARM配備と32Kの厳密な入力制御は未完了条件のままである。
+  </p>
+  <ol>
+    <li>
+      共有targetの確認からrequest
+      permit取得までの間に更新・再設定が介入する競合を解消した。同じロック内で設定・target・capacityを確認してpermitを取得する。
+    </li>
+    <li>
+      準備時とclaim時でcovering
+      mode、polarity、canary対象の判断が異なっていた。同じ検索条件を使い、実行できるジョブがない接続は準備しない。空の許可リストは対象なしとする。
+    </li>
+    <li>
+      接続待ち中のQueue停止やrouting変更がclaimに反映されなかった。Writerでclaim直前に最新設定と停止状態を読み直す。
+    </li>
+    <li>
+      LARMのprefixだけで共有leaseを許す条件が広すぎた。poolと唯一のtargetが同じLARM識別子である場合に限定し、SQLiteのunique制約も同じ条件へ変更した。
+    </li>
+    <li>
+      ContextWindow変更をdiscoveryから接続・claim・更新まで照合する。不正な上限、reserveとmarginで入力予算がなくなる契約、整数overflowを拒否する。
+    </li>
+    <li>
+      一時的なDELETE失敗で復帰できなくなっていた。古い接続identityを保持して解放を再試行し、成功するまで新しい接続の作成とrequestの受付を拒否する。
+    </li>
+  </ol>
+  <p>
+    前提のトークン調査は<a href="queue-context-window-investigation-2026-10-03.html"
+      >1回のLLM呼び出しのContextWindow調査</a
+    >を参照する。
+  </p>
+</article>

@@ -97,7 +97,7 @@ pub(crate) fn create_provider_lease_table(connection: &Connection) {
             );
             create unique index llm_provider_leases_active_target_unique_idx
               on llm_provider_leases(target_id)
-              where status = 'active';
+              where status = 'active' and not (pool_id glob 'larm-agent-connection:*' and target_id = pool_id);
             "#,
         )
         .unwrap();

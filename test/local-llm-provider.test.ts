@@ -19,8 +19,32 @@ describe("local-llm provider", () => {
     vi.restoreAllMocks();
     groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
     groupedConfig.localLlm.apiKey = "";
+    groupedConfig.localLlm.apiKeyError = undefined;
     groupedConfig.localLlm.model = "gemma-4-e4b-it";
     groupedConfig.localLlm.models = [];
+  });
+
+  test("rejects inaccessible saved keys before health or chat network requests", async () => {
+    const spy = vi.spyOn(global, "fetch");
+    groupedConfig.localLlm.models = [
+      {
+        name: "Locked",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/agent-sessions",
+        apiKey: "",
+        apiKeyError: "secret_store_denied",
+        model: "locked-model",
+      },
+    ];
+    const provider = createLocalLlmProvider();
+    expect(await provider.healthCheck()).toMatchObject({
+      reachable: false,
+      error: "secret_store_denied",
+    });
+    await expect(
+      provider.chat({ messages: [{ role: "user", content: "test" }], maxTokens: 8 }),
+    ).rejects.toThrow("secret_store_denied");
+    expect(spy).not.toHaveBeenCalled();
   });
 
   test("healthCheck uses the lightweight health endpoint when available", async () => {

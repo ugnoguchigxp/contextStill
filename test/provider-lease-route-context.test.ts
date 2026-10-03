@@ -20,6 +20,7 @@ describe("provider lease route context", () => {
           controlTimeoutMs: 5_000,
           readyTimeoutMs: 180_000,
           ttlSeconds: 900,
+          maxConcurrentRequests: 1,
           requestTimeoutMs: 300_000,
         },
       ],

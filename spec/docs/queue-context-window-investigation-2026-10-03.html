@@ -1,0 +1,210 @@
+<article lang="ja">
+  <h1>1回のQueue処理に必要なトークン予算（2026年10月3日）</h1>
+  <p>
+    目的は累計料金の集計ではなく、finding、coveringなどの1回の処理に必要なContext
+    Windowを把握し、ProviderのKVキャッシュ容量を検討することである。調査のみ実施し、Queue、Provider、推論設定は変更していない。
+  </p>
+  <h2>設定する予算の目安</h2>
+  <p>
+    以下は1つのLLMリクエストに割り当てる入力と出力を合わせた暫定予算。過去の入力実績または現在の入力サンプルに、現行実装の生成上限と約2,048トークンの余裕を加え、8,192、16,384、32,768単位へ切り上げた。全件に対する保証上限ではない。
+  </p>
+  <table>
+    <caption>
+      1リクエストに割り当てる暫定Context Window予算
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Queue</th>
+        <th scope="col">入力の目安</th>
+        <th scope="col">現行の生成上限</th>
+        <th scope="col">暫定Context Window</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">findingCandidate</th>
+        <td>中央値3,131、P95 5,058、最大16,829</td>
+        <td>4,000</td>
+        <td>通常16,384。過去の大きな入力も含め32,768</td>
+      </tr>
+      <tr>
+        <th scope="row">coveringEvidence</th>
+        <td>通常判定P95 3,820、外部証拠を含む最終判定P95 7,578、最大16,933</td>
+        <td>検索クエリ256、否定判定・補修・適用条件補正2,048、価値判定・外部最終判定4,096</td>
+        <td>通常16,384。大きな外部証拠を含め32,768</td>
+      </tr>
+      <tr>
+        <th scope="row">episodeDistiller</th>
+        <td>中央値2,356、P95 4,909、最大6,052</td>
+        <td>segment判定4,096または8,192、重複判定1,536</td>
+        <td>16,384</td>
+      </tr>
+      <tr>
+        <th scope="row">deadZoneMergeReview</th>
+        <td>4件のみ。最大637</td>
+        <td>4,000（TypeScript実装）</td>
+        <td>8,192。少数サンプルの目安</td>
+      </tr>
+      <tr>
+        <th scope="row">landscapeCuration</th>
+        <td>現行planner再構成の3サンプルで9,644／13,828／15,007</td>
+        <td>plannerと条件付きverifier、それぞれ12,000</td>
+        <td>32,768。plannerサンプルに基づく暫定値。verifier最大値未測定</td>
+      </tr>
+      <tr>
+        <th scope="row">mergeActivationFinalize</th>
+        <td>生成LLM呼出しなし</td>
+        <td>なし</td>
+        <td>生成モデル用の枠は不要。Embeddingは別</td>
+      </tr>
+      <tr>
+        <th scope="row">finalizeDistille</th>
+        <td>現行Rust処理は生成LLM呼出しなし</td>
+        <td>なし</td>
+        <td>生成モデル用の枠は不要。Embeddingは別</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>実際に1回で消費したトークン</h2>
+  <p>
+    保存済みusageの各行を1回のLLM呼出しとして、入力と出力の合計を計算した。P95は95%の呼出しがこの値以下という意味であり、各列の中央値やP95を足した値ではない。
+  </p>
+  <table>
+    <caption>
+      保存済み1呼出しの入力と出力の合計実績
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">処理</th>
+        <th scope="col">記録件数</th>
+        <th scope="col">1呼出しの合計中央値</th>
+        <th scope="col">P95</th>
+        <th scope="col">最大</th>
+        <th scope="col">最終記録（UTC）</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">findingCandidate</th>
+        <td>10,547</td>
+        <td>3,368</td>
+        <td>5,734</td>
+        <td>18,506</td>
+        <td>2026-09-11</td>
+      </tr>
+      <tr>
+        <th scope="row">covering：通常の価値判定</th>
+        <td>1,994</td>
+        <td>1,699</td>
+        <td>4,128</td>
+        <td>5,105</td>
+        <td>2026-07-17</td>
+      </tr>
+      <tr>
+        <th scope="row">covering：外部証拠の最終判定</th>
+        <td>7,926</td>
+        <td>4,340</td>
+        <td>7,874</td>
+        <td>17,127</td>
+        <td>2026-07-12</td>
+      </tr>
+      <tr>
+        <th scope="row">covering：否定判定</th>
+        <td>564</td>
+        <td>1,461</td>
+        <td>1,678</td>
+        <td>2,308</td>
+        <td>2026-07-17</td>
+      </tr>
+      <tr>
+        <th scope="row">episode：segment判定</th>
+        <td>392</td>
+        <td>3,187</td>
+        <td>5,962</td>
+        <td>7,298</td>
+        <td>2026-08-31</td>
+      </tr>
+      <tr>
+        <th scope="row">deadZoneMergeReview</th>
+        <td>4</td>
+        <td>800</td>
+        <td>949</td>
+        <td>949</td>
+        <td>2026-06-13</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    現行Rust executorは応答usageを保存していないため、直近の特定Queue
+    jobの実消費は取得できない。上記は過去の実測であり、複数モデル・旧promptを含む。sourceは手動実行とも共有され、Queue専用記録ではない。job
+    IDも保存されていないため、coveringの複数呼出しを1 jobへまとめた実消費は復元できない。
+  </p>
+  <h2>Queue単位とリクエスト単位</h2>
+  <p>
+    findingは抽出1呼出し。coveringは経路に応じて価値判定、検索クエリ、外部証拠の最終判定、補正などを個別に呼ぶ。episodeはsourceをsegmentへ分割してsegmentごとに呼び、必要に応じて重複判定も行う。curationはplannerの後、mergeまたはdeprecate_duplicateの場合だけverifierを呼ぶ。これらは独立したmessagesであり、全呼出しのトークン合計が1つのContext
+    Windowに収まる必要はない。1
+    jobの消費は呼出しの合計、必要Windowは各呼出しの入力と出力予約量の最大である。並列実行のKV容量は別途同時実行数に依存する。
+  </p>
+  <h2>現在の入力の再計測</h2>
+  <p>
+    landscapeCurationは最新100件の非空input_snapshotを文字数順に並べ、中央値位置、95%位置、最大位置の3件について現行plannerのsystem
+    promptとuser
+    promptを再構成した。gnosis上のllama-serverのapply-templateとtokenizeだけを使用し、追加の推論を実行せず、入力9,644／13,828／15,007トークンを得た。これは文字数で選んだ3サンプルであり、トークン数の中央値やP95ではない。
+  </p>
+  <p>
+    測定モデルはOrnith-1.5-35B-A3B-ROCmFP4.gguf。LARMのqwen-agent-workerという論理モデル名とこの実モデルの対応は未確認であり、LARMが別モデルへルーティングする場合はそのTokenizerで再測定が必要である。llama-serverの管理情報ではn_ctx=131,072、total_slots=1だった。この割当量はQueue1回の実消費を意味しない。
+  </p>
+  <h2>上限に関する注意</h2>
+  <p>
+    現行findingはsourceを32,000文字で切り詰め、episodeは通常16,000
+    bytesでsegment分割する。トークンによる入力制限ではない。設定にあるllmContextWindowTokens=128,000、llmMaxInputTokens=80,000、llmInputSafetyMarginTokens=4,096は、現行Rust
+    Queue
+    executorでは入力制御に使われていない。このため上記の暫定予算をそのまま全入力の保証値とはできない。
+  </p>
+  <p>
+    旧cover-evidence:external-evidence処理には入力32,755、入力と出力の合計33,214という例外的な記録がある。この旧経路まで維持する場合は32,768では不足する。現在のRust経路の予算表とは分けて扱う。
+  </p>
+  <h2>証拠</h2>
+  <ul>
+    <li>
+      <a href="assets/queue-context-window-2026-10-03/per-call-history.json"
+        >保存済み呼出しごとの分位数</a
+      >
+    </li>
+    <li>
+      <a href="assets/queue-context-window-2026-10-03/curation-sample.json"
+        >現行curation入力の3サンプル測定結果</a
+      >
+    </li>
+  </ul>
+  <p>
+    実装確認対象：finding_executor.rs、covering_executor配下、episode_executor配下、curation_executor.rs、finalize_executor.rs、deadzone-merge-review-llm.ts、merge-activation-finalize.worker.ts。実装・設定変更およびQueue再実行は行っていない。
+  </p>
+  <h2>64K×4セッションとQueue上限32Kの設計判断</h2>
+  <p>
+    ユーザーの前提はProvider側が1セッション65,536トークン×4セッションを収容できるスペックを持ち、各Queueが扱うContext
+    Windowの上限を32,768トークンとする構成である。64Kを4件で分割する構成ではない。4件が32Kを使い切っても合計128Kであり、64K×4の総枠256Kには容量上の余裕がある。ここでQueueの32Kはsystem、user、chat
+    templateの入力と生成予約を合わせた上限として扱う。
+  </p>
+  <p>
+    16Kでも過去実績の大半は収まるが、findingとcoveringには16Kを超える実績があり、curationの測定planner入力と12Kの生成予約も16Kを超える。Queue共通上限32Kは妥当。現行の文字数制限だけでは32K以内を保証しないため、実装する場合はTokenizerで入力を数え、生成予約を差し引いた入力上限へ分割または切詰めする必要がある。
+  </p>
+  <p>
+    4並列はQueue全体の処理量を増やす候補として妥当。ただし4倍の速度や単一リクエストの短縮は保証しない。1、2、4並列で、成功job/分、待ち時間、完了時間、再試行率を同じ入力で比較する。現行gnosisのllama-serverはOrnith-1.5-35B-A3B-ROCmFP4、ctx-size=131,072、parallel=1、KVのK/Vはq8_0だった。LARMの同時受付枠とContextStillのpermit数も4並列へ揃える必要がある。設定変更は行っていない。
+  </p>
+  <h2>QwenとOrnithの選択</h2>
+  <p>
+    現行設定にあるQwen3.8-27Bと、稼働していたOrnith-1.5-35B-A3Bを比較する場合、処理量を優先する最初の候補はOrnithとする。公式モデル情報では前者は27B
+    dense、後者は35B
+    MoEで1トークンあたり約3Bパラメータが有効になる。計算量の差からOrnithに速度上の利点が期待できるという推測であり、この機械上の速度比較を実測した結論ではない。Qwen35B-A3Bとの比較なら、このdense対MoEの判断は適用できない。
+  </p>
+  <p>
+    公開coding/agentic
+    benchmarkはContextStillの知識抽出や根拠判定の優劣を直接示さない。Ornithがこの用途でQwenより高品質とは断定しない。Qwen3.8-27Bを比較基準として同じfinding/covering入力でJSON妥当性、根拠のない抽出、不要な候補、適用条件、再試行を確認する。必要な思考量と出力長も比較する。両モデルはthinkingを制御できるが、無効化の品質影響を確認せず一律に切り替えない。
+  </p>
+  <p>
+    参照した一次情報：Qwen/Qwen3.8-27Bとornith-ai/Ornith-1.5-35B-A3Bの公式Hugging
+    Faceモデルカード、Ornithの公式chat_template.jinja、ggml-org/llama.cppの公式server
+    READMEと開発者によるparallel/KVの説明。公開モデル名qwen-agent-workerと物理Ornithの対応は未確認のまま。
+  </p>
+</article>

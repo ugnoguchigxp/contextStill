@@ -548,7 +548,7 @@ CREATE TABLE IF NOT EXISTS llm_provider_leases (
 DROP INDEX IF EXISTS llm_provider_leases_active_target_unique_idx;
 CREATE UNIQUE INDEX IF NOT EXISTS llm_provider_leases_active_target_unique_idx
   ON llm_provider_leases(target_id)
-  WHERE status = 'active';
+  WHERE status = 'active' AND NOT (pool_id GLOB 'larm-agent-connection:*' AND target_id = pool_id);
 CREATE INDEX IF NOT EXISTS llm_provider_leases_pool_status_expires_idx
   ON llm_provider_leases(pool_id, status, expires_at);
 CREATE INDEX IF NOT EXISTS llm_provider_leases_job_status_idx

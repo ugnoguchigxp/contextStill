@@ -42,6 +42,7 @@ export type RuntimeSecretStatus = {
   source: RuntimeSecretSource;
   maskedValue: string | null;
   updatedAt: string | null;
+  error?: string;
 };
 
 export type StaticRuntimeSettingsRoute = {
@@ -120,6 +121,7 @@ export type LarmAgentConnectionSettings = {
   readyTimeoutMs: number;
   ttlSeconds: number;
   requestTimeoutMs: number;
+  maxConcurrentRequests: number;
 };
 
 export type RuntimeProviderPoolTarget =
@@ -456,6 +458,7 @@ const larmAgentConnectionSchema = z
     readyTimeoutMs: z.number().int().min(1_000).max(900_000).default(180_000),
     ttlSeconds: z.number().int().min(60).max(86_400).default(900),
     requestTimeoutMs: z.number().int().min(1_000).max(3_600_000).default(300_000),
+    maxConcurrentRequests: z.number().int().min(1).max(4).default(1),
   })
   .strict()
   .superRefine((connection, ctx) => {
@@ -507,8 +510,6 @@ const larmAgentConnectionSchema = z
     audience: isLoopbackLarmHost(new URL(connection.controlBaseUrl).hostname)
       ? "same-host"
       : "saaa-desktop",
-    ttlSeconds: 300,
-    requestTimeoutMs: Math.min(connection.requestTimeoutMs, 240_000),
   }));
 
 const runtimeRouteSchema = z.union([

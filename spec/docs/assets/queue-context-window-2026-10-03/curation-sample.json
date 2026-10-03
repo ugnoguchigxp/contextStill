@@ -1,0 +1,16 @@
+{
+  "model": "Ornith-1.5-35B-A3B-ROCmFP4.gguf",
+  "method": "current planner prompt reconstructed; 3 snapshots selected by character size from latest 100; NOT token quantiles; no inference",
+  "input_tokens": [
+    9644,
+    13828,
+    15007
+  ],
+  "output_cap": 12000,
+  "input_plus_output_cap": [
+    21644,
+    25828,
+    27007
+  ],
+  "mapping_to_larm_qwen_alias": "unverified"
+}
