@@ -96,6 +96,8 @@ export type FindCandidateThrottlingSettings = {
 };
 
 export type AzureOpenAiDeploymentSettings = {
+  id?: string;
+  credentialMode?: "shared" | "dedicated";
   name: string;
   apiBaseUrl: string;
   apiPath: string;
@@ -327,6 +329,22 @@ export type RuntimeSettingsEditable = {
     lowImportanceRejectThreshold: number;
   };
   advanced: {
+    agentRuntime?: {
+      enabled: boolean;
+      research?: {
+        baseUrl: string;
+        credentialKey: string;
+        gatewayCredentialKey: string;
+        gatewayUrl: string;
+      } | null;
+      /** @deprecated Accepted for settings migration; connections use claim descriptors. */
+      measurement?: {
+        controlOrigin: string;
+        allocationId: string;
+        runtime: string;
+        credentialKey: string;
+      } | null;
+    };
     pipelineLockStaleSeconds: number;
     lockTtlSeconds: number;
     pipelineClaimLimit: number;
@@ -383,6 +401,8 @@ const runtimeProviderSettingSchema = z.enum(runtimeProviderSettingNames);
 const searchProviderSchema = z.enum(["brave", "exa", "duckduckgo"] as const);
 
 const azureOpenAiDeploymentSchema = z.object({
+  id: z.string().trim().min(1).max(120).optional(),
+  credentialMode: z.enum(["shared", "dedicated"]).optional(),
   name: z.string().trim().max(80).default(""),
   apiBaseUrl: z.string().trim().url().or(z.literal("")),
   apiPath: z.string().trim().min(1),
@@ -573,8 +593,8 @@ export const runtimeSettingsEditableSchema = z
     providers: z.object({
       openai: z.object({
         enabled: z.boolean().default(true),
-        apiBaseUrl: z.string().trim().url(),
-        model: z.string().trim().min(1),
+        apiBaseUrl: z.string().trim().url().or(z.literal("")),
+        model: z.string().trim(),
       }),
       "azure-openai": z.object({
         enabled: z.boolean().default(false),
@@ -605,7 +625,7 @@ export const runtimeSettingsEditableSchema = z
         .default({ enabled: false, connections: [] }),
       codex: z.object({
         enabled: z.boolean().default(false),
-        model: z.string().trim().min(1).default("codex-sdk-agent"),
+        model: z.string().trim().default("codex-sdk-agent"),
       }),
     }),
     taskRouting: z.object({
@@ -686,6 +706,59 @@ export const runtimeSettingsEditableSchema = z
       lowImportanceRejectThreshold: z.number().min(0).max(100),
     }),
     advanced: z.object({
+      agentRuntime: z
+        .object({
+          enabled: z.boolean(),
+          research: z
+            .object({
+              baseUrl: z.string().url(),
+              credentialKey: z.string().regex(/^[A-Za-z0-9]+$/),
+              gatewayCredentialKey: z.string().regex(/^[A-Za-z0-9]+$/),
+              gatewayUrl: z.string().url(),
+            })
+            .strict()
+            .superRefine((value, ctx) => {
+              for (const key of ["baseUrl", "gatewayUrl"] as const) {
+                const url = new URL(value[key]);
+                if (
+                  url.protocol !== "http:" ||
+                  !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
+                  url.username ||
+                  url.password ||
+                  url.search ||
+                  url.hash
+                )
+                  ctx.addIssue({
+                    code: "custom",
+                    path: [key],
+                    message: "DeepStillは認証情報を含まないHTTP loopback URLを指定してください",
+                  });
+              }
+              if (value.credentialKey === value.gatewayCredentialKey)
+                ctx.addIssue({
+                  code: "custom",
+                  path: ["gatewayCredentialKey"],
+                  message: "DeepStillとGatewayは別の認証キーが必要です",
+                });
+            })
+            .nullable()
+            .optional(),
+          measurement: z
+            .object({
+              controlOrigin: z.string().url(),
+              allocationId: z.string().default(""),
+              runtime: z.string().min(1),
+              credentialKey: z
+                .string()
+                .regex(/^[A-Za-z0-9]*$/)
+                .default(""),
+            })
+            .strict()
+            .nullable()
+            .optional(),
+        })
+        .strict()
+        .optional(),
       pipelineLockStaleSeconds: z.number().int().min(30).max(604_800),
       lockTtlSeconds: z.number().int().min(30).max(604_800),
       pipelineClaimLimit: z.number().int().min(1).max(1000),
@@ -878,6 +951,7 @@ export const settingsUpdateRequestSchema = z.preprocess(
   backfillRuntimeSettingsUpdateInput,
   z.object({
     settings: runtimeSettingsEditableSchema,
+    expectedRevision: z.number().int().min(0).optional(),
     secrets: z.record(runtimeSecretUpdateSchema).optional(),
     updatedBy: z.string().trim().max(120).optional(),
   }),

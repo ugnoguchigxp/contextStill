@@ -51,6 +51,7 @@ import { researchWebSourceToMarkdown } from "../../sources/web/source-research.s
 import { claimNextQueueJob } from "./claim.js";
 import { isQueuePaused } from "./control.js";
 import { appendQueueEvent } from "./events.js";
+import { enqueueSqliteFindingJob } from "./finding-enqueue.js";
 import {
   type ProviderLease,
   heartbeatProviderLease,
@@ -2280,82 +2281,13 @@ export async function enqueueFindingJob(params: {
   const priority = params.priority ?? priorityForSourceKind(params.sourceKind);
   if (isSqliteBackend()) {
     const sqlite = await getSqliteCoreDatabase();
-    const now = new Date().toISOString();
-    const existing = sqlite.db
-      .query(
-        `
-        select *
-        from finding_candidate_queue
-        where input_kind = ?
-          and source_kind = ?
-          and source_key = ?
-          and distillation_version = ?
-        limit 1
-      `,
-      )
-      .get(params.inputKind, params.sourceKind, params.sourceKey, distillationVersion) as Record<
-      string,
-      unknown
-    > | null;
-
-    const id = existing?.id ? String(existing.id) : crypto.randomUUID();
-    if (existing) {
-      sqlite.db
-        .query(
-          `
-          update finding_candidate_queue
-          set source_uri = ?,
-              payload = ?,
-              metadata = ?,
-              priority = ?,
-              next_run_at = null,
-              completed_at = null,
-              status = 'pending',
-              locked_by = null,
-              locked_at = null,
-              heartbeat_at = null,
-              updated_at = ?
-          where id = ?
-        `,
-        )
-        .run(
-          params.sourceUri,
-          JSON.stringify(params.payload ?? {}),
-          JSON.stringify(params.metadata ?? {}),
-          priority,
-          now,
-          id,
-        );
-    } else {
-      sqlite.db
-        .query(
-          `
-          insert into finding_candidate_queue (
-            id, input_kind, source_kind, source_key, source_uri, distillation_version,
-            payload, metadata, priority, status, created_at, updated_at
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-        `,
-        )
-        .run(
-          id,
-          params.inputKind,
-          params.sourceKind,
-          params.sourceKey,
-          params.sourceUri,
-          distillationVersion,
-          JSON.stringify(params.payload ?? {}),
-          JSON.stringify(params.metadata ?? {}),
-          priority,
-          now,
-          now,
-        );
-    }
-
-    const row = sqlite.db
-      .query("select * from finding_candidate_queue where id = ? limit 1")
-      .get(id) as Record<string, unknown> | null;
-    if (!row) throw new Error("failed to enqueue finding candidate job");
+    const { row, changed } = enqueueSqliteFindingJob(sqlite.db, {
+      ...params,
+      distillationVersion,
+      priority,
+    });
     const normalized = sqliteFindingJobRow(row);
+    if (!changed) return normalized;
     await appendQueueEvent({
       queueName: "findingCandidate",
       queueJobId: normalized.id,

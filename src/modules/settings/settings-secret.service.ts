@@ -1,4 +1,5 @@
 import { type SecretStoreClient, secretStoreClient } from "./secret-store.client.js";
+import type { SettingsMutationRow } from "./settings-atomic.repository.js";
 import {
   SETTINGS_SECRET_NAMESPACE,
   deleteSettingsRow,
@@ -6,6 +7,64 @@ import {
   listSettingsRows,
   upsertSettingsRow,
 } from "./settings.repository.js";
+
+export type PreparedSecret = {
+  row: SettingsMutationRow;
+  priorReference: string | null;
+  reference: string | null;
+  key: string;
+};
+export async function prepareSecretChange(
+  key: string,
+  update: { value?: string; clear?: boolean; useEnvironment?: boolean },
+  store: SecretStoreClient = secretStoreClient,
+): Promise<PreparedSecret> {
+  const prior = await findSettingsRow(SETTINGS_SECRET_NAMESPACE, key);
+  const reference = update.clear || update.useEnvironment ? null : store.reserve(key);
+  if (reference) {
+    await journal(key, reference);
+    try {
+      if ((await store.put(key, update.value?.trim() ?? "", reference)) !== reference)
+        throw new Error("secret_reference_mismatch");
+    } catch (error) {
+      await retire(key, reference, store);
+      throw error;
+    }
+  }
+  if (prior?.secretRef) await journal(key, prior.secretRef);
+  return {
+    key,
+    reference,
+    priorReference: prior?.secretRef ?? null,
+    row: {
+      namespace: SETTINGS_SECRET_NAMESPACE,
+      key,
+      expectedVersion: prior?.schemaVersion ?? 0,
+      value: reference
+        ? { secretRef: reference }
+        : update.useEnvironment
+          ? { environment: true }
+          : { disabled: true },
+      valueKind: "secret_ref",
+      secretRef: reference,
+      isSecret: true,
+    },
+  };
+}
+export async function finishSecretChange(
+  prepared: PreparedSecret,
+  committed: boolean,
+  store: SecretStoreClient = secretStoreClient,
+): Promise<void> {
+  const current = await findSettingsRow(SETTINGS_SECRET_NAMESPACE, prepared.key);
+  if (prepared.reference) {
+    if (current?.secretRef === prepared.reference)
+      await deleteSettingsRow(GC_NAMESPACE, prepared.reference);
+    else await retire(prepared.key, prepared.reference, store);
+  }
+  if (committed && prepared.priorReference && current?.secretRef !== prepared.priorReference)
+    await retire(prepared.key, prepared.priorReference, store);
+}
 
 const GC_NAMESPACE = "runtime.secret-gc";
 async function journal(key: string, reference: string) {

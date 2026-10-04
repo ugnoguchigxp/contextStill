@@ -296,10 +296,26 @@ pub struct PublicLarmConnectionProvider {
     pub model: String,
     #[serde(default)]
     pub public_model: String,
+    #[serde(deserialize_with = "deserialize_provider_readiness")]
     pub readiness: LarmConnectionStatus,
+    // Freshness hint. POST /claim rechecks semantic readiness and is authoritative.
     pub claimable: bool,
     #[serde(default)]
     pub context_window: Option<LarmContextWindow>,
+}
+
+fn deserialize_provider_readiness<'de, D>(deserializer: D) -> Result<LarmConnectionStatus, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    // Provider deployment/waiting are not connection-level states. Both remain
+    // non-claimable until LARM explicitly reports the provider as ready.
+    if matches!(raw.as_str(), "waiting" | "deploying") {
+        Ok(LarmConnectionStatus::Pending)
+    } else {
+        serde_json::from_value(Value::String(raw)).map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
@@ -626,6 +642,7 @@ pub struct LarmControlClient {
     control_origin: Url,
     client: Client,
     discovered_profile: Arc<Mutex<Option<DiscoveredLarmProfile>>>,
+    ready_retry_after: Arc<Mutex<Duration>>,
 }
 
 impl fmt::Debug for LarmControlClient {
@@ -658,6 +675,7 @@ impl LarmControlClient {
             control_origin,
             client,
             discovered_profile: Arc::new(Mutex::new(None)),
+            ready_retry_after: Arc::new(Mutex::new(Duration::ZERO)),
         })
     }
 
@@ -718,7 +736,10 @@ impl LarmControlClient {
     }
 
     pub fn create(&self, idempotency_key: &str) -> Result<PublicLarmConnection, LarmControlError> {
-        validate_idempotency_key(idempotency_key)?;
+        self.create_with_body(idempotency_key, &self.create_body())
+    }
+
+    pub(crate) fn create_body(&self) -> Value {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct CreateRequest<'a> {
@@ -732,6 +753,41 @@ impl LarmControlClient {
             #[serde(skip_serializing_if = "Option::is_none")]
             expected_catalog_revision: Option<String>,
         }
+        serde_json::to_value(&CreateRequest {
+            profile: "contextStill",
+            audience: &self.config.audience,
+            client: "contextstill",
+            ttl_seconds: self.config.ttl_seconds,
+            allow_fallback: false,
+            deployment_policy: "existing-only",
+            providers: ["llm"],
+            expected_catalog_revision: self
+                .discovered_profile
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|entry| entry.catalog_revision.clone()),
+        })
+        .expect("serializable create request")
+    }
+
+    pub(crate) fn create_with_body(
+        &self,
+        idempotency_key: &str,
+        body: &Value,
+    ) -> Result<PublicLarmConnection, LarmControlError> {
+        validate_idempotency_key(idempotency_key)?;
+        if body["profile"] != "contextStill"
+            || body["client"] != "contextstill"
+            || body["audience"] != self.config.audience
+            || body["providers"] != serde_json::json!(["llm"])
+            || body["allowFallback"] != false
+            || body["deploymentPolicy"] != "existing-only"
+        {
+            return Err(LarmControlError::configuration(
+                "invalid persisted LARM create body",
+            ));
+        }
         let response = self
             .authorized(self.client.post(self.endpoint("/v1/agent-connections")?))?
             .header("idempotency-key", idempotency_key)
@@ -739,23 +795,10 @@ impl LarmControlClient {
             .timeout(Duration::from_millis(
                 self.config.control_timeout_ms.min(10_000),
             ))
-            .json(&CreateRequest {
-                profile: "contextStill",
-                audience: &self.config.audience,
-                client: "contextstill",
-                ttl_seconds: self.config.ttl_seconds,
-                allow_fallback: false,
-                deployment_policy: "existing-only",
-                providers: ["llm"],
-                expected_catalog_revision: self
-                    .discovered_profile
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .map(|entry| entry.catalog_revision.clone()),
-            })
+            .json(body)
             .send()
             .map_err(|error| LarmControlError::transport(format!("create failed: {error}")))?;
+        self.remember_ready_retry_after(&response);
         let status = response.status();
         let location = response
             .headers()
@@ -842,6 +885,7 @@ impl LarmControlClient {
             .timeout(timeout)
             .send()
             .map_err(|error| LarmControlError::transport(format!("status failed: {error}")))?;
+        self.remember_ready_retry_after(&response);
         let connection: PublicLarmConnection = parse_json_response(response, StatusCode::OK)?;
         self.validate_connection(&connection)?;
         if connection.id != connection_id {
@@ -852,6 +896,16 @@ impl LarmControlClient {
         Ok(connection)
     }
 
+    fn remember_ready_retry_after(&self, response: &Response) {
+        *self.ready_retry_after.lock().unwrap() = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_secs)
+            .unwrap_or(Duration::ZERO);
+    }
+
     pub fn wait_until_ready(
         &self,
         initial: PublicLarmConnection,
@@ -859,10 +913,25 @@ impl LarmControlClient {
         let deadline = Instant::now() + Duration::from_millis(self.config.ready_timeout_ms);
         let identity = initial.clone();
         let mut current = initial;
+        let mut backoff = Duration::from_secs(1);
         loop {
+            let expiry = parse_rfc3339_utc_ms(&current.expires_at)
+                .ok_or_else(|| LarmControlError::protocol("invalid LARM expiry"))?;
+            if now_epoch_ms() >= expiry {
+                return Err(LarmControlError::ready_timeout());
+            }
             match current.status {
-                LarmConnectionStatus::Ready => return Ok(current),
-                LarmConnectionStatus::Pending | LarmConnectionStatus::Probing => {}
+                LarmConnectionStatus::Ready
+                    if current
+                        .providers
+                        .iter()
+                        .all(|p| p.readiness == LarmConnectionStatus::Ready && p.claimable) =>
+                {
+                    return Ok(current)
+                }
+                LarmConnectionStatus::Ready
+                | LarmConnectionStatus::Pending
+                | LarmConnectionStatus::Probing => {}
                 LarmConnectionStatus::Failed
                 | LarmConnectionStatus::Released
                 | LarmConnectionStatus::Expired => {
@@ -879,12 +948,17 @@ impl LarmControlClient {
                     )));
                 }
             }
-            if Instant::now() >= deadline {
+            let remaining = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(expiry.saturating_sub(now_epoch_ms())));
+            let delay = backoff.max(*self.ready_retry_after.lock().unwrap());
+            if delay >= remaining {
                 return Err(LarmControlError::ready_timeout());
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            thread::sleep(Duration::from_millis(250).min(remaining));
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            thread::sleep(delay);
+            let remaining = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(expiry.saturating_sub(now_epoch_ms())));
             if remaining.is_zero() {
                 return Err(LarmControlError::ready_timeout());
             }
@@ -893,6 +967,7 @@ impl LarmControlClient {
                 .max(Duration::from_millis(1));
             current = self.get_with_timeout(&current.id, request_timeout)?;
             ensure_same_connection_identity(&identity, &current)?;
+            backoff = (backoff * 2).min(Duration::from_secs(5));
         }
     }
 
@@ -966,6 +1041,9 @@ impl LarmControlClient {
             ))?))?
             .send()
             .map_err(|error| LarmControlError::transport(format!("release failed: {error}")))?;
+        if matches!(response.status(), StatusCode::NOT_FOUND | StatusCode::GONE) {
+            return Ok(());
+        }
         if response.status() != StatusCode::NO_CONTENT {
             if response.status().is_success() {
                 return Err(LarmControlError::protocol(format!(
@@ -1023,7 +1101,15 @@ impl LarmControlClient {
 
     fn authorized(&self, request: RequestBuilder) -> Result<RequestBuilder, LarmControlError> {
         match self.config.control_bearer_token.as_ref() {
-            Some(token) => Ok(request.bearer_auth(token.as_str())),
+            Some(token) => {
+                let resolved =
+                    crate::domains::secret_store::resolve(token.as_str()).map_err(|_| {
+                        LarmControlError::configuration(
+                            "LARM control credential could not be resolved",
+                        )
+                    })?;
+                Ok(request.bearer_auth(resolved.as_str()))
+            }
             None => Err(LarmControlError::credential_missing()),
         }
     }
@@ -1232,11 +1318,9 @@ impl LarmControlClient {
                         || provider.model != entry.model
                         || provider.context_window != entry.context_window
                 })
-            || (connection.status == LarmConnectionStatus::Ready
-                && (provider.readiness != LarmConnectionStatus::Ready || !provider.claimable))
         {
             return Err(LarmControlError::protocol(
-                "LARM connection provider is not a ready claimable OpenAI-compatible target",
+                "LARM connection provider does not match the discovered OpenAI-compatible target",
             ));
         }
         if connection.status == LarmConnectionStatus::Ready
@@ -1280,8 +1364,21 @@ impl LarmControlClient {
                 "LARM claim identity, state, expiry, or provider count mismatch",
             ));
         }
-        let provider = claim.providers.remove(0);
-        let public_provider = &connection.providers[0];
+        let index = claim
+            .providers
+            .iter()
+            .position(|p| p.name == "llm" && p.protocol == OPENAI_PROTOCOL)
+            .ok_or_else(|| {
+                LarmControlError::protocol("LARM claim omitted the requested LLM Provider")
+            })?;
+        let provider = claim.providers.remove(index);
+        let public_provider = connection
+            .providers
+            .iter()
+            .find(|p| p.name == "llm" && p.protocol == OPENAI_PROTOCOL)
+            .ok_or_else(|| {
+                LarmControlError::protocol("LARM status omitted the requested LLM Provider")
+            })?;
         if provider.name.is_empty()
             || provider.capability.is_empty()
             || provider.name != public_provider.name
@@ -1341,7 +1438,7 @@ impl LarmControlClient {
             connection_id: claim.id,
             allocation_id: claim.allocation_id,
             api_base_url: base_url.as_str().trim_end_matches('/').to_string(),
-            model: provider.model,
+            model: provider.configuration.fields.model,
             bearer_token: provider.credential.token,
             expires_at: provider.credential.expires_at,
             context_window: provider.context_window,

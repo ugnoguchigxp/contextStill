@@ -1,0 +1,355 @@
+<article lang="ja">
+  <h1>Finding再設計案：32Kを目安に必要な情報を集め、成果が増えなければ終了する</h1>
+  <p>
+    2026年10月3日作成、10月4日更新。ユーザーの依頼に基づく再設計案。実装はFinding/Covering共通実行層の計画へ進んでいる。対象はFindingのみ。原資料を読み、再利用できる知識候補を作る過程に、追加読解・既存知識との照合・必要時のDeepStill調査を組み込む。32,768トークンは1回のLLM呼び出しの目安に変更し、小幅超過を許す。予算を使い切るための探索は行わない。本書の初版は設計のみ。現在の実装状況は<a
+      href="finding-covering-agent-runtime-review-2026-10-04.html"
+      >実装レビュー記録</a
+    >にまとめる。稼働設定とQueue停止状態は変更していない。
+  </p>
+  <p>
+    本方針の実装順序、変更箇所、共通基盤との依存、検証と削除条件は<a
+      href="finding-agentic-implementation-plan-2026-10-03.html"
+      >Finding実装計画</a
+    >で定義する。引継ぎ先は<a href="covering-agentic-implementation-plan-2026-10-03.html"
+      >Covering実装計画</a
+    >に従う。
+  </p>
+  <h2>1. 現行実装と参考にしたDeepStill</h2>
+  <p>
+    Findingの方針はユーザーが承認済み。実装の共通化、Coveringへの根拠引継ぎ、request枠とrun所有権の分離、レガシー経路の移行は<a
+      href="finding-covering-shared-agent-runtime-plan-2026-10-03.html"
+      >Finding・Covering共通実行層の計画</a
+    >を正本とする。本書のFinding専用台帳という表現は、共通run/step台帳をFindingPolicyから使う形へ具体化する。
+  </p>
+  <p>
+    ContextStillの基準commitはfee405c。Rustのfinding_executor.rsはsource_target/vibe_memoryのみを実行し、本文とdiffをフィルターして32,000文字で中央を切り詰め、max_tokens=4,000の1回の呼び出しで候補を抽出する。必要箇所の追加読解、既存Knowledge照合、調査委託、実usageの保存はこの経路にない。TypeScriptのfindCandidate/domain.tsにはreader
+    toolの複数回読解があるが、residentのRust経路と同じ能力ではない。文字数上限を大きくするだけでは改善しない。
+  </p>
+  <p>
+    DeepStillは/Users/y.noguchi/Code/deepStillのcommit
+    19844e7と現在の作業ツリーを読み取り確認した。作業ツリーには7件の変更があり、配備済み実装と一致するとは確認していない。現行の新規live
+    jobは設定条件によりdeliverables-v1を使う。deliverable-engine.tsとdeliverable-prompts.tsには、一度に1行動を選ぶ、既読cursorを進める、既に検索したqueryを拒否する、必要な情報がなければ未充足で終了する、早すぎる未充足終了を一度だけ再検討する、連続取得失敗8回で既存成果を保持して終了する処理がある。
+  </p>
+  <p>
+    research/direction.tsとrounds.tsの別経路には、未解決の問い・期待する情報差分・行動履歴・近似query重複・finalization予約による行動制約がある。これらはFindingの設計に参考として使う。deliverable-engine.tsのnoGain値は記録されるが、その値による停止条件は確認できなかった。本書の「情報が増えない探索の停止」はFindingで追加する要件であり、DeepStillで既に保証されると扱わない。またResearchEngine型にはtargetBudget/hardSafetyCeilingがあるが、現在の手動HTTP接続は単一budgetを使う。soft/hardの扱いも新規実装が必要である。
+  </p>
+  <h2>2. Findingの責任と成果物</h2>
+  <p>
+    Findingの目的は、入力に含まれる原因・修正・検証・継続的な好み・適用条件・失敗回避から、根拠を追えるrule/procedure候補を作ること。外部調査は候補の意味、一般化の条件、矛盾、具体的な不足の解消に限る。候補に関係しない周辺トピックを広げない。ユーザーの好みやローカルの観測事実を外部資料で置き換えず、実行していない操作や検証を実体験として記述しない。
+  </p>
+  <p>
+    出力には既存のtype、polarity、title、contentを維持し、Finding側のorigin/metadataとrun台帳へ根拠snapshot、読んだ範囲、関連する疑問、外部evidence、未解決事項、停止理由を保存する。候補採用・価値判定・Knowledge登録は既存のCovering/Finalizeに渡す。今回、その判断ロジックは変更しない。外部調査しただけでKnowledgeを直接追加しない。
+  </p>
+  <h2>3. 1ジョブの処理</h2>
+  <ol>
+    <li>
+      原資料を秘匿化済みの不変snapshotへ固定する。本文・diff・検証結果・ユーザー発言の見出しと範囲indexを作る。中央切り詰めを廃止し、長い入力は読める単位へ分けて未読範囲を残す。対応していない入力の組は能力不足として扱い、LLM枠を無駄に取得しない。
+    </li>
+    <li>
+      信号のある範囲から暫定候補と疑問を作る。疑問には候補との関係、回答に必要な根拠、解けたと判断する条件を付ける。候補化できる信号がない入力では、一般知識を探すために外部探索を始めない。
+    </li>
+    <li>
+      各ステップで、候補の差分と次の行動を最大1つ返す。原資料の未読範囲を読む、候補に関連するdiff・検証を読む、同repositoryのKnowledgeを照合する、DeepStillへ未解決の問いを委託する、終了する、から選ぶ。次に何が分かる見込みかを短く記録する。生の会話全履歴を毎回増やさず、候補と根拠の台帳から現在のcontextを組み立てる。
+    </li>
+    <li>
+      runtimeが範囲・scope・重複・残予算を検証して行動を実行する。新しい引用や条件が得られたら候補を更新し、同じ条件で次の必要性を評価する。候補の文章を言い換えただけでは情報の増加に数えない。
+    </li>
+    <li>
+      根拠のある候補だけを確定する。未解決の候補は不足とともに保留し、十分な候補は別に下流へ渡せる。0件でも、全体評価の結果候補がない場合と、未読・予算不足・取得失敗で判断できない場合を区別して保存する。
+    </li>
+  </ol>
+  <p>
+    Agenticにするためにすべてのjobを多段化しない。短い明確な入力は初回の抽出と決定的な根拠検証で終了する。関連原資料が既にあるなら、Knowledge検索やDeepStillを必須工程にしない。初期候補から新しい問いを追加する場合も、親候補との関係と解決条件が必要である。
+  </p>
+  <h2>4. 1回のContextWindow予算</h2>
+  <table>
+    <caption>
+      Findingに提案する初期設定。実装・実測前の調整可能な値
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">値と意味</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">通常の目安</th>
+        <td>32,768。最終messages、tool/schema、chat template、生成予約を合わせた1回の目安</td>
+      </tr>
+      <tr>
+        <th scope="row">小幅超過</th>
+        <td>36,864まで。重要な引用・条件・1候補のまとまりを壊さない場合に限り許可し、理由を記録</td>
+      </tr>
+      <tr>
+        <th scope="row">入力の目安</th>
+        <td>
+          原資料・evidence約20K、指示・schema・候補・行動台帳約6K。固定割当ではなく必要量へ再配分
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">出力予約</th>
+        <td>次の行動だけなら1,536、抽出・候補差分・最終候補なら4,096。残予算と実際の契約に従う</td>
+      </tr>
+      <tr>
+        <th scope="row">安全余白</th>
+        <td>
+          初期値1,024とLARM広告のsafetyMarginTokensの大きい方。Provider契約に従いinputと出力予約を収める
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">実際の上限</th>
+        <td>
+          min(36,864, claimされたcontextWindow.maxTokens)。入力＋max(要求出力予約,
+          広告outputReserveTokens)＋安全余白がこの値以下
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">KV容量</th>
+        <td>65,536×4slotはサーバー側の余裕。consumerが公開契約を越えて送れる根拠にしない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    32K超過は「もう1回検索する許可」ではない。既に得られた重要な根拠を保持するために使う。上限へ近づいたら既読資料と行動ログの全文を外し、必要な原文引用・反証・適用条件・疑問を保持する。根拠はsummaryで置き換えない。単一資料が大きい場合は範囲分割し、1回で収まらない最終結果は候補単位で検証する。
+  </p>
+  <p>
+    以前確認したOrnith向けLARM設定の公開Windowは32,768なので、36K許可にはLARM側の広告・claim契約の変更も必要である。公開経路から最終promptを数えるcanonical
+    tokenizerまたは同等の認証済み測定を使う。計測経路が提供されない間は36K対応を有効化しない。文字数推定や物理backendの直接接続で保証したことにしない。DeepStillの入力bytes予約はWindowの厳密保証とは別なので、委託のLLM呼び出しにも同じGatewayでtoken計測を適用する。
+  </p>
+  <h2>5. 探索全体の上限と諦める条件</h2>
+  <p>
+    ここからの数値は複数回の呼び出しを合算した暴走防止予算であり、1回の32K
+    ContextWindowとは別である。予算を残して終了してよい。初期値は評価データで調整し、実装済みの性能値として扱わない。
+  </p>
+  <table>
+    <caption>
+      Finding探索の初期上限案
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">上限</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">原資料中心の処理</th>
+        <td>使用量目安98,304、hard 131,072トークン。最終確定用に1呼び出し分32,768を予約</td>
+      </tr>
+      <tr>
+        <th scope="row">DeepStill委託を含む処理</th>
+        <td>親と子を合算して目安262,144、hard 393,216トークン。入力・出力の内訳も記録</td>
+      </tr>
+      <tr>
+        <th scope="row">Finding側LLM</th>
+        <td>最大8回。checkpointごとの追加読解と確定を含み、形式修復もこの中で1回まで</td>
+      </tr>
+      <tr>
+        <th scope="row">関連Knowledge照合</th>
+        <td>最大2回。最初の関連取得と、別の具体的な疑問が生じた場合のみ</td>
+      </tr>
+      <tr>
+        <th scope="row">DeepStillへの委託</th>
+        <td>1 Finding runにつき1 job。重要な未解決の問いを最大3つに絞ってまとめる</td>
+      </tr>
+      <tr>
+        <th scope="row">子の初期探索上限</th>
+        <td>検索4回、保存資料6件、URL試行12件、リンク深さ2、LLM12回、5分。全工程の最大時間10分</td>
+      </tr>
+      <tr>
+        <th scope="row">子のtoken予算</th>
+        <td>
+          例：入力196,608、出力65,536、合計262,144を上限とし、親の消費・確定予約を引いた残量以下へ縮める
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    子への委託時は親が予約を永続化し、子の全LLM呼び出しを同じroot runへ紐づける。Gateway
+    usageと子が返す合計を二重加算しない。残予算が子の有用な取得・確定を賄えなければ委託しない。target到達時は新しい探索を増やさず、進行中の1行動と成果の確定へ移る。hard到達前に予約で新規requestを止める。不明なusageを0として扱わず、予約量を保持して不明と記録する。DeepStillの現行manual予算をそのまま流用しない。
+  </p>
+  <ul>
+    <li>疑問が解け、候補と適用条件の根拠が揃ったら即終了する。最低探索回数は置かない。</li>
+    <li>
+      同じsnapshotの同じ範囲、同じ疑問に対する同じ資料、正規化queryを再実行しない。言い換えでも同じ疑問・狙う根拠・取得済みsourceなら既存結果を優先する。
+    </li>
+    <li>
+      2回連続の取得・読解で、新しい検証可能な根拠、条件、反証、疑問の解消が増えなければ探索を止める。本文が言い換わった、引用数だけ増えた、LLMの自己評価点が上がった、は進捗にしない。
+    </li>
+    <li>
+      重要な問いが残り、未試行の独立した経路に具体的な情報差分が期待できる場合だけ、上記停止を一度再検討する。この例外を繰り返さず、得られなければpartialで終える。
+    </li>
+    <li>
+      同一URLの恒久失敗・拒否は再試行しない。一時的通信エラーだけ同じ操作IDで1回再試行する。3回連続の実取得失敗なら既存成果を保存して終了する。
+    </li>
+    <li>
+      取得失敗は事実が存在しない証拠にしない。未読、未取得、矛盾、予算終了を別に記録する。未読範囲が残る場合、全資料についてno_candidateと断定しない。
+    </li>
+    <li>候補の表現改善だけが残っているときは追加検索しない。根拠済みの候補をそのまま確定する。</li>
+  </ul>
+  <p>
+    初版のDeepStill自動委託機能は、子側でも同じ問いの再探索抑止・無進捗終了・root予算を尊重できる契約が整ってから有効化する。親のpollと取消し要求だけでは子の停止を保証できない。取消し要求中と停止確認済みを区別し、停止未確認の子が残っている間に新しい子を作らない。foreground
+    preemptionは探索失敗へ加算せず、途中成果と既消費予算を保持して待機する。
+  </p>
+  <h2>6. DeepStillの使い方と必要な追加境界</h2>
+  <p>
+    採用方針は「Findingから条件付きでDeepStillへ非同期委託」。原資料内で原因・条件・検証が足りる候補はFinding単体で終了する。外部の一次資料が必要な一般化、仕様の曖昧さ、矛盾の照合などだけを委託する。入力は問い、用途、既知の主張、必要な情報差分、関連引用、repository
+    identity、予算、親run ID、調査済み履歴に絞る。過去の会話全体やsecretは送らない。
+  </p>
+  <p>
+    現在のContextStillのdeepstill-client.tsは手動topic調査、disableKnowledge=true、固定budgetを使い、manual-research-llm.routes.tsはlocal-llm直接指定のみでLARMを拒否する。これをそのままFindingから呼ぶと4session管理から外れる。手動UIを自動委託に流用せず、既存ResearchEngineのhost-owned
+    contractを基にFinding用Broker・結果Ingress・LLM
+    Gatewayを必要範囲で追加する。ResearchEngine型をDeepStill内部DBの共有で代用しない。
+  </p>
+  <ol>
+    <li>Writerで親run、委託payload hash、idempotency key、予算予約を保存する。</li>
+    <li>
+      親Queueをwaiting_researchの理由付きpausedへ移し、Queue lockとLLM
+      leaseを解放する。親が枠を保持したまま子のLLMを待たない。
+    </li>
+    <li>
+      Brokerがsubmit/pollを行う。通信再送は同じ委託とkeyを使い、部分成果や不足を理由に同じ問いの新jobを作らない。
+    </li>
+    <li>
+      子の各LLM呼び出しはContextStillの共通LARM枠を取得して実行し、終了ごとに解放する。全体4枠を超えず、他のQueueも実行できるようにする。
+    </li>
+    <li>
+      terminal resultのsnapshot
+      hash、引用と原文、locatorの単位、claim参照を検証して保存する。manual経路のUTF-16
+      offsetと汎用projectionのUTF-8 bytesを混同しない。
+    </li>
+    <li>
+      laneが利用者によって停止中なら自動再開しない。再開可能なら親をpendingへ戻し、保存済みevidenceから候補を確定する。partial結果は使える根拠のみ使い、missingを消さない。
+    </li>
+  </ol>
+  <p>
+    DeepStill停止・未対応contract・認証失敗時は、外部資料がなくても成立する候補だけを確定し、残りをresearch_unavailableとして記録する。代替モデルへ暗黙に切り替えない。DeepStill内部の探索をFinding側に複製せず、重複抑止・進捗・予算・停止契約を子側に適用できるadapterを実装する。手動調査の挙動は維持する。
+  </p>
+  <h2>7. 保存・再開とLLM契約</h2>
+  <p>
+    Finding runとstepの台帳を追加し、source
+    hash、context/promptの版、疑問、候補差分、読解範囲、操作key、委託ID、予算、停止理由をWriterで永続化する。成功済みstepを再実行しない。通信retryやresident再起動でも同じrun・消費予算を保持し、明示的な再抽出だけ新runへする。候補をjob/index
+    IDで上書きする現行保存方式を新runへ持ち込まず、候補fingerprintとrunで再保存を冪等にする。既存の旧候補は破壊しない。
+  </p>
+  <p>
+    LLMへの指示には使命、1行動の選択条件、資料はdataであること、根拠と未解決の扱い、終了契約を書く。回数・予算・許可scope・重複はruntimeで強制する。既存の管理対象SystemContextとschemaへ同じ契約を置き、Rustだけに別の長文promptを増やさない。自由なshell実行や任意URL巡回はFindingに追加しない。
+  </p>
+  <p>
+    多段化するとjob全体がLARM
+    TTLを越え得るため、credentialをjob全期間固定する現行checkoutをそのまま延長しない。各LLM
+    stepで現在のclaimと残期限を確認し、古いrequestの完了後に更新する。長い読解・外部委託の待機中は枠を解放し、checkpointから再取得する。leaseのheartbeatだけではcredential期限を延ばせない。
+  </p>
+  <h2>8. 計測と完了・不足の区別</h2>
+  <p>
+    job/run/step/request
+    IDを結び、各呼び出しのinputTokens、outputTokens、outputReservation、contextPeakTokens、tokenizer版、public
+    model、connection/catalog、計測の正確性を記録する。1
+    jobの最大Window、全工程の消費量、LLM回数、読解範囲、重複拒否数、DeepStill使用有無を別々に表示できる状態にする。candidate数だけで品質向上と判定しない。
+  </p>
+  <p>
+    終了理由はsatisfied、no_signal、partial_no_progress、partial_budget、partial_time、partial_retrieval、research_unavailable、cancelled、provider_wait、invalid_outputを区別する。根拠を確認済みの候補は保存できるが、未充足のrunを全件completedにしない。親Queueの既存statusを使い、詳細はrun
+    outcomeへ保存する。最終候補保存と下流enqueueが確認できてから終端化する。
+  </p>
+  <h2>9. 実装順序と検証gate</h2>
+  <ol>
+    <li>
+      現行入力の固定評価集合を作り、中央の根拠、短い好み、単発進捗、長文、外部調査が必要な条件、重複資料を含める。現行の抽出結果・根拠・request数・token量を同じモデルでベースライン化する。過去usageの分位数を現行品質の証明にしない。
+    </li>
+    <li>
+      token測定、32K目安/36K上限、run/step台帳、usage、token単位の原資料readerを先に実装する。原資料中心のFindingを動かし、中央切り詰めを除去する。wiki/webのreaderは既存guardを再利用し、能力表とclaimを一致させる。必要なschema追加は単一Writerへ集約する。
+    </li>
+    <li>
+      1行動選択、関連Knowledge照合、根拠による候補差分、無進捗停止を追加する。停止・再設定・preemption・再起動後のcheckpoint再開を先にmockで検証する。
+    </li>
+    <li>
+      DeepStillのFinding用adapter、非同期Broker、引用検証、共通LARM
+      Gateway、root予算・停止伝播を実装する。これらが揃うまで自動委託はoff。手動調査の回帰確認も行う。
+    </li>
+    <li>
+      固定集合と未使用holdoutで比較し、少数Finding
+      jobのcanaryを実行する。2回無進捗と一度の再検討を、回収率を下げず無益な探索を減らす観点で調整する。その後、LARM4枠・公開36K・token測定契約を実機で確認してFindingのみ展開する。
+    </li>
+  </ol>
+  <table>
+    <caption>
+      必須の行動評価。mockとfixtureは外部LLMなしで再現する
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ケース</th>
+        <th scope="col">期待する結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">短い明確な修正と検証</th>
+        <td>1回で候補化。外部調査0回</td>
+      </tr>
+      <tr>
+        <th scope="row">長文の中央に唯一の根拠</th>
+        <td>範囲readerで回収し、未読をno_candidateと誤認しない</td>
+      </tr>
+      <tr>
+        <th scope="row">好み・短い指示</th>
+        <td>明示的なsource根拠を保持。一般情報の調査で置き換えない</td>
+      </tr>
+      <tr>
+        <th scope="row">重要な一般化条件が不足</th>
+        <td>具体的な問いを1 jobへ委託し、原資料と外部根拠を分ける</td>
+      </tr>
+      <tr>
+        <th scope="row">同じqueryの言い換えと同一資料</th>
+        <td>同じ疑問・source履歴から拒否し、新しい情報がないループを終了する</td>
+      </tr>
+      <tr>
+        <th scope="row">2回無進捗、独立経路が1つ残る</th>
+        <td>一度だけ再検討し、解消できなければ不足を残す</td>
+      </tr>
+      <tr>
+        <th scope="row">32K超過と36K超過</th>
+        <td>前者は理由付きで許可可能。後者やProvider契約超過は送信前に再構成</td>
+      </tr>
+      <tr>
+        <th scope="row">tokenizer不明・usage欠落</th>
+        <td>36K機能を有効にしない。不明消費を0へ変換しない</td>
+      </tr>
+      <tr>
+        <th scope="row">DeepStill通信断・partial・引用不一致</th>
+        <td>重複委託なし、利用可能な原資料成果を保持、不正引用を候補根拠にしない</td>
+      </tr>
+      <tr>
+        <th scope="row">再起動・停止・TTL更新</th>
+        <td>予算と成功stepを保持。停止中は再claimなし、使用中tokenの更新なし</td>
+      </tr>
+      <tr>
+        <th scope="row">4枠が埋まった状態で委託</th>
+        <td>親が枠を解放し、子も全体4枠内で実行。deadlockなし</td>
+      </tr>
+      <tr>
+        <th scope="row">原資料内のtool実行指示</th>
+        <td>dataとして扱い、許可されない探索・送信を実行しない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    実装後のgateはFinding/Queue/provider
+    connectionのRust回帰試験、設定・Broker・引用検証のTypeScript試験、型チェック、Clippy、SystemContext検証、Spec
+    check。実LLM比較は別の明示的な試験として、原文で根拠付けできる候補の回収、根拠なし候補、条件を失う一般化、外部探索0件で終われた率、無進捗終了、peak
+    Window、消費量と時間を測る。品質の合格は人が確認したholdout基準で判断し、LLMの自己評価値を採用しない。
+  </p>
+  <h2>10. 対象範囲と関連計画</h2>
+  <p>
+    本書はFindingのcontext予算とAgentic探索に関する新しい計画である。以前のFinding
+    v2のsnapshot・秘匿化・候補世代・parser・入力能力に関する要件は前提として取り込むが、全下流の世代切替や他Queueの探索変更を同時に展開しない。covering、episode、curationの独立した予算見直しは後続。本書の初版は設計文書である。後続の32K制御と共通実行層の実装はレビュー記録に従い、DeepStill自動委託・本番4並列の未完了gateを実装済みとは扱わない。
+  </p>
+  <ul>
+    <li><a href="finding-v2-implementation-plan.html">Finding v2の整合性・抽出品質計画</a></li>
+    <li><a href="deepstill-v1-integration-design.html">ResearchEngineのhost-owned統合契約</a></li>
+    <li><a href="deepstill-manual-research-v1-plan.html">現在の手動調査接続と未接続の範囲</a></li>
+    <li>
+      <a href="queue-context-window-investigation-2026-10-03.html">1回のQueue呼び出しのtoken調査</a>
+    </li>
+    <li><a href="larm-four-concurrent-queue-2026-10-03.html">共有4枠の実装と未完了条件</a></li>
+  </ul>
+</article>

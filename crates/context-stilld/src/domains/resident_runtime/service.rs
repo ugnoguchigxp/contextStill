@@ -157,7 +157,7 @@ pub fn run<E: EnvProvider, S: ProcessSupervisor>(
     let pid = std::process::id();
 
     if once {
-        queue_lifecycle::service::release_dynamic_provider_connections();
+        queue_lifecycle::service::release_dynamic_provider_connections(&paths.sqlite_core_path);
         let mut shutdown_surfaces = stop_owned_surfaces(env, supervisor, &mut runtime_state)?;
         surfaces.append(&mut shutdown_surfaces);
         runtime_state.shutdown_writer()?;
@@ -189,7 +189,7 @@ pub fn run<E: EnvProvider, S: ProcessSupervisor>(
         }
     }
 
-    queue_lifecycle::service::release_dynamic_provider_connections();
+    queue_lifecycle::service::release_dynamic_provider_connections(&paths.sqlite_core_path);
     let mut shutdown_surfaces = stop_owned_surfaces(env, supervisor, &mut runtime_state)?;
     surfaces.append(&mut shutdown_surfaces);
     runtime_state.shutdown_writer()?;

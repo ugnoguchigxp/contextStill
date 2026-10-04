@@ -5,7 +5,7 @@ const mockSend = vi.fn();
 
 vi.mock("@aws-sdk/client-bedrock-runtime", () => {
   const BedrockRuntimeClientMock = vi.fn(function BedrockRuntimeClientMock() {
-    return { send: mockSend };
+    return { send: mockSend, destroy: vi.fn() };
   });
   const ConverseCommandMock = vi.fn(function ConverseCommandMock(this: { input?: unknown }, input) {
     this.input = input;
@@ -102,11 +102,13 @@ describe("bedrock provider", () => {
     mockSend.mockResolvedValue(mockResponse);
 
     await provider.chat({ messages: [{ role: "user", content: "hi" }], maxTokens: 10 });
-    expect(process.env.AWS_PROFILE).toBe("my-custom-profile");
+    const { BedrockRuntimeClient } = await import("@aws-sdk/client-bedrock-runtime");
+    expect(BedrockRuntimeClient).toHaveBeenCalledWith(
+      expect.objectContaining({ profile: "my-custom-profile" }),
+    );
 
     // Clean up
     groupedConfig.bedrock.profile = "";
-    process.env.AWS_PROFILE = undefined;
   });
 
   test("healthCheck returns reachable true if error metadata contains httpStatusCode < 500", async () => {

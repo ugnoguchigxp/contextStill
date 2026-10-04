@@ -219,431 +219,6 @@
   gap: 1rem;
 }
 
-.settings-layout {
-  display: grid;
-  gap: 1rem;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 1rem;
-}
-
-.settings-header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.settings-message {
-  font-size: 0.86rem;
-  padding: 0.85rem 0.9rem;
-}
-
-.settings-message.success {
-  color: #047857;
-}
-
-.settings-message.error {
-  color: #b91c1c;
-}
-
-.settings-loading {
-  color: #64748b;
-  font-size: 0.9rem;
-  padding: 1rem;
-}
-
-.settings-tab-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.settings-tab {
-  align-items: center;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  display: inline-flex;
-  color: #334155;
-  font-size: 0.82rem;
-  font-weight: 600;
-  padding: 0.45rem 0.7rem;
-  text-decoration: none;
-  background: var(--background);
-}
-
-.settings-tab:hover {
-  background: rgba(15, 23, 42, 0.05);
-}
-
-.settings-tab.active {
-  background: #0f172a;
-  border-color: #0f172a;
-  color: #f8fafc;
-}
-
-.settings-provider-grid,
-.settings-search-grid {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.settings-route-matrix {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  display: grid;
-  gap: 0.75rem;
-  grid-column: 1 / -1;
-  padding: 1rem;
-}
-
-.settings-route-matrix-header {
-  align-items: flex-start;
-  display: flex;
-  gap: 0.75rem;
-  justify-content: space-between;
-}
-
-.settings-route-matrix-header h3 {
-  color: var(--foreground);
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  margin: 0;
-}
-
-.settings-route-matrix-header p {
-  color: var(--muted-foreground);
-  font-size: 0.78rem;
-  line-height: 1.45;
-  margin: 0.2rem 0 0;
-}
-
-.settings-provider-endpoints {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  display: grid;
-  gap: 1rem;
-  padding: 1rem;
-}
-
-.settings-provider-endpoints-header {
-  align-items: flex-start;
-  display: flex;
-  gap: 1rem;
-  justify-content: space-between;
-}
-
-.settings-provider-endpoints-header h2 {
-  color: var(--foreground);
-  font-size: 0.98rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  margin: 0;
-}
-
-.settings-provider-endpoints-header p {
-  color: var(--muted-foreground);
-  font-size: 0.78rem;
-  line-height: 1.45;
-  margin: 0.25rem 0 0;
-}
-
-.settings-provider-endpoints-actions,
-.settings-provider-endpoint-top {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  justify-content: space-between;
-}
-
-.settings-provider-endpoint-list {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.settings-provider-endpoint-card {
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  display: grid;
-  gap: 0.85rem;
-  padding: 0.9rem;
-}
-
-.settings-provider-endpoint-title {
-  display: grid;
-  gap: 0.15rem;
-  min-width: 0;
-}
-
-.settings-provider-endpoint-title strong {
-  color: var(--foreground);
-  font-size: 0.9rem;
-  font-weight: 700;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-provider-endpoint-title span {
-  color: var(--muted-foreground);
-  font-size: 0.72rem;
-}
-
-.settings-provider-endpoint-fields {
-  display: grid;
-  gap: 0.75rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.settings-provider-header {
-  align-items: center;
-  display: flex;
-  gap: 0.75rem;
-  justify-content: space-between;
-}
-
-.settings-provider-actions {
-  align-items: center;
-  display: flex;
-  gap: 0.5rem;
-}
-
-.settings-card-grid {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.settings-check {
-  align-items: center;
-  color: #334155;
-  display: flex;
-  font-size: 0.84rem;
-  font-weight: 500;
-  gap: 0.5rem;
-}
-
-.settings-field {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.settings-field > span {
-  color: #64748b;
-  font-size: 0.76rem;
-}
-
-.settings-secret-row {
-  border-top: 1px solid rgba(15, 23, 42, 0.08);
-  display: grid;
-  gap: 0.65rem;
-  margin-top: 0.25rem;
-  padding-top: 0.75rem;
-}
-
-.settings-secret-meta {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.settings-secret-status {
-  align-items: center;
-  color: #64748b;
-  display: flex;
-  flex-wrap: wrap;
-  font-size: 0.75rem;
-  gap: 0.4rem;
-}
-
-.settings-secret-inputs {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.settings-secret-inputs input {
-  flex: 1 1 220px;
-}
-
-.settings-routes {
-  display: grid;
-  gap: 1rem;
-}
-
-.settings-task-routing-intro {
-  color: var(--muted-foreground);
-  font-size: 0.82rem;
-  line-height: 1.45;
-}
-
-.settings-route-section {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.settings-route-section + .settings-route-section {
-  border-top: 1px solid var(--border);
-  padding-top: 0.95rem;
-}
-
-.settings-route-section-header {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.settings-route-section-header h3 {
-  color: var(--foreground);
-  font-size: 0.9rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  margin: 0;
-}
-
-.settings-route-section-header p {
-  color: var(--muted-foreground);
-  font-size: 0.78rem;
-  line-height: 1.45;
-  margin: 0;
-}
-
-.settings-route-row {
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  display: grid;
-  gap: 0.75rem;
-  padding: 0.8rem;
-}
-
-.settings-route-header {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.settings-route-label {
-  color: var(--foreground);
-  font-size: 0.84rem;
-  font-weight: 700;
-}
-
-.settings-route-description {
-  color: var(--muted-foreground);
-  font-size: 0.76rem;
-  line-height: 1.45;
-  margin: 0;
-}
-
-.settings-route-fields,
-.settings-form-grid {
-  display: grid;
-  gap: 0.75rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.settings-route-fields-routing {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.settings-route-fields-agentic {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.settings-route-fields-pool {
-  grid-template-columns: minmax(180px, 280px);
-}
-
-.settings-provider-pool-targets {
-  display: grid;
-  gap: 0.45rem;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-
-.settings-provider-pool-target {
-  align-items: center;
-  background: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--foreground);
-  display: flex;
-  font-size: 0.76rem;
-  gap: 0.45rem;
-  min-height: 2.2rem;
-  padding: 0.35rem 0.5rem;
-}
-
-.settings-provider-pool-target span {
-  line-height: 1.35;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.settings-route-chain {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.settings-route-chain-item {
-  align-items: center;
-  background: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  color: var(--foreground);
-  display: inline-flex;
-  font-size: 0.72rem;
-  gap: 0.35rem;
-  line-height: 1.35;
-  max-width: 100%;
-  min-height: 1.8rem;
-  padding: 0.25rem 0.45rem;
-}
-
-.settings-route-chain-item strong {
-  color: var(--foreground);
-  font-size: 0.68rem;
-  white-space: nowrap;
-}
-
-.settings-check-inline {
-  min-height: 100%;
-  padding-top: 1.2rem;
-}
-
-.settings-provider-order-list {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.settings-provider-order-item {
-  align-items: center;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 0.5rem;
-  display: flex;
-  justify-content: space-between;
-  padding: 0.5rem 0.6rem;
-}
-
-.settings-provider-order-name {
-  display: grid;
-  gap: 0.1rem;
-}
-
-.settings-provider-order-name span {
-  color: #64748b;
-  font-size: 0.74rem;
-}
-
-.settings-provider-order-actions {
-  align-items: center;
-  display: flex;
-  gap: 0.35rem;
-}
-
 .page-heading {
   align-items: center;
   display: flex;
@@ -2243,13 +1818,6 @@
   .graph-sandbox-diff-grid {
     grid-template-columns: 1fr;
   }
-
-  .settings-provider-grid,
-  .settings-search-grid,
-  .settings-route-fields,
-  .settings-form-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Vibe Memory Layout */
@@ -3584,4 +3152,380 @@
 
 .overview-chart-frame {
   margin-top: 0.25rem;
+}
+
+/* Settings: scoped editors and provider connections. */
+.config-page {
+  height: 100%;
+  overflow: auto;
+  padding: 28px 32px;
+  background: var(--background);
+}
+.config-page-header,
+.config-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.config-page h1 {
+  font-size: 26px;
+  font-weight: 700;
+}
+.config-page h2 {
+  font-size: 19px;
+  font-weight: 650;
+  margin-bottom: 8px;
+}
+.config-page h3 {
+  font-size: 15px;
+  font-weight: 650;
+  margin-bottom: 10px;
+}
+.config-page p {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.config-tabs {
+  display: flex;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+  overflow-x: auto;
+}
+.config-tabs a {
+  padding: 12px 16px;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  border-bottom: 3px solid transparent;
+  font-weight: 600;
+  font-size: 14px;
+}
+.config-tabs a[aria-current="page"] {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.config-page-content > div:not([hidden]) {
+  display: grid;
+  gap: 18px;
+}
+.config-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 22px;
+  min-width: 0;
+}
+.config-section-heading {
+  margin-top: 2px;
+}
+.config-muted,
+.config-delete {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.config-connections {
+  display: grid;
+  gap: 18px;
+}
+.config-table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.config-provider-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.config-provider-table th {
+  text-align: left;
+  background: var(--muted);
+  font-weight: 650;
+  padding: 12px 16px;
+  white-space: nowrap;
+}
+.config-provider-table td {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  vertical-align: middle;
+}
+.config-provider-table tr.selected {
+  background: color-mix(in srgb, var(--primary) 8%, var(--card));
+}
+.config-provider-select {
+  display: grid;
+  text-align: left;
+  gap: 4px;
+  cursor: pointer;
+}
+.config-provider-select span,
+.config-provider-table small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  margin-top: 4px;
+  max-width: 300px;
+  overflow-wrap: anywhere;
+}
+.config-provider-select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 5px;
+  border-radius: 3px;
+}
+.config-row-actions {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+.config-status {
+  font-size: 12px;
+}
+.config-status.success,
+.config-success {
+  color: #15803d;
+}
+.config-status.failed,
+.config-error {
+  color: #b91c1c;
+}
+.config-status.stale,
+.config-status.unknown {
+  color: var(--muted-foreground);
+}
+.config-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+@media (max-width: 1100px) {
+  .config-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .config-detail-grid > article:last-child {
+    grid-column: 1 / -1;
+  }
+}
+.config-card dl {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  font-size: 13px;
+  gap: 10px;
+  margin: 12px 0;
+}
+.config-card dd {
+  overflow-wrap: anywhere;
+}
+.config-card dt {
+  color: var(--muted-foreground);
+}
+.config-card a {
+  color: var(--primary);
+  font-size: 13px;
+}
+.config-card ul {
+  padding-left: 20px;
+  list-style: disc;
+  font-size: 13px;
+  line-height: 1.9;
+  margin: 10px 0;
+}
+.config-delete {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.config-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 14px 0;
+}
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 13px;
+  min-width: 0;
+}
+.config-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 9px 0;
+}
+.config-subgroup {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+}
+.config-subgroup legend {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0 6px;
+}
+.config-field-grid > .config-subgroup {
+  grid-column: 1 / -1;
+}
+.config-order-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 13px;
+}
+.config-order-row > span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.config-section-footer {
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 20px;
+  padding-top: 16px;
+}
+.config-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 18px 0;
+}
+.config-policy-grid > div {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  background: var(--muted);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.config-policy-grid strong {
+  font-size: 20px;
+}
+.config-route-list,
+.config-pools {
+  display: grid;
+  gap: 14px;
+}
+.config-route-card {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.config-route-card details {
+  grid-column: 1 / -1;
+}
+.config-route-card details > label,
+.config-route-card details > fieldset {
+  margin: 12px 0;
+}
+.config-route-card summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.config-notice,
+.config-error,
+.config-test-result {
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: var(--muted);
+  font-size: 13px;
+  margin: 12px 0;
+}
+.config-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--foreground);
+  width: min(720px, calc(100vw - 32px));
+  max-height: 90vh;
+  padding: 0;
+  box-shadow: 0 25px 70px #0004;
+}
+.config-dialog::backdrop {
+  background: #0f172a80;
+}
+.config-dialog form {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+}
+.config-dialog header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.config-dialog h2 {
+  font-size: 20px;
+  font-weight: 650;
+}
+.config-dialog p {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+.config-dialog-body {
+  overflow-y: auto;
+  padding: 20px 24px;
+  min-height: 0;
+}
+.config-dialog footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border);
+}
+.config-dialog footer > span {
+  flex: 1;
+}
+.config-empty {
+  padding: 24px;
+  color: var(--muted-foreground);
+}
+@media (max-width: 760px) {
+  .config-page {
+    padding: 18px 14px;
+  }
+  .config-page-header,
+  .config-section-heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .config-detail-grid,
+  .config-field-grid,
+  .config-policy-grid,
+  .config-route-card {
+    grid-template-columns: 1fr;
+  }
+  .config-tabs {
+    gap: 0;
+  }
+  .config-tabs a {
+    padding: 12px 10px;
+  }
+  .config-card {
+    padding: 16px;
+  }
+  .config-card dl {
+    grid-template-columns: 100px minmax(0, 1fr);
+  }
+  .config-dialog footer {
+    padding: 14px;
+  }
 }

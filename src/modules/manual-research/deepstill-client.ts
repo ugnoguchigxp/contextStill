@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { canonicalJsonSha256 } from "../../shared/utils/canonical-json.js";
+import type { CodexResearchOutcome } from "./codex-research.contract.js";
 
 const BASE_PATH = "/api/integrations/contextstill/manual/v1";
 export const MANUAL_RESEARCH_BUDGET = {
@@ -97,8 +98,15 @@ export type ManualResearchResult = {
     sourceUrl: string;
     snapshotHash: string;
   }>;
-  usage: DeepStillJob["usage"];
+  usage: {
+    queries: number | null;
+    urls: number | null;
+    tokens: number | null;
+    requests: number | null;
+    costUsd: number | null;
+  };
   reason: string | null;
+  exploration?: CodexResearchOutcome;
 };
 
 function endpoint(): { url: URL; token: string } {

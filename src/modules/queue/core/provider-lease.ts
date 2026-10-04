@@ -9,6 +9,7 @@ import type {
   RuntimeSettingsRoute,
 } from "../../settings/settings.types.js";
 import { isQueuePaused } from "./control.js";
+import { legacyProtocolPredicate } from "./legacy-protocol.js";
 import { routeClaimGroupId } from "./scheduler.js";
 import type { DistillationQueueName } from "./types.js";
 import { queueTableNameByQueue } from "./types.js";
@@ -218,7 +219,7 @@ function staleCutoffTimestamp(pool: RuntimeProviderPool): string {
   return sqliteTimestamp(new Date(Date.now() - seconds * 1000));
 }
 
-function recoverStaleQueueJobsSql(tableName: string): string {
+function recoverStaleQueueJobsSql(tableName: string, protocol: string): string {
   return `
     update ${tableName}
     set
@@ -230,12 +231,16 @@ function recoverStaleQueueJobsSql(tableName: string): string {
       last_error = coalesce(last_error, 'stale_running_recovered'),
       last_outcome_kind = 'stale_recovered',
       updated_at = CURRENT_TIMESTAMP
-    where status = 'running'
+    where status = 'running' and ${protocol}
       and coalesce(heartbeat_at, locked_at, updated_at) < ?
   `;
 }
 
-function runnableSql(queueName: DistillationQueueName, tableName: string): string {
+function runnableSql(
+  queueName: DistillationQueueName,
+  tableName: string,
+  protocol: string,
+): string {
   const extraColumns =
     queueName === "findingCandidate"
       ? ", source_kind"
@@ -245,7 +250,7 @@ function runnableSql(queueName: DistillationQueueName, tableName: string): strin
   return `
     select id, priority, created_at${extraColumns}
     from ${tableName}
-    where (
+    where ${protocol} and (
       (status = 'pending' and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP))
       or (status = 'paused' and next_run_at is not null and datetime(next_run_at) <= CURRENT_TIMESTAMP)
     )
@@ -411,8 +416,11 @@ export async function claimNextJobWithProviderLease(params: {
     for (const [queueOrder, queueName] of params.priorityQueues.entries()) {
       if (pausedQueues.has(queueName)) continue;
       const tableName = queueTableNameByQueue[queueName];
-      sqlite.db.query(recoverStaleQueueJobsSql(tableName)).run(queueStaleCutoff);
-      const rows = sqlite.db.query<RunnableQueueRow, []>(runnableSql(queueName, tableName)).all();
+      const protocol = legacyProtocolPredicate(sqlite.db, queueName);
+      sqlite.db.query(recoverStaleQueueJobsSql(tableName, protocol)).run(queueStaleCutoff);
+      const rows = sqlite.db
+        .query<RunnableQueueRow, []>(runnableSql(queueName, tableName, protocol))
+        .all();
       for (const row of rows) {
         if (candidateUsesLarmRoute({ settings, queueName, row })) continue;
         const createdAtMs = rowCreatedAtMs(row.created_at);
@@ -461,7 +469,7 @@ export async function claimNextJobWithProviderLease(params: {
           locked_at = CURRENT_TIMESTAMP,
           heartbeat_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
-        where id = ?
+        where id = ? and ${legacyProtocolPredicate(sqlite.db, picked.queueName)}
           and (
             (status = 'pending' and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP))
             or (status = 'paused' and next_run_at is not null and datetime(next_run_at) <= CURRENT_TIMESTAMP)

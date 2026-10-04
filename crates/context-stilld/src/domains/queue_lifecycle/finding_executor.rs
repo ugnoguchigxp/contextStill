@@ -1,20 +1,16 @@
-use reqwest::blocking::Client;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::shared::agent_session::{is_agent_session_api_path, AgentSessionRequest};
 use crate::shared::errors::CliError;
 
 use super::episode_executor::LocalLlmTargetConfig;
 use super::events::append_queue_event_for_connection;
 use super::inference_preemption::{
-    classify_larm_foreground_preemption, classify_larm_provider_unreachable,
-    classify_larm_provider_unreachable_message, log_preemption, preemption_count,
-    preemption_metadata, preemption_retry_delay_ms, random_jitter_sample, InferencePreemption,
-    InferenceRequestError,
+    log_preemption, preemption_count, preemption_metadata, preemption_retry_delay_ms,
+    random_jitter_sample, InferencePreemption, InferenceRequestError,
 };
 use super::provider_execution::owns_provider_execution;
 use super::types::{ClaimedProviderLeaseJob, ProviderLeaseAssignment};
@@ -135,7 +131,7 @@ pub(crate) fn execute_finding(
         &execution.target,
         execution.api_key.as_ref().map(|key| key.as_str()),
         timeout_seconds,
-        source,
+        &truncate_middle(source, 32_000),
     ) {
         Ok(candidates) => FindingWorkerResult::Candidates(candidates),
         Err(InferenceRequestError::Preempted(preemption)) => {
@@ -660,10 +656,25 @@ fn load_job(connection: &Connection, job_id: &str) -> Result<FindingJob, CliErro
      .ok_or_else(|| CliError::io(format!("finding candidate queue job not found: {job_id}")))
 }
 
-fn read_filtered_vibe_source(
+pub(crate) fn read_filtered_vibe_source(
     connection: &Connection,
     source_key: &str,
 ) -> Result<String, CliError> {
+    let bytes=connection.query_row("select length(cast(content as blob)) + coalesce((select sum(length(cast(diff_hunk as blob))) from agent_diff_entries where vibe_memory_id=?1),0) from vibe_memories where id=?1",[source_key],|r|r.get::<_,u64>(0));
+    // Older fixtures may not have the diff table; the normal body-size guard remains mandatory.
+    let bytes = bytes
+        .or_else(|_| {
+            connection.query_row(
+                "select length(cast(content as blob)) from vibe_memories where id=?1",
+                [source_key],
+                |r| r.get::<_, u64>(0),
+            )
+        })
+        .map_err(|e| CliError::io(e.to_string()))?;
+    if bytes > crate::domains::agent_runtime::source::SOURCE_LIMIT as u64 {
+        return Err(CliError::io("source_byte_limit"));
+    }
+
     let content = connection
         .query_row(
             "select content from vibe_memories where id = ?1 limit 1",
@@ -698,10 +709,10 @@ fn read_filtered_vibe_source(
         }
     }
     let joined = blocks.join("\n");
-    Ok(truncate_middle(&joined, 32_000))
+    Ok(joined)
 }
 
-fn filter_source_text(input: &str) -> String {
+pub(crate) fn filter_source_text(input: &str) -> String {
     let mut result = Vec::new();
     let mut skipped_tag: Option<&str> = None;
     let mut skipped_private_key = false;
@@ -737,7 +748,16 @@ fn filter_source_text(input: &str) -> String {
             result.push(redact_json_sensitive_value(line));
             continue;
         }
-        let sensitive = lower.contains("authorization: bearer ")
+        let sensitive = [
+            "password",
+            "access_token",
+            "client_secret",
+            "authorization",
+            "bearer_token",
+        ]
+        .iter()
+        .any(|key| lower.contains(&format!("\"{key}\"")))
+            || lower.contains("authorization: bearer ")
             || lower.contains("authorization:")
             || lower.contains("bearer ")
             || lower.contains("api_key=")
@@ -762,17 +782,32 @@ fn filter_source_text(input: &str) -> String {
         if sensitive {
             result.push("[REDACTED SENSITIVE LINE]".to_string());
         } else {
-            result.push(line.chars().take(2_000).collect::<String>());
+            result.push(line.to_string());
         }
     }
     result.join("\n")
 }
 
 fn redact_json_sensitive_value(line: &str) -> String {
+    if let Ok(mut value) = serde_json::from_str::<Value>(line) {
+        if value.is_object() || value.is_array() {
+            redact_sensitive_json(&mut value);
+            return value.to_string();
+        }
+    }
     let Some(separator) = line.find(':') else {
         return "[REDACTED SENSITIVE LINE]".to_string();
     };
     let prefix = &line[..=separator];
+    let key = prefix
+        .trim()
+        .trim_end_matches(':')
+        .trim()
+        .trim_matches('"')
+        .to_ascii_lowercase();
+    if !matches!(key.as_str(), "apikey" | "api_key") {
+        return "[REDACTED SENSITIVE LINE]".into();
+    }
     let value_and_suffix = line[separator + 1..].trim_start();
     let whitespace_len = line[separator + 1..].len() - value_and_suffix.len();
     let whitespace = &line[separator + 1..separator + 1 + whitespace_len];
@@ -783,6 +818,9 @@ fn redact_json_sensitive_value(line: &str) -> String {
     {
         if let Some(end) = value_and_suffix[quote.len_utf8()..].find(quote) {
             let suffix_index = quote.len_utf8() + end + quote.len_utf8();
+            if !matches!(value_and_suffix[suffix_index..].trim(), "" | ",") {
+                return "[REDACTED SENSITIVE LINE]".into();
+            }
             return format!(
                 "{prefix}{whitespace}{quote}[REDACTED SENSITIVE VALUE]{quote}{}",
                 &value_and_suffix[suffix_index..]
@@ -792,6 +830,39 @@ fn redact_json_sensitive_value(line: &str) -> String {
     "[REDACTED SENSITIVE LINE]".to_string()
 }
 
+fn redact_sensitive_json(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                let key = key.to_ascii_lowercase().replace(['_', '-'], "");
+                if [
+                    "apikey",
+                    "password",
+                    "accesstoken",
+                    "clientsecret",
+                    "authorization",
+                    "bearertoken",
+                    "databaseurl",
+                    "privatekey",
+                    "secret",
+                ]
+                .contains(&key.as_str())
+                {
+                    *value = json!("[REDACTED SENSITIVE VALUE]");
+                } else {
+                    redact_sensitive_json(value);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for value in items {
+                redact_sensitive_json(value);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn request_candidates(
     target: &LocalLlmTargetConfig,
     api_key: Option<&str>,
@@ -799,95 +870,242 @@ fn request_candidates(
     source: &str,
 ) -> Result<Vec<Candidate>, InferenceRequestError> {
     let system = "あなたは ContextStill の findCandidate executor です。filtered vibe memory と agent diff の明示的な根拠だけから、将来再利用できる知識を抽出してください。進捗報告、未検証の仮説、単発の結果、prompt や schema 自体は候補にしません。1候補は1知識です。type は rule または procedure、polarity は positive または negative。procedure の polarity は必ず positive。negative は rule のみです。procedure の content には Use when: / Workflow: / Verification: / Avoid: をこの順で、それぞれ独立した行の先頭に置き、各節に空でない説明を含めます。Workflow: の次の行から番号付きの手順（1. と 2.）を最低2行記述してください。Workflow: と同じ行へ手順をまとめてはいけません。手順が2つ未満なら procedure にせず rule として表現してください。JSON文字列内の改行は \\n で表します。出力は type, polarity, title, content だけを持つ JSON 配列のみ。候補がなければ []。";
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(timeout_seconds.max(30)))
-        .build()
-        .map_err(|error| {
-            InferenceRequestError::Other(format!("failed to build local-llm client: {error}"))
-        })?;
     let messages = json!([
         {"role":"system","content":system},
         {"role":"user","content":format!("Source:\n{source}")}
     ]);
-    if target.codex || is_agent_session_api_path(&target.api_path) {
-        let content = target
-            .run_agent_chat(
-                &client,
-                timeout_seconds,
-                AgentSessionRequest {
-                    api_base_url: &target.api_base_url,
-                    api_path: &target.api_path,
-                    api_key,
-                    model: &target.model,
-                    messages: &messages,
-                    max_tokens: 4_000,
-                    json_response: true,
-                },
-            )
-            .map_err(|error| {
-                classify_larm_provider_unreachable_message(&target.target_id, &error)
-                    .map(InferenceRequestError::Preempted)
-                    .unwrap_or(InferenceRequestError::Other(error))
-            })?;
-        return parse_candidates(&content)
-            .map_err(|error| InferenceRequestError::Other(error.to_string()));
+    let completion = crate::domains::agent_runtime::transport::send(
+        crate::domains::agent_runtime::transport::CompletionRequest {
+            target,
+            api_key,
+            messages: &messages,
+            max_output: 4_000,
+            response_format: Some(super::structured_output::format("finding")),
+            timeout_seconds,
+        },
+    )?;
+    if let Some(error) = completion.terminal_error {
+        return Err(InferenceRequestError::Other(error));
     }
-    let url = chat_url(&target.api_base_url, &target.api_path);
-    let mut request_body = json!({
-        "model": target.model,
-        "messages": messages,
-        "max_tokens": 4000,
-        "temperature": 0,
-        "stream":false,
-        "response_format":super::structured_output::format("finding")
-    });
-    if target.target_id.starts_with("larm-agent-connection:") {
-        request_body["stream"] = Value::Bool(false);
+    parse_candidates(&completion.content)
+        .map_err(|error| InferenceRequestError::Other(error.to_string()))
+}
+
+pub(crate) fn validate_candidate_value(value: &Value) -> Result<(), String> {
+    let object = value.as_object().ok_or("candidate_must_be_object")?;
+    if object.len() != 4
+        || object
+            .keys()
+            .any(|key| !["type", "polarity", "title", "content"].contains(&key.as_str()))
+    {
+        return Err("candidate_has_unknown_field".into());
     }
-    let mut request = client.post(&url).json(&request_body);
-    if let Some(key) = api_key.map(str::trim).filter(|key| !key.is_empty()) {
-        request = request.header(
-            "authorization",
-            crate::domains::secret_store::header(key, true)
-                .map_err(InferenceRequestError::Other)?,
-        );
+    if object
+        .values()
+        .any(|v| v.as_str().is_none_or(|v| v.len() > 65_536))
+    {
+        return Err("candidate_field_limit".into());
     }
-    let response = request.send().map_err(|error| {
-        classify_larm_provider_unreachable(&target.target_id, &error)
-            .map(InferenceRequestError::Preempted)
-            .unwrap_or_else(|| {
-                InferenceRequestError::Other(format!(
-                    "local-llm request failed (connect={}, timeout={}, request={}): {error:?}",
-                    error.is_connect(),
-                    error.is_timeout(),
-                    error.is_request()
-                ))
-            })
-    })?;
-    let status = response.status().as_u16();
-    let headers = response.headers().clone();
-    let body = response.text().map_err(|error| {
-        InferenceRequestError::Other(format!("failed to read local-llm response: {error}"))
-    })?;
-    if !(200..300).contains(&status) {
-        if let Some(preemption) =
-            classify_larm_foreground_preemption(&target.target_id, status, &headers, &body)
-        {
-            return Err(InferenceRequestError::Preempted(preemption));
+    let parsed = parse_candidates(&json!([value]).to_string()).map_err(|e| e.to_string())?;
+    let c = parsed.first().ok_or("candidate_missing")?;
+    if json!({"type":c.kind,"polarity":c.polarity,"title":c.title,"content":c.content}) != *value {
+        return Err("candidate_not_canonical".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn capture_agent_input(
+    connection: &Connection,
+    job_id: &str,
+) -> Result<crate::domains::agent_runtime::ledger::Input, String> {
+    use crate::domains::agent_runtime::{
+        ledger::Input,
+        policy::{CandidateDraft, State},
+        source::Snapshot,
+    };
+    let job = load_job(connection, job_id).map_err(|e| e.to_string())?;
+    let (generation, payload) = connection
+        .query_row(
+            "select input_generation,payload from finding_candidate_queue where id=?1",
+            [job_id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    let provided = job.input_kind == "provided_candidate";
+    if job.input_kind != "source_target" && !provided {
+        return Err("worker_capability_missing:input_kind".into());
+    }
+    let (text, metadata, deferred_source) = if provided {
+        (String::new(), job.metadata.clone(), false)
+    } else if job.source_kind == "vibe_memory" {
+        if is_self_ingestion_blocked(connection, &job.source_key).map_err(|e| e.to_string())? {
+            return Err("self_ingestion_blocked".into());
         }
-        return Err(InferenceRequestError::Other(format!(
-            "local-llm HTTP {}: {}",
-            status,
-            truncate(&body, 1000)
-        )));
+        let metadata = connection
+            .query_row(
+                "select metadata from vibe_memories where id=?1",
+                [&job.source_key],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|e| e.to_string())?;
+        (
+            read_filtered_vibe_source(connection, &job.source_key).map_err(|e| e.to_string())?,
+            serde_json::from_str(&metadata).map_err(|_| "source_metadata_invalid")?,
+            false,
+        )
+    } else if matches!(job.source_kind.as_str(), "wiki_file" | "web_ingest") {
+        let stored = connection
+            .query_row(
+                "select body,metadata from sources where id=?1 or uri=?2 limit 1",
+                params![job.source_key, job.source_uri],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some((text, metadata)) = stored {
+            (
+                filter_source_text(&text),
+                serde_json::from_str(&metadata).map_err(|_| "source_metadata_invalid")?,
+                false,
+            )
+        } else {
+            (String::new(), job.metadata.clone(), true)
+        }
+    } else {
+        return Err(format!("worker_capability_missing:{}", job.source_kind));
+    };
+    let identity =
+        super::covering_executor::applicability::trusted_source_project_identity(&metadata)
+            .unwrap_or_else(|| json!({}));
+    let snapshot = Snapshot::new(
+        job.source_uri.clone(),
+        if provided {
+            "provided_candidate"
+        } else if deferred_source {
+            "pending_primary"
+        } else {
+            "primary"
+        }
+        .into(),
+        text,
+    )?;
+    let mut state = State::new(snapshot, None);
+    let mut provided_attributes = json!({});
+    if provided {
+        let payload: Value =
+            serde_json::from_str(&payload).map_err(|_| "provided_candidate_invalid")?;
+        let candidate = json!({"type":payload.get("type").and_then(Value::as_str).unwrap_or("rule"),"polarity":payload.get("polarity").and_then(Value::as_str).unwrap_or("positive"),"title":payload["title"].as_str().map(str::trim),"content":payload["body"].as_str().map(str::trim)});
+        validate_candidate_value(&candidate)?;
+        provided_attributes = provided_candidate_attributes(&payload, &identity)?;
+        state.candidates.push(CandidateDraft {
+            candidate,
+            evidence: vec![],
+            unresolved_questions: vec![],
+        });
     }
-    let payload: Value = serde_json::from_str(&body).map_err(|error| {
-        InferenceRequestError::Other(format!("failed to parse local-llm response JSON: {error}"))
-    })?;
-    let content =
-        super::structured_output::content(&payload).map_err(InferenceRequestError::Other)?;
-    parse_candidates(content).map_err(|error| InferenceRequestError::Other(error.to_string()))
+    Ok(Input {
+        preview: serde_json::from_str::<Value>(&payload)
+            .ok()
+            .is_some_and(|p| p["agentPreview"] == true),
+        generation,
+        identity,
+        source_key: job.source_key,
+        source_kind: job.source_kind,
+        source_uri: job.source_uri,
+        source_metadata: metadata,
+        distillation_version: job.distillation_version,
+        priority: job.priority,
+        bundle: None,
+        deferred_source,
+        provided,
+        provided_attributes,
+        initial_state: state,
+    })
+}
+
+// Preserve ingress annotations without allowing them to forge host lineage or project scope.
+fn provided_candidate_attributes(payload: &Value, identity: &Value) -> Result<Value, String> {
+    let mut result = serde_json::Map::new();
+    if let Some(origin) = payload.get("origin").filter(|v| v.is_object()) {
+        let safe = filter_source_text(&origin.to_string());
+        let safe: Value = serde_json::from_str(&safe).map_err(|_| "provided_origin_invalid")?;
+        for (key, value) in safe.as_object().ok_or("provided_origin_invalid")? {
+            if !matches!(
+                key.as_str(),
+                "agentRuntime"
+                    | "projectIdentity"
+                    | "repoKey"
+                    | "repoPath"
+                    | "projectRef"
+                    | "appliesTo"
+                    | "applicability"
+                    | "technologies"
+                    | "changeTypes"
+                    | "domains"
+                    | "applicabilityGeneral"
+            ) {
+                result.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    if let Some(tags) = payload.get("intentTags").and_then(Value::as_array) {
+        let tags = tags
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect::<std::collections::BTreeSet<_>>();
+        if tags.len() > 32 || tags.iter().any(|s| s.len() > 256) {
+            return Err("provided_intent_tags_invalid".into());
+        }
+        if !tags.is_empty() {
+            result.insert("intentTags".into(), json!(tags));
+        }
+    }
+    let applicability = payload
+        .get("appliesTo")
+        .or_else(|| payload.get("applicability"))
+        .unwrap_or(payload);
+    let mut applies = serde_json::Map::new();
+    for key in ["technologies", "changeTypes", "domains"] {
+        if let Some(values) = applicability.get(key).and_then(Value::as_array) {
+            let values = values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .collect::<std::collections::BTreeSet<_>>();
+            if values.len() > 64 || values.iter().any(|s| s.len() > 256) {
+                return Err("provided_applicability_invalid".into());
+            }
+            if !values.is_empty() {
+                let value = json!(values);
+                applies.insert(key.to_owned(), value.clone());
+                result.insert(key.to_owned(), value);
+            }
+        }
+    }
+    if let Some(general) = applicability
+        .get("general")
+        .or_else(|| applicability.get("applicabilityGeneral"))
+        .and_then(Value::as_bool)
+    {
+        applies.insert("general".into(), json!(general));
+        result.insert("applicabilityGeneral".into(), json!(general));
+    }
+    for key in ["repoKey", "repoPath", "projectRef"] {
+        if let Some(value) = applicability.get(key).and_then(Value::as_str) {
+            if identity.get(key).and_then(Value::as_str) != Some(value.trim()) {
+                return Err("provided_applicability_scope_mismatch".into());
+            }
+            applies.insert(key.into(), json!(value.trim()));
+        }
+    }
+    if !applies.is_empty() {
+        result.insert("appliesTo".into(), Value::Object(applies));
+    }
+    result.insert("providedCandidate".into(), json!(true));
+    Ok(Value::Object(result))
 }
 
 fn parse_candidates(content: &str) -> Result<Vec<Candidate>, CliError> {
@@ -1115,7 +1333,9 @@ fn mark_failed(connection: &Connection, job_id: &str, error: &str) -> Result<(),
 
 fn is_provider_unavailable(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
-    lower.contains("local-llm request failed")
+    lower.contains("llm request failed")
+        || lower.contains("llm response read failed")
+        || lower.contains("local-llm request failed")
         || lower.contains("failed to read local-llm response")
         || lower.contains("local-llm curl fallback failed")
         || lower.contains("failed to start curl fallback")
@@ -1128,24 +1348,8 @@ fn is_provider_unavailable(error: &str) -> bool {
         || (500..=599).any(|status| lower.contains(&format!("http {status}")))
 }
 
-fn chat_url(base: &str, path: &str) -> String {
-    let base = base.trim_end_matches('/');
-    let path = if path.trim().is_empty() {
-        "/v1/chat/completions"
-    } else {
-        path.trim()
-    };
-    let path = if path.starts_with('/') {
-        path.to_string()
-    } else {
-        format!("/{path}")
-    };
-    if base.ends_with("/v1") && path.starts_with("/v1/") {
-        format!("{}{}", base, &path[3..])
-    } else {
-        format!("{base}{path}")
-    }
-}
+#[cfg(test)]
+use crate::domains::agent_runtime::transport::chat_url;
 
 fn stable_id(prefix: &str, job_id: &str, index: usize) -> String {
     let digest = Sha256::digest(format!("{prefix}:{job_id}:{index}"));

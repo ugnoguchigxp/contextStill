@@ -1,3 +1,5 @@
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
+import { runNativeCovering } from "../agent-runtime/native-client.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import type { DistillationDomainSmokeResult } from "../distillation-domain.types.js";
 import {
@@ -200,6 +202,14 @@ function prependToolEvents(
 export async function runCoverEvidence(
   input: CoverEvidenceRunInput,
 ): Promise<CoverEvidenceRunResult> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") return runNativeCovering(input);
+  return runLegacyPostgresCovering(input);
+}
+
+/** Explicit PostgreSQL compatibility until its queue runtime supports protocol 3. */
+async function runLegacyPostgresCovering(
+  input: CoverEvidenceRunInput,
+): Promise<CoverEvidenceRunResult> {
   const id = input.id.trim();
   if (!id) {
     throw new Error("id is required");
@@ -294,6 +304,11 @@ export async function runCoverEvidence(
   }
 
   const originObj = row.origin && typeof row.origin === "object" ? (row.origin as any) : {};
+  if (originObj.agentRuntime && typeof originObj.agentRuntime === "object") {
+    throw new Error(
+      "resident_agent_protocol_required: this candidate must be processed by its native Covering queue",
+    );
+  }
   const isNegative = originObj.polarity === "negative";
   if (isNegative) {
     const { runCoverNegativeEvidence } = await import("../coverNegativeEvidence/domain.js");

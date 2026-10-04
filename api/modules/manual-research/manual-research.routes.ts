@@ -1,6 +1,12 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
+import { ProjectScopedWriteError } from "../../../src/modules/context-compiler/project-scoped-write.js";
+import {
+  compareResearch,
+  importResearchCandidates,
+  researchImportSchema,
+} from "../../../src/modules/manual-research/research-candidate-ingress.js";
 import {
   ManualResearchConflict,
   createManualResearch,
@@ -15,6 +21,14 @@ import {
 const idSchema = z.object({ id: z.string().uuid() });
 
 export const manualResearchRouter = new Hono()
+  .get(
+    "/compare",
+    zValidator("query", z.object({ topic: z.string().min(2).max(400) })),
+    async (c) => {
+      c.header("Cache-Control", "no-store");
+      return c.json({ runs: await compareResearch(c.req.valid("query").topic) });
+    },
+  )
   .get("/", async (c) => {
     c.header("Cache-Control", "no-store");
     void reconcilePendingManualResearch().catch(() => {});
@@ -27,6 +41,7 @@ export const manualResearchRouter = new Hono()
       return c.json({ run }, 201);
     } catch (error) {
       if (error instanceof ManualResearchConflict) return c.json({ error: error.message }, 409);
+      if (error instanceof ProjectScopedWriteError) return c.json({ error: error.code }, 400);
       throw error;
     }
   })
@@ -41,4 +56,23 @@ export const manualResearchRouter = new Hono()
     c.header("Cache-Control", "no-store");
     const run = await requestManualResearchCancel(c.req.valid("param").id);
     return run ? c.json({ run }) : c.json({ error: "NOT_FOUND" }, 404);
-  });
+  })
+  .post(
+    "/:id/candidates",
+    zValidator("param", idSchema),
+    zValidator("json", researchImportSchema),
+    async (c) => {
+      c.header("Cache-Control", "no-store");
+      try {
+        return c.json(await importResearchCandidates(c.req.valid("param").id, c.req.valid("json")));
+      } catch (error) {
+        if (error instanceof ManualResearchConflict) return c.json({ error: error.message }, 409);
+        if (error instanceof ProjectScopedWriteError) return c.json({ error: error.code }, 400);
+        if (error instanceof Error && error.message === "RESEARCH_RUN_NOT_FOUND")
+          return c.json({ error: error.message }, 404);
+        if (error instanceof Error && /^RESEARCH_CANDIDATE_/.test(error.message))
+          return c.json({ error: error.message }, 400);
+        throw error;
+      }
+    },
+  );

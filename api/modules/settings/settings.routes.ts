@@ -2,6 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
 import { settingsUpdateRequestSchema } from "../../../src/modules/settings/settings.types.js";
+import { connectionsRouter } from "./connections.routes.js";
 import {
   getCodexAuthStatusForApi,
   getCodexLoginCommandForApi,
@@ -43,6 +44,7 @@ function logSettingsUpdateRejected(
 }
 
 export const settingsRouter = new Hono()
+  .route("/", connectionsRouter)
   .get("/", async (c) => {
     const result = await getSettingsForApi();
     return c.json(result);
@@ -65,8 +67,16 @@ export const settingsRouter = new Hono()
       return c.json({ error: "Invalid settings payload.", issues }, 400);
     }
 
-    const result = await updateSettingsForApi(parsed.data);
-    return c.json(result);
+    try {
+      return c.json(await updateSettingsForApi(parsed.data));
+    } catch (error) {
+      if (error instanceof Error && error.message === "settings_revision_conflict")
+        return c.json(
+          { error: { code: "settings_revision_conflict", message: "設定を再取得してください" } },
+          409,
+        );
+      throw error;
+    }
   })
   .post(
     "/providers/azure-openai/deployments/:deployment/test",

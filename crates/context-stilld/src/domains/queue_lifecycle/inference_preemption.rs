@@ -24,7 +24,7 @@ pub(super) enum InferencePauseKind {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(super) struct InferencePreemption {
+pub(crate) struct InferencePreemption {
     pub(super) kind: InferencePauseKind,
     pub(super) retry_after_floor_ms: u64,
     pub(super) message: Option<String>,
@@ -68,7 +68,7 @@ impl InferencePreemption {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(super) enum InferenceRequestError {
+pub(crate) enum InferenceRequestError {
     Preempted(InferencePreemption),
     Other(String),
 }
@@ -94,7 +94,7 @@ impl From<&str> for InferenceRequestError {
     }
 }
 
-pub(super) fn classify_larm_foreground_preemption(
+pub(crate) fn classify_larm_foreground_preemption(
     target_id: &str,
     status: u16,
     headers: &HeaderMap,
@@ -128,7 +128,7 @@ pub(super) fn classify_larm_foreground_preemption(
     })
 }
 
-pub(super) fn classify_larm_provider_unreachable(
+pub(crate) fn classify_larm_provider_unreachable(
     target_id: &str,
     error: &reqwest::Error,
 ) -> Option<InferencePreemption> {
@@ -142,7 +142,7 @@ pub(super) fn classify_larm_provider_unreachable(
     })
 }
 
-pub(super) fn classify_larm_provider_unreachable_message(
+pub(crate) fn classify_larm_provider_unreachable_message(
     target_id: &str,
     error: &str,
 ) -> Option<InferencePreemption> {

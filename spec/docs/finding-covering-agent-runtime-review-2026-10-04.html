@@ -1,0 +1,255 @@
+<article lang="ja">
+  <h1>Finding・Covering共通Agent実行層の実装レビュー</h1>
+  <p>
+    2026年10月4日の接続修正は<a href="larm-common-provider-adoption-2026-10-04.html"
+      >LARM共通手順へのProvider接続修正</a
+    >を現行仕様とする。以下にある計測APIや固定runtimeを必須とする当時の記述は撤回済み。実tokenizer計測の未達は、公開Providerの受入れと分けて記録する。
+  </p>
+  <p>
+    2026年10月4日。基準commitはfee405c。承認済みの<a
+      href="finding-agentic-implementation-plan-2026-10-03.html"
+      >Finding実装計画</a
+    >と<a href="covering-agentic-implementation-plan-2026-10-03.html">Covering実装計画</a
+    >に対する作業ツリーをレビューし、不具合を修正して再検証した。本書は現在の確認状況を示す。全計画の実装完了や本番有効化を意味しない。
+  </p>
+  <h2>修正した問題</h2>
+  <table>
+    <caption>
+      再実行・予算・根拠・旧処理との競合を中心に確認した指摘と対処
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">優先度</th>
+        <th scope="col">問題</th>
+        <th scope="col">修正と検証</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">P1</th>
+        <td>結果を保存した直後の停止で同じLLMを再送できる。</td>
+        <td>
+          成功receiptと適用済みstepを分離し、未適用の保存済み応答を再開時に適用する。未知の結果は自動再送しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P1</th>
+        <td>request枠を解放した後の所有権判定が旧leaseへfallbackする。</td>
+        <td>
+          runのclaim
+          epoch、Queueのowner、入力世代、protocolの一致を唯一のfenceとする。古いownerのheartbeat・保存・確定を拒否する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P1</th>
+        <td>usage欠落やProviderの予算違反で消費履歴が消える。</td>
+        <td>
+          usage欠落時は予約を保持し、実際の超過usageと応答を保存して停止する。違反receiptは再起動後にも候補へ適用しない。cache
+          usageはinputの内数として扱う。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P1</th>
+        <td>計測後にreceiptが失効してもLLMを開始できる。</td>
+        <td>
+          Writerでの予約時にも有効期限を確認する。失効時は予約・call数を戻し、requestを開始しない。request
+          hash、tokenizer/template、lease epoch、allocation/runtime/releaseとの結び付きを保存する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P1</th>
+        <td>Coveringがtimeoutや予算停止時に直前の支持評価を使って採用できる。</td>
+        <td>
+          最終本文を固定した後に新しい検証stepが成功した場合だけ採用する。本文変更、古いstep、timeout、budget停止は採用を許可しない。検証入力から直前の支持自己評価を除き、固定したfinalArtifactと根拠を渡す。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P1</th>
+        <td>同じ候補本文を使えば別Findingのbundleを借用できる。</td>
+        <td>
+          実際のcandidate行とFinding job、run、世代、root lineage、scope、候補hash、bundle
+          hash、snapshotを照合する。文字列一致だけでは権限を認めない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P1</th>
+        <td>旧TypeScript workerが新形式や版固定Finalizeを回収・処理できる。</td>
+        <td>
+          claimとstale recoveryの双方からFinding/Covering protocol 3以上、Finalize protocol
+          2以上を除外した。有効化後のenqueue時にprotocolを固定し、直接旧Covering実行も拒否する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P1</th>
+        <td>Finding再投入が実行中のclaimや保存済みrunを上書きする。</td>
+        <td>
+          新形式の通常enqueueは既存行を返し、実行中の旧形式も上書きしない。更新時のSQLでも再確認し、protocol切替・claim取得との競合を防ぐ。再投入だけで予算や入力世代を初期化しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P2</th>
+        <td>原資料を読み切っていない候補0件をno signalとして完了する。</td>
+        <td>
+          空資料・未読範囲が残る場合はinsufficient_contextで保留する。引用の位置は秘匿化後snapshotのUTF-8
+          byte範囲に限定する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P2</th>
+        <td>同じ引用のrole変更や細分化を情報増加と数える。</td>
+        <td>
+          既存snapshotの既存範囲は新規根拠に数えない。取得後の新しい根拠を基準にno
+          gainを計数し、2回で探索を止める。取得失敗と一時障害retryは別に扱う。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P2</th>
+        <td>持ち込み候補のタグ・適用条件が新処理で失われる。</td>
+        <td>
+          typed
+          annotationを保存しCoveringへ渡す。hostのlineage・scopeは上書きさせず、別scopeの指定を拒否する。originの機密値は秘匿化する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P2</th>
+        <td>Knowledge検索が先頭の検索語しか使用しない。</td>
+        <td>
+          最大8個の全検索語で絞り込み、LIKEの特殊文字をescapeする。trusted
+          scopeの一致を強制し、範囲不明時は全体検索へfallbackしない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P2</th>
+        <td>署名URLやJSONに含まれる機密情報がsnapshot表示へ複製される。</td>
+        <td>
+          URL表示から認証・query・fragmentを除き、JSONの機密key値を秘匿化する。取得に必要な元URLは取得adapterだけで使用する。task本文の安全な内容は残す。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">P1</th>
+        <td>
+          LLM応答保存時に解放したrequest leaseをCovering保存が再要求し、正常な最終検証まで保留する。
+        </td>
+        <td>
+          Writer
+          transaction内でrunの所有権を確認した後、同claim・job・workerに一致する解放済みleaseをprojectionで認める。FindingからCovering・FinalizeまでのHTTP結合テストで確認する。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>共通化と互換性</h2>
+  <p>
+    LLM送信・usage処理・catalogue
+    prompt読出し・heartbeat待機を共通化し、Finding/Coveringの重複HTTP送信と250msの待機ループを除いた。正負双方を扱うCoveringの型名を整理した。旧形式の正Covering
+    labelled出力契約を維持し、新形式はtyped
+    envelopeと既存の採否・適用条件・procedure品質検査を組み合わせる。
+  </p>
+  <p>
+    schema revisionは10から11へ追加移行し、SQLite
+    user_versionは1を維持する。旧Finding行を保持する移行fixtureを確認した。snapshot・成功receipt・bundle・Agent由来候補は不変とする。単一Writerの外で外部IOを実行し、取得中は共有request枠を解放する。
+  </p>
+  <h2>予算と実装済み範囲</h2>
+  <p>
+    1回のLLM requestは32,768 tokensを目安、36,864
+    tokensをhard上限とし、Provider広告が小さい場合はその値へ縮める。最終requestそのものをProvider側の計測へ送り、input・output予約・最低1,024
+    tokensの余裕を合わせて判断する。出力枠は現状4,096
+    tokens。候補と行動をまとめて返す応答に適用し、actionだけの1,536 tokens経路は未提供。
+  </p>
+  <p>
+    source中心のrunはtarget 98,304、hard 131,072 tokens、最大8 call。最終判定のため32,768
+    tokensを残す。予約とusageはrestartで復元する。2回のno
+    gain、取得失敗、期限、context不足、結果不明を停止理由として記録する。Researchの262,144/393,216
+    tokensへの拡張設定は計画・型の範囲に留まり、現在は自動委託を開始しない。
+  </p>
+  <p>
+    Findingのsnapshot・未読範囲・scope付きKnowledge取得・部分候補確定・bundle引継ぎ、Coveringの独立支持判断・最終本文固定・既存revision保存に接続した。実測用managed
+    credentialがない場合は新形式を保留し、文字数推定や旧処理へ切り替えない。
+  </p>
+  <h2>検証</h2>
+  <p>
+    Rust workspace全体のテスト、TypeScriptのQueue・Covering・設定・SystemContext回帰、型検査、Rust
+    lint、SystemContextのlint/build整合性/boundary、Spec
+    HTML検査を実施する。件数と最終結果は下の検証結果を参照する。
+  </p>
+  <p>
+    HTTP結合テストではProvider
+    capability・計測receipt・LLM応答を模擬し、計測したrequestと送信したrequestの一致、usage精算、別claimでの再開、FindingからCoveringへの引継ぎ、独立した最終検証後のFinalize
+    enqueueを確認する。実モデルの生成品質と本番4並列の性能測定は含まない。
+  </p>
+  <p id="validation-result">
+    更新後の最終結果：Rust
+    573件成功・9件意図的skip・失敗0件。ContextStillのTypeScript回帰8ファイル57件成功。DeepStillの全回帰44ファイル313件成功。型検査、Rust
+    lint（-D warnings）、変更したTypeScript 8ファイルのBiome検査、SystemContext
+    lint/build整合性/boundaryは成功。Spec HTMLの整形・検査と差分の空白検査も成功。
+  </p>
+  <h2>自動Researchとnative入口の接続</h2>
+  <p>
+    S4の自動委託は専用の認証を持つDeepStill
+    APIへ接続した。子LLMも親と同じLARM接続管理と物理request枠を利用する。親は調査待ち中にLLM枠を解放し、委託予約、成功usage、部分成果を照合する。送信結果不明時は新規POSTを繰り返さず、同じ委託IDのGETで照合する。取消しの確認が取れるまで予約を戻さない。手動調査APIと自動調査APIは別の認証を使い、互いのjobを参照・取消しできない。
+  </p>
+  <p>
+    S5/F5/C5ではmanaged
+    SQLiteのFinding/Covering入口をresidentのenqueue・preview・status/wait・明示的reprocessへ移した。プレビューは台帳だけを保存し、候補、Evidence、Finalizeへ公開しない。既存のfind_candidate_resultsは保存済みの元資料と合わせてnative
+    Coveringへ橋渡しする。PostgreSQLは明示的なlegacy能力として維持する。手動DeepStillは既存UI・保存契約を持つ互換経路として残し、自動委託へ流用しない。
+  </p>
+  <h2>実データ切替時に修正した問題</h2>
+  <ul>
+    <li>
+      schema revision
+      12への移行で11の履歴が欠落した。11と12を別々に記録し、既存業務データを保持する。
+    </li>
+    <li>
+      provided
+      candidateのbundleが元資料を引き継がない。Coveringが信頼済みの元資料を独立したsnapshotとして追加する。
+    </li>
+    <li>
+      プレビューと通常Coveringが同じ重複防止制約へ衝突する。公開jobの一意性を保ちながらpreview台帳を分離し、enqueueの再呼出しは既存IDを返す。
+    </li>
+    <li>
+      接続作成前の認証失敗で復元状態にkeyがなく常駐プロセスが停止する。未送信が明示された場合だけ初期状態へ戻し、作成結果不明の状態はkeyなしで再作成しない。
+    </li>
+    <li>
+      LARM
+      Providerのwaiting/deploying状態を解釈できない。Providerの起動待ちとして扱い、connectionのstatus
+      contractは拡張しない。
+    </li>
+    <li>
+      常駐プロセスの終了で別のSQLite runtimeの接続も解放する。接続解放を終了するruntimeのSQLite
+      pathだけに限定する。
+    </li>
+    <li>
+      measurementのreceipt保持期限が認証leaseを超える。receipt、lease、credentialの最も早い期限でLLM開始を制限する。
+    </li>
+  </ul>
+  <h2>実キューの連続完了</h2>
+  <p>
+    2026-10-04 00:47:42 UTCにEpisode job rust-episode-job-unix-ms:1791038665865-2、01:24:15
+    UTCにrust-episode-job-unix-ms:1791038666109-20がcompleted /
+    episodes_distilledとなり、それぞれEpisodeを1件保存した。実キューの取得、実LLM処理、結果保存、次jobへの移行を確認した。途中のjob
+    rust-episode-job-unix-ms:1791038666035-8はfinish_reason=lengthで失敗し、不完全な結果の保存を拒否した。これはEpisodeの連続稼働確認であり、新Finding・Covering・DeepStill自動委託の本番E2E完了とは扱わない。追加の不完全応答usage保存修正をresidentへ反映し、writerと専用secretの読戻し、DeepStillのready契約を確認して5Queueを再開した。
+  </p>
+  <h2>既知の不完全応答の取扱い</h2>
+  <p>
+    実Episodeジョブでfinish_reason=lengthによる出力打切りを確認した。新しいAgent実行層は、完全に受信したHTTP応答の打切り・refusal・終了情報欠落でもusageとfinish_reasonを保存し、取得済みusageで予約を精算する。内容は空にして候補や支持判断へ渡さず、再開後もその応答を適用せず停止する。明示的な再処理は新世代で実行できる。通信断・未読応答では未知の予約を保持し、自動再送を行わない。自動調査のGatewayも既知の応答を受け取った物理枠は解放し、契約に合わない応答を結果として採用しない。
+  </p>
+  <h2>稼働状態と本番gate</h2>
+  <p>
+    SQLiteはschema revision
+    12へ移行した。全LLMタスクのrouteをcontextstill-backgroundへそろえ、Agent実行層の設定を有効化した。自動調査はloopbackの4311番に専用APIとworkerを起動し、ready契約を確認した。認証の生値はSQLiteやplistに保存せず、OS
+    storeの参照を使用する。未署名の開発用実行ファイルを再ビルドするとOS
+    storeが旧実行ファイルの読出しを拒否する場合があり、実切替後に保存・読み戻しと接続を確認する。
+  </p>
+  <p>
+    FindingとCoveringの本番E2Eは未確認。Consumerの接続は、提示された「LARM
+    プロファイル選択と接続の共通手順 ContextStillとSAAA」を基準に、公開selector
+    contextStillのdiscovery、create、ready確認、claimと応答に含まれるURL・model・credentialを使う。並列上限は公開契約と実際のclaimに従う。サーバーのcatalog、モデル、runtime、systemdの変更をConsumer実装の前提にしない。
+  </p>
+  <h2>範囲外の変更の撤回</h2>
+  <p>
+    2026年10月4日、ユーザーの依頼により、gnosisへ作成した/var/lib/larm/contextstill-enable-4sessions.shと/var/lib/larm/contextstill-4session-config/内の10ファイルを削除し、両pathの不存在を確認した。切替用systemd
+    drop-inは存在せず、稼働中のLARMソース、systemd設定、/etc/larm/larm.envは変更していない。ContextStillへ保存した切替・検証用assetと作業用の同内容ファイルも削除した。管理者操作の依頼と、サーバー設定変更を前提にした手順は撤回した。承認済みのFinding・Covering実装は保持する。
+  </p>
+  <p>
+    実モデルでのFinding→Covering→Finalize完了、4枠同時使用、DeepStill自動委託を含む本番E2Eは未確認。HTTP契約テストの成功と実キューの本番完了を区別し、共通接続手順での実接続と処理完了を確認するまで完了扱いしない。
+  </p>
+</article>

@@ -7,14 +7,13 @@ use crate::shared::errors::CliError;
 use super::applicability::{merge_execution_applicability, required_applicability_present};
 use super::helpers::{build_negative_body, non_empty};
 use super::types::{
-    NegativeCoveringExecution, NegativeCoveringResult, NegativeEvidenceResponse, NegativeQuality,
-    INTENT_TAGS,
+    CoveringExecution, CoveringResult, NegativeEvidenceResponse, NegativeQuality, INTENT_TAGS,
 };
 
 pub(super) fn parse_negative_response(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     content: &str,
-) -> Result<NegativeCoveringResult, CliError> {
+) -> Result<CoveringResult, CliError> {
     let cleaned = content
         .replace("```json", "")
         .replace("```", "")
@@ -135,7 +134,7 @@ pub(super) fn parse_negative_response(
             }
         }
     })];
-    Ok(NegativeCoveringResult {
+    Ok(CoveringResult {
         status,
         stage: "final",
         candidate,

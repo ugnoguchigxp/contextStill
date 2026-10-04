@@ -1,0 +1,590 @@
+{
+  "observedAtUtc": "2026-10-04T14:32:31.423239+00:00",
+  "observedAtJst": "2026-10-04T23:32:31.423239+09:00",
+  "windowStartUtc": "2026-10-03T14:32:31.423239+00:00",
+  "method": "SQLite mode=ro; BEGIN consistent snapshot; timestamps normalized including unix-ms; no source text or credentials exported",
+  "queues": {
+    "findingCandidate": {
+      "counts": [
+        {
+          "status": "completed",
+          "count": 7845
+        },
+        {
+          "status": "failed",
+          "count": 4487
+        },
+        {
+          "status": "paused",
+          "count": 166
+        },
+        {
+          "status": "skipped",
+          "count": 7834
+        }
+      ],
+      "recentOutcomes": [
+        {
+          "status": "paused",
+          "last_outcome_kind": "agent_request_result_unknown",
+          "count": 1
+        },
+        {
+          "status": "paused",
+          "last_outcome_kind": "context_limit",
+          "count": 1
+        },
+        {
+          "status": "paused",
+          "last_outcome_kind": "invalid_agent_output",
+          "count": 2
+        },
+        {
+          "status": "paused",
+          "last_outcome_kind": "structured_output_incomplete finish_reason=\"length\"",
+          "count": 23
+        },
+        {
+          "status": "skipped",
+          "last_outcome_kind": "timeout",
+          "count": 6
+        }
+      ],
+      "failedOutcomes": [
+        {
+          "last_outcome_kind": "failed",
+          "count": 4487
+        }
+      ],
+      "pausedOutcomes": [
+        {
+          "last_outcome_kind": "agent_request_result_unknown",
+          "count": 1
+        },
+        {
+          "last_outcome_kind": "context_limit",
+          "count": 1
+        },
+        {
+          "last_outcome_kind": "invalid_agent_output",
+          "count": 2
+        },
+        {
+          "last_outcome_kind": "provider_recovery_requeued",
+          "count": 1
+        },
+        {
+          "last_outcome_kind": "provider_unavailable_exhausted",
+          "count": 138
+        },
+        {
+          "last_outcome_kind": "structured_output_incomplete finish_reason=\"length\"",
+          "count": 23
+        }
+      ],
+      "events24h": [
+        {
+          "event_type": "claimed",
+          "count": 46
+        },
+        {
+          "event_type": "enqueued",
+          "count": 33
+        },
+        {
+          "event_type": "skipped",
+          "count": 6
+        }
+      ],
+      "lastCompletedJst": "2026-10-03 20:17:45",
+      "failedErrorCategories": {
+        "other": 66,
+        "parse_schema": 296,
+        "output_length": 916,
+        "muse_session": 3112,
+        "auth401": 89,
+        "preempted": 8
+      }
+    },
+    "coveringEvidence": {
+      "counts": [
+        {
+          "status": "completed",
+          "count": 15282
+        },
+        {
+          "status": "failed",
+          "count": 6033
+        }
+      ],
+      "recentOutcomes": [],
+      "failedOutcomes": [
+        {
+          "last_outcome_kind": "failed",
+          "count": 48
+        },
+        {
+          "last_outcome_kind": "not_reusable",
+          "count": 5
+        },
+        {
+          "last_outcome_kind": "parse_failed",
+          "count": 452
+        },
+        {
+          "last_outcome_kind": "provider_failed",
+          "count": 5468
+        },
+        {
+          "last_outcome_kind": "tool_failed",
+          "count": 60
+        }
+      ],
+      "pausedOutcomes": [],
+      "events24h": [],
+      "lastCompletedJst": "2026-10-03 20:19:00",
+      "failedErrorCategories": {
+        "other": 392,
+        "parse_schema": 495,
+        "transport_or_timeout": 2387,
+        "muse_session": 645,
+        "auth401": 2114
+      }
+    },
+    "episodeDistiller": {
+      "counts": [
+        {
+          "status": "completed",
+          "count": 9845
+        },
+        {
+          "status": "failed",
+          "count": 2273
+        },
+        {
+          "status": "paused",
+          "count": 2550
+        },
+        {
+          "status": "skipped",
+          "count": 2830
+        }
+      ],
+      "recentOutcomes": [
+        {
+          "status": "completed",
+          "last_outcome_kind": "episodes_distilled",
+          "count": 27
+        },
+        {
+          "status": "failed",
+          "last_outcome_kind": "failed",
+          "count": 6
+        }
+      ],
+      "failedOutcomes": [
+        {
+          "last_outcome_kind": "failed",
+          "count": 2268
+        },
+        {
+          "last_outcome_kind": "provider_failed",
+          "count": 5
+        }
+      ],
+      "pausedOutcomes": [
+        {
+          "last_outcome_kind": "provider_recovery_requeued",
+          "count": 1
+        },
+        {
+          "last_outcome_kind": "provider_unavailable_exhausted",
+          "count": 2549
+        }
+      ],
+      "events24h": [
+        {
+          "event_type": "claimed",
+          "count": 41
+        },
+        {
+          "event_type": "completed",
+          "count": 27
+        },
+        {
+          "event_type": "enqueued",
+          "count": 33
+        },
+        {
+          "event_type": "failed",
+          "count": 6
+        },
+        {
+          "event_type": "retried",
+          "count": 8
+        }
+      ],
+      "lastCompletedJst": "2026-10-04 23:31:45",
+      "failedErrorCategories": {
+        "other": 18,
+        "parse_schema": 264,
+        "transport_or_timeout": 5,
+        "muse_session": 1489,
+        "auth401": 321,
+        "output_length": 165,
+        "preempted": 11
+      }
+    },
+    "landscapeCuration": {
+      "counts": [
+        {
+          "status": "completed",
+          "count": 992
+        },
+        {
+          "status": "failed",
+          "count": 19
+        },
+        {
+          "status": "pending",
+          "count": 316
+        },
+        {
+          "status": "running",
+          "count": 1
+        },
+        {
+          "status": "skipped",
+          "count": 16523
+        }
+      ],
+      "recentOutcomes": [
+        {
+          "status": "completed",
+          "last_outcome_kind": "keep_separate",
+          "count": 88
+        },
+        {
+          "status": "running",
+          "last_outcome_kind": null,
+          "count": 1
+        },
+        {
+          "status": "skipped",
+          "last_outcome_kind": "no_candidate",
+          "count": 2
+        },
+        {
+          "status": "skipped",
+          "last_outcome_kind": "stale_subject",
+          "count": 43
+        }
+      ],
+      "failedOutcomes": [
+        {
+          "last_outcome_kind": "curation_failed",
+          "count": 19
+        }
+      ],
+      "pausedOutcomes": [],
+      "events24h": [
+        {
+          "event_type": "claimed",
+          "count": 173
+        },
+        {
+          "event_type": "completed",
+          "count": 88
+        },
+        {
+          "event_type": "retried",
+          "count": 39
+        },
+        {
+          "event_type": "skipped",
+          "count": 45
+        }
+      ],
+      "lastCompletedJst": "2026-10-04 23:12:51",
+      "failedErrorCategories": {
+        "parse_schema": 16,
+        "transport_or_timeout": 3
+      }
+    },
+    "deadZoneMergeReview": {
+      "counts": [
+        {
+          "status": "completed",
+          "count": 4
+        }
+      ],
+      "recentOutcomes": [],
+      "failedOutcomes": [],
+      "pausedOutcomes": [],
+      "events24h": [],
+      "lastCompletedJst": "2026-06-14 02:42:30",
+      "failedErrorCategories": {}
+    },
+    "finalizeDistille": {
+      "counts": [
+        {
+          "status": "completed",
+          "count": 8647
+        },
+        {
+          "status": "skipped",
+          "count": 23
+        }
+      ],
+      "recentOutcomes": [],
+      "failedOutcomes": [],
+      "pausedOutcomes": [],
+      "events24h": [],
+      "lastCompletedJst": "2026-10-03 15:18:36",
+      "failedErrorCategories": {}
+    },
+    "mergeActivationFinalize": {
+      "counts": [
+        {
+          "status": "completed",
+          "count": 4
+        }
+      ],
+      "recentOutcomes": [],
+      "failedOutcomes": [],
+      "pausedOutcomes": [],
+      "events24h": [],
+      "lastCompletedJst": "2026-06-14 02:43:28",
+      "failedErrorCategories": {}
+    }
+  },
+  "lanePaused": {
+    "findingCandidate": false,
+    "episodeDistiller": false,
+    "coveringEvidence": false,
+    "deadZoneMergeReview": false,
+    "landscapeCuration": false,
+    "finalizeDistille": false,
+    "mergeActivationFinalize": false
+  },
+  "agentRuns24h": [
+    {
+      "queue_name": "findingCandidate",
+      "status": "completed",
+      "stop_reason": "timeout",
+      "count": 6
+    },
+    {
+      "queue_name": "findingCandidate",
+      "status": "paused",
+      "stop_reason": "agent_request_result_unknown",
+      "count": 1
+    },
+    {
+      "queue_name": "findingCandidate",
+      "status": "paused",
+      "stop_reason": "context_limit",
+      "count": 1
+    },
+    {
+      "queue_name": "findingCandidate",
+      "status": "paused",
+      "stop_reason": "invalid_agent_output",
+      "count": 2
+    },
+    {
+      "queue_name": "findingCandidate",
+      "status": "paused",
+      "stop_reason": "structured_output_incomplete finish_reason=\"length\"",
+      "count": 23
+    }
+  ],
+  "agentSteps24h": [
+    {
+      "queue_name": "findingCandidate",
+      "status": "result_unknown",
+      "finish_reason": null,
+      "output_reserve": 8192,
+      "count": 1,
+      "minOutput": null,
+      "maxOutput": null
+    },
+    {
+      "queue_name": "findingCandidate",
+      "status": "succeeded",
+      "finish_reason": "length",
+      "output_reserve": 4096,
+      "count": 2,
+      "minOutput": 4096,
+      "maxOutput": 4096
+    },
+    {
+      "queue_name": "findingCandidate",
+      "status": "succeeded",
+      "finish_reason": "length",
+      "output_reserve": 8192,
+      "count": 21,
+      "minOutput": 8192,
+      "maxOutput": 8192
+    },
+    {
+      "queue_name": "findingCandidate",
+      "status": "succeeded",
+      "finish_reason": "stop",
+      "output_reserve": 8192,
+      "count": 15,
+      "minOutput": 1142,
+      "maxOutput": 7578
+    }
+  ],
+  "stopResponseFormats": {
+    "json": 10,
+    "invalid_json": 1,
+    "fenced": 4
+  },
+  "curationRetryErrors24h": [
+    {
+      "error": "curation provider HTTP 401 Unauthorized: {\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "count": 2
+    },
+    {
+      "error": "curation provider request failed: error sending request for url (http://192.168.0.130:9810/v1/chat/completions)",
+      "count": 1
+    },
+    {
+      "error": "incomplete or invalid source group coverage",
+      "count": 1
+    },
+    {
+      "error": "invalid curation decision or rationale",
+      "count": 23
+    },
+    {
+      "error": "structured_output_incomplete finish_reason=\"length\"",
+      "count": 12
+    }
+  ],
+  "recentClaimsJst": [
+    {
+      "queue_name": "episodeDistiller",
+      "time": "2026-10-04 23:29:53"
+    },
+    {
+      "queue_name": "landscapeCuration",
+      "time": "2026-10-04 23:29:53"
+    },
+    {
+      "queue_name": "findingCandidate",
+      "time": "2026-10-04 23:29:52"
+    },
+    {
+      "queue_name": "findingCandidate",
+      "time": "2026-10-04 23:10:30"
+    },
+    {
+      "queue_name": "episodeDistiller",
+      "time": "2026-10-04 23:10:30"
+    },
+    {
+      "queue_name": "landscapeCuration",
+      "time": "2026-10-04 23:10:30"
+    },
+    {
+      "queue_name": "findingCandidate",
+      "time": "2026-10-04 23:10:30"
+    },
+    {
+      "queue_name": "landscapeCuration",
+      "time": "2026-10-04 23:07:03"
+    }
+  ],
+  "agentStateReasonsDoNotAppendQueueEvents": true,
+  "localConnectionState": {
+    "id": "aconn_epoch-2e5ac4ef-799c-4f37-b0ad-0918bc321737_83d52b64-987c-4e73-903c-51c50d4b3df7",
+    "reason": null,
+    "createAttempted": true
+  },
+  "larm": {
+    "connection": {
+      "httpStatus": 200,
+      "body": {
+        "id": "aconn_epoch-2e5ac4ef-799c-4f37-b0ad-0918bc321737_83d52b64-987c-4e73-903c-51c50d4b3df7",
+        "status": "ready",
+        "phase": "ready",
+        "createdAt": "2026-10-04T14:06:58.983Z",
+        "expiresAt": "2026-10-04T14:44:48.863Z",
+        "readyDeadline": "2026-10-04T14:11:58.983Z",
+        "providers": [
+          {
+            "name": "llm",
+            "model": "ornith-contextstill",
+            "readiness": "ready",
+            "claimable": false,
+            "contextWindow": {
+              "maxTokens": 32768,
+              "outputReserveTokens": 4096,
+              "safetyMarginTokens": 0
+            }
+          }
+        ]
+      }
+    },
+    "health": {
+      "httpStatus": 200,
+      "body": {
+        "id": "aconn_epoch-2e5ac4ef-799c-4f37-b0ad-0918bc321737_83d52b64-987c-4e73-903c-51c50d4b3df7",
+        "status": "ready",
+        "ready": true,
+        "acceptingRequests": true,
+        "checkedAt": "2026-10-04T14:32:36.480Z",
+        "providers": [
+          {
+            "name": "llm",
+            "ready": true,
+            "acceptingRequests": true,
+            "capacity": {
+              "ready": true,
+              "activeRequests": 1,
+              "maxConcurrentRequests": 4,
+              "queueDepth": 0,
+              "maxQueuedRequests": 16,
+              "queueTimeoutMs": 120000,
+              "retryAfterMs": 0,
+              "completionGuaranteed": false
+            }
+          }
+        ]
+      }
+    }
+  },
+  "earlierObservation": {
+    "timeJst": "2026-10-04 23:29:45",
+    "localReason": "ready_timeout",
+    "status": "ready",
+    "readiness": "ready",
+    "claimable": false,
+    "healthReady": true,
+    "acceptingRequests": true,
+    "activeRequests": 0,
+    "maxConcurrentRequests": 4,
+    "resumedClaimsAroundJst": "2026-10-04 23:29:52"
+  },
+  "failedErrorCategoryRules": {
+    "precedence": [
+      "auth401",
+      "output_length",
+      "parse_schema",
+      "muse_session",
+      "transport_or_timeout",
+      "preempted",
+      "other"
+    ],
+    "auth401": "last_error contains 401",
+    "output_length": "contains finish_reason and length",
+    "parse_schema": "contains json, parse, schema, canonical, or oversized",
+    "muse_session": "contains session or muse",
+    "transport_or_timeout": "contains connect, timeout, timed out, or sending request",
+    "preempted": "contains foreground_preempted",
+    "other": "none matched; lowercased comparison"
+  }
+}

@@ -1,0 +1,47 @@
+Generation: built-in image_gen; use case: ui-mockup.
+Current overview replaces providers-cloud-v2.png. Earlier images are previous proposals.
+
+Image 1: providers-modal-v3.png
+Use case: ui-mockup
+Asset type: ContextStill desktop settings revised design, high fidelity flat 1600x1200 screenshot, sample state clearly labelled. Modern restrained white cards/pale slate/navy, thin slate borders, modest 8px radii, readable Japanese, same existing app styling.
+Primary request: configured providers table with per-row connection test buttons, editing via modal only. Below table show selected provider read-only runtime, task assignments and most recent test result. No inline edit form below table.
+Top product bar "contextStill", "Overview", "Source", "Queue", "Knowledge", "Settings" active.
+Header "設定", subtitle "接続先と処理の動きを管理", pill "画面案・表示例". ONLY header button "状態を更新". Do NOT show global save button on this providers page, edits saved in modal.
+Tabs "一般", "接続とモデル" active, "処理の割り当て", "並列処理と探索", "検索・埋め込み", "詳細".
+Main upper full-width card title "設定済みプロバイダー"; helper "追加・編集はモーダルで行います"; button "+ プロバイダーを追加".
+Table columns "名前", "種類", "モデル / Deployment", "認証", "接続確認", "操作".
+Six rows:
+"LARM / Background" | "LARM" | "ornith-contextstill" | "登録済み" | green "利用中" | two individual outlined buttons "接続を確認" "編集"
+"Azure / Main" | "Azure OpenAI" | "research-main" | "登録済み" | green "確認済み" | buttons "接続を確認" "編集"
+"Azure / Sub" | "Azure OpenAI" | "research-sub" | "共通キー" | gray "未確認" | buttons "接続を確認" "編集"
+"OpenAI" | "OpenAI" | "設定済みモデル" | "登録済み" | gray "未確認" | buttons "接続を確認" "編集"
+"Bedrock" | "AWS Bedrock" | "設定済みモデル" | "プロファイル" | gray "未確認" | buttons "接続を確認" "編集"
+"Local / Worker" | "固定エンドポイント" | "local-worker" | "任意" | gray "未確認" | buttons "接続を確認" "編集"
+First LARM row selected pale navy-blue background. Make both action buttons clearly legible on EACH row. Small footer "接続テストは保存済みの設定で実行".
+Below table header "LARM / Background の利用状況" and muted timestamp "最終確認 14:32（表示例）". Three read-only cards arranged 55% + 45% top, third full width bottom, no input fields.
+Left card "実行中のモデルと容量". Model "ornith-contextstill", "Profile" "contextStill → contextstill-background"; read-only rows "同時処理" "使用中 3 / 実効上限 4", "Context Window" "32,768 tokens", "入力推定上限" "20,480 tokens". Tiny footnote "出力 8,192・安全余裕 4,096 / 入力は概算".
+Right card "処理への割り当て". Subheading "Finding", chips "Source", "Vibe Memory"; subheading "Covering", chips "Source Support", "External Evidence", "MCP Evidence"; understated link "処理の割り当てを開く".
+Bottom card "直近の接続テスト", green small badge "成功", concise rows "確認対象" "保存済みのLARM接続", "結果" "Profile取得・Provider claim・推論に成功", "確認時刻" "14:32（表示例）", small link "結果の詳細".
+Constraints: user-facing concrete UI. No editing below table, no always-visible Cloud form, no global save, no allocation IDs or secrets, no fabricated live claims (proposal/sample labels). No extra arbitrary graphs or dashboards. Clean spacing, readable Japanese labels and exact model strings.
+
+Image 2: provider-edit-modal-v3.png
+Edit reference: Image 1, included using num_last_images_to_include=1.
+Use case: ui-mockup
+Asset type: second state of the immediately preceding ContextStill settings screenshot, showing the provider edit modal.
+Primary request: Edit the previous settings UI image by adding a focused, crisp large white modal centered over a dimmed background. Preserve the underlying provider table with per-row test buttons and read-only cards; no inline edit form. The underlying app uses navy/white/slate. Keep same desktop screenshot framing; no perspective.
+Modal approx 740px wide, readable Japanese text, thin borders, modest 8px rounded corners, balanced generous whitespace, no giant shadows. Background dimmed subtly, modal crisp.
+Header title "プロバイダーを編集", subtitle "Azure / Main", top-right close X.
+Read-only type field "種類" value "Azure OpenAI", small helper "種類は変更しません".
+Editable text input "表示名" value "Azure / Main".
+Editable "Endpoint" input "https://example.openai.azure.com".
+Two side-by-side inputs "Deployment / Model" value "research-main", and "API Version" value "保存済みの値".
+Credential section heading "認証", small green pill "API Key 登録済み".
+Radio selected "登録済みのキーを保持".
+Radio unselected "新しいキーに変更".
+Radio unselected "共通キーを使う".
+Do not show any actual secret; don't include fake long credential string. Credentials remain untouched unless user chooses change.
+Collapsed disclosure "API Path・詳細設定".
+Quiet small text "保存すると、このプロバイダーだけを更新します".
+Footer: left secondary button "入力内容で接続を確認", right neutral button "キャンセル", right primary navy button "保存".
+Small footer helper "テーブルの接続テストは保存済み設定、ここでは入力中の設定を確認".
+In background preserve "画面案・表示例". Keep modal fully visible with all footer buttons, no cropping, no fields outside modal. No global save button. This is a UI proposal only; sample strings and statuses, not actual Cloud configuration.

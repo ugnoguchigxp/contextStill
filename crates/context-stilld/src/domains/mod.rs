@@ -1,5 +1,6 @@
 pub mod admin_api_lifecycle;
 pub mod agent_log_sync;
+pub(crate) mod agent_runtime;
 pub mod backup;
 pub mod bootstrap;
 pub mod cli;
@@ -17,3 +18,5 @@ pub mod runtime_sidecars;
 pub mod secret_store;
 pub mod sqlite_writer;
 pub mod vector_index;
+
+pub(crate) mod settings_provider;

@@ -1,6 +1,11 @@
 <article lang="ja">
   <h1>LARM 接続を共有する4並列Queueの実装と反映状況</h1>
   <p>
+    2026年10月4日の接続修正は<a href="larm-common-provider-adoption-2026-10-04.html"
+      >LARM共通手順へのProvider接続修正</a
+    >を現行仕様とする。以下にある計測APIや固定runtimeを必須とする当時の記述は撤回済み。実tokenizer計測の未達は、公開Providerの受入れと分けて記録する。
+  </p>
+  <p>
     2026年10月3日。ContextStillのfindingCandidate、coveringEvidence、episodeDistiller、landscapeCurationが、1つのLARM
     Agent
     Connectionを共有して最大4ジョブを同時実行できるよう変更した。Queueはユーザーの指示で全7レーンを一時停止している。ContextStill側のバイナリと設定は反映済み。LARM実機が広告する上限は1件なので、本番4並列の有効化は未完了。

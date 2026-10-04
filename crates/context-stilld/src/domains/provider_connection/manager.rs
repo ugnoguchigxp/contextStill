@@ -39,6 +39,7 @@ pub struct LarmConnectionManager {
     next_poll_at: Option<Instant>,
     transient_backoff_ms: u64,
     pending_create_key: Option<String>,
+    pending_create_body: Option<serde_json::Value>,
     recovered_connection_id: Option<String>,
     state_path: Option<PathBuf>,
     pending_reason: Option<String>,
@@ -56,6 +57,7 @@ impl LarmConnectionManager {
             next_poll_at: None,
             transient_backoff_ms: 0,
             pending_create_key: None,
+            pending_create_body: None,
             recovered_connection_id: None,
             state_path: None,
             pending_reason: None,
@@ -76,10 +78,16 @@ impl LarmConnectionManager {
             let value: serde_json::Value = serde_json::from_slice(&bytes)
                 .map_err(|_| LarmControlError::configuration("invalid persisted LARM state"))?;
             manager.pending_create_key = value["key"].as_str().map(str::to_string);
+            manager.pending_create_body =
+                value.get("createBody").filter(|v| v.is_object()).cloned();
             manager.recovered_connection_id = value["id"].as_str().map(str::to_string);
             manager.pending_reason = value["reason"].as_str().map(str::to_string);
             manager.create_attempted = value["createAttempted"].as_bool().unwrap_or(false);
-            if manager.pending_create_key.is_none() {
+            // Activity/auth failures can be persisted before any remote create.
+            // Only this explicitly unsubmitted state may restart without a key.
+            if manager.pending_create_key.is_none()
+                && !(value["createAttempted"] == false && value["id"].is_null())
+            {
                 return Err(LarmControlError::configuration(
                     "persisted LARM state has no idempotency key",
                 ));
@@ -93,7 +101,7 @@ impl LarmConnectionManager {
         let Some(path) = self.state_path.as_ref() else {
             return Ok(());
         };
-        let value = serde_json::json!({"key":self.pending_create_key,"id":self.connection_id(),"reason":self.pending_reason,"createAttempted":self.create_attempted});
+        let value = serde_json::json!({"key":self.pending_create_key,"id":self.connection_id(),"reason":self.pending_reason,"createAttempted":self.create_attempted,"createBody":self.pending_create_body});
         let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
         std::fs::write(&temporary, value.to_string()).map_err(|error| {
             LarmControlError::configuration(format!("failed to persist LARM state: {error}"))
@@ -109,6 +117,7 @@ impl LarmConnectionManager {
         self.pending_create_key = Some(self.client.new_idempotency_key("create")?);
         self.pending_reason = None;
         self.create_attempted = false;
+        self.pending_create_body = None;
         self.persist()
     }
 
@@ -230,12 +239,21 @@ impl LarmConnectionManager {
         self.transient_backoff_ms = 0;
         self.next_poll_at = None;
         if let Some(id) = self.recovered_connection_id.clone() {
-            let recovered = self.client.get(&id)?;
-            if recovered.status == LarmConnectionStatus::Released {
-                self.rotate_key_after_release()?;
-            } else {
-                self.connection = Some(recovered);
-                self.recovered_connection_id = None;
+            match self.client.get(&id) {
+                Ok(recovered) if recovered.status == LarmConnectionStatus::Released => {
+                    self.rotate_key_after_release()?
+                }
+                Ok(recovered) => {
+                    self.connection = Some(recovered);
+                    self.recovered_connection_id = None;
+                }
+                Err(error) if matches!(error.http_status, Some(404 | 410)) => {
+                    self.rotate_key_after_release()?
+                }
+                Err(error) => {
+                    self.fail_closed(&error);
+                    return Err(error);
+                }
             }
         }
         if self.connection.as_ref().is_some_and(|connection| {
@@ -364,7 +382,10 @@ impl LarmConnectionManager {
                     .client
                     .discover_configured_profile(&activity.config_revision);
             }
-            match self.client.create(&key) {
+            let body = self.pending_create_body.as_ref().ok_or_else(|| {
+                LarmControlError::configuration("ambiguous create has no persisted request body")
+            })?;
+            match self.client.create_with_body(&key, body) {
                 Ok(connection) => {
                     self.connection = Some(connection);
                     self.persist()?;
@@ -426,11 +447,27 @@ impl LarmConnectionManager {
                     key
                 }
             };
+            if self.pending_create_body.is_none() {
+                if self.create_attempted {
+                    return Err(LarmControlError::configuration(
+                        "ambiguous create has no persisted request body",
+                    ));
+                }
+                self.pending_create_body = Some(self.client.create_body());
+            }
             self.create_attempted = true;
             self.persist()?;
-            let created = match self.client.create(&key) {
+            let created = match self
+                .client
+                .create_with_body(&key, self.pending_create_body.as_ref().unwrap())
+            {
                 Ok(connection) => connection,
                 Err(error) => {
+                    if error.kind == "catalog_revision_mismatch" {
+                        // A revision mismatch rejects before allocation. A new discovery
+                        // and request body must get a fresh key, never reuse the rejected key.
+                        self.rotate_key_after_release()?;
+                    }
                     return Err(error);
                 }
             };
@@ -608,6 +645,36 @@ mod tests {
     }
 
     #[test]
+    fn pre_create_failure_can_restart_but_unknown_submission_requires_its_key() {
+        let path = std::env::temp_dir().join(format!(
+            "contextstill-larm-precreate-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"{"key":null,"id":null,"createAttempted":false,"reason":"configuration"}"#,
+        )
+        .unwrap();
+        assert!(
+            LarmConnectionManager::new_persistent(config("http://127.0.0.1:9"), path.clone())
+                .is_ok()
+        );
+        for raw in [
+            r#"{"key":null,"id":null,"createAttempted":true}"#,
+            r#"{"key":null,"id":"existing","createAttempted":false}"#,
+            r#"{"key":null,"id":null}"#,
+        ] {
+            std::fs::write(&path, raw).unwrap();
+            assert!(LarmConnectionManager::new_persistent(
+                config("http://127.0.0.1:9"),
+                path.clone()
+            )
+            .is_err());
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn pending_key_and_connection_id_survive_manager_reconstruction() {
         let path = std::env::temp_dir().join(format!(
             "contextstill-larm-state-{}.json",
@@ -618,6 +685,7 @@ mod tests {
                 .unwrap();
         manager.pending_create_key = Some("contextstill:create:stable".into());
         manager.connection = Some(public_connection("epoch-1"));
+        manager.pending_create_body = Some(manager.client.create_body());
         manager.persist().unwrap();
         let recovered =
             LarmConnectionManager::new_persistent(config("http://127.0.0.1:9"), path.clone())
@@ -627,6 +695,7 @@ mod tests {
             Some("contextstill:create:stable")
         );
         assert_eq!(recovered.connection_id(), Some("aconn_epoch_1"));
+        assert_eq!(recovered.pending_create_body, manager.pending_create_body);
         std::fs::remove_file(path).unwrap();
     }
 
@@ -1364,5 +1433,123 @@ mod tests {
         let requests = request_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with("GET /v1/activity HTTP/1.1"));
+    }
+    #[test]
+    fn missing_or_gone_recovered_connection_restarts_discovery_and_uses_new_provider() {
+        for status in [404, 410] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let origin = format!("http://{}", listener.local_addr().unwrap());
+            let server_origin = origin.clone();
+            let server = thread::spawn(move || {
+                let mut ready = connection_json("epoch-1");
+                ready["catalogRevision"] = serde_json::json!("catalog-1");
+                let responses = [
+                    json_response(service_activity_json("idle", 0, 0, "epoch-1", "catalog-1")),
+                    json_response_with_status(
+                        status,
+                        "Not Found",
+                        serde_json::json!({"error":{"code":"connection_not_found"}}),
+                    ),
+                    json_response(profile_catalog_json("catalog-1")),
+                    json_response_with_status(201, "Created", ready),
+                    json_response(claim_json(&server_origin)),
+                ];
+                let mut requests = Vec::new();
+                for response in responses {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    requests.push(read_request(&mut stream));
+                    stream.write_all(response.as_bytes()).unwrap();
+                }
+                requests
+            });
+            let mut manager = LarmConnectionManager::new(config(&origin)).unwrap();
+            manager.pending_create_key = Some("contextstill:create:old".into());
+            manager.recovered_connection_id = Some("old-connection".into());
+            assert!(manager.reconcile(true).unwrap().ready);
+            let requests = server.join().unwrap();
+            assert!(requests[1].starts_with("GET /v1/agent-connections/old-connection "));
+            assert!(requests[2].starts_with("GET /v3/agent-profiles?profile=contextStill "));
+            assert_ne!(
+                header_value(&requests[3], "idempotency-key"),
+                Some("contextstill:create:old")
+            );
+        }
+    }
+
+    #[test]
+    fn lost_create_response_keeps_its_body_until_revision_rejection_then_rotates_key() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let server_origin = origin.clone();
+        let server = thread::spawn(move || {
+            let mut ready = connection_json("epoch-1");
+            ready["catalogRevision"] = serde_json::json!("catalog-2");
+            let responses = [
+                Some(json_response(service_activity_json(
+                    "idle",
+                    0,
+                    0,
+                    "epoch-1",
+                    "catalog-1",
+                ))),
+                Some(json_response(profile_catalog_json("catalog-1"))),
+                None,
+                Some(json_response(service_activity_json(
+                    "idle",
+                    0,
+                    0,
+                    "epoch-1",
+                    "catalog-2",
+                ))),
+                Some(json_response(profile_catalog_json("catalog-2"))),
+                Some(json_response_with_status(
+                    409,
+                    "Conflict",
+                    serde_json::json!({"error":{"code":"catalog_revision_mismatch"}}),
+                )),
+                Some(json_response(service_activity_json(
+                    "idle",
+                    0,
+                    0,
+                    "epoch-1",
+                    "catalog-2",
+                ))),
+                Some(json_response(profile_catalog_json("catalog-2"))),
+                Some(json_response_with_status(201, "Created", ready)),
+                Some(json_response(claim_json(&server_origin))),
+            ];
+            let mut requests = Vec::new();
+            for response in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                requests.push(read_request(&mut stream));
+                if let Some(response) = response {
+                    stream.write_all(response.as_bytes()).unwrap();
+                }
+            }
+            requests
+        });
+        let mut manager = LarmConnectionManager::new(config(&origin)).unwrap();
+        assert_eq!(manager.reconcile(true).unwrap_err().kind, "transport");
+        manager.next_poll_at = None;
+        assert_eq!(
+            manager.reconcile(true).unwrap_err().kind,
+            "catalog_revision_mismatch"
+        );
+        manager.next_poll_at = None;
+        assert!(manager.reconcile(true).unwrap().ready);
+        let requests = server.join().unwrap();
+        assert_eq!(
+            header_value(&requests[2], "idempotency-key"),
+            header_value(&requests[5], "idempotency-key")
+        );
+        assert_eq!(
+            requests[2].split("\r\n\r\n").nth(1),
+            requests[5].split("\r\n\r\n").nth(1)
+        );
+        assert_ne!(
+            header_value(&requests[5], "idempotency-key"),
+            header_value(&requests[8], "idempotency-key")
+        );
+        assert!(requests[8].contains("\"expectedCatalogRevision\":\"catalog-2\""));
     }
 }

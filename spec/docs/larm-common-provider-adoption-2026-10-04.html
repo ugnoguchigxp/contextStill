@@ -1,0 +1,81 @@
+<article lang="ja">
+  <h1>LARM共通手順へのProvider接続修正</h1>
+  <p>
+    2026年10月4日。参照手順書は「LARM プロファイル選択と接続の共通手順 ContextStillとSAAA」（Page
+    ID: page_ab39a64dc10481919c03b533cbf02e76）。変更範囲はContextStill
+    Consumerの接続と要求処理。モデル・route・runtime・配備設定の選択はLARMが担う。
+  </p>
+  <h2>接続と要求</h2>
+  <ol>
+    <li>
+      GET
+      /v3/agent-profiles?profile=contextStillで公開selector、具体Profile、Provider名、protocol、catalogRevisionを確認する。
+    </li>
+    <li>
+      POST
+      /v1/agent-connectionsはprofile=contextStill、client=contextstill、providers=[llm]、allowFallback=false、deploymentPolicy=existing-only。別端末ではcatalogにあるsaaa-desktopを使い、TTLは設定値900秒。expectedCatalogRevisionをdiscoveryから指定する。
+    </li>
+    <li>
+      作成のIdempotency-KeyとJSON
+      bodyを一緒に永続化する。同じ通信再試行では両方を維持し、catalog_revision_mismatchによる明示的な拒否後はdiscoveryとキーを更新する。
+    </li>
+    <li>
+      bodyのstatus=readyとllmのreadiness=ready、claimable=trueを待つ。待機は1〜5秒のbackoff、Retry-After、ready期限、Connection
+      expiryを考慮する。
+    </li>
+    <li>
+      POST
+      /v1/agent-connections/{id}/claimはformat=openai-provider-v1を指定し、Idempotency-Keyを付けない。name=llmとprotocol=openai.chat-completions.v1で識別し、configuration.fields.baseURL、model、credential.tokenを一組として使う。
+    </li>
+    <li>
+      renew後は再claimして新しいcredentialへ交換する。解放はDELETE。存在しない旧Connectionは解放済みとして扱い、接続を作り直す。
+    </li>
+  </ol>
+  <h2>QueueとDeepStillの共通利用</h2>
+  <p>
+    1接続のllmを共有する。同時実行数はLARM
+    healthの公開capacityとConsumer上限4の小さい方。capacityが省略されていれば1。異なるQueueを優先し、空き枠ではFinding／Coveringの別ジョブも実行する。DeepStillの推論も同じProviderとpermitを使う。
+  </p>
+  <p>
+    各実行leaseにConnection ID、allocationId、公開model、Provider baseURL、credential
+    expiry、contextWindowを保持する。認証情報は記録しない。公開応答で返されたモデルを受け入れ、固定のOrnith
+    runtimeや別のpersonal-state計測APIを接続の必須条件にしない。
+  </p>
+  <h2>トークン予算の実装と限界</h2>
+  <p>
+    ProviderのcontextWindowがあればそれを使い、Consumerの要求上限32768
+    tokenを超えない設定にする。省略された場合はConsumerの上限32768、出力予約4096、template等の余裕4096を使う。最終JSONのUTF-8
+    byte数とmessageごとのframing余裕256を入力予算の推定値として使う。Finding／Coveringの出力上限は8192
+    token。Providerの出力予約が4096でも、要求側の8192を確保したうえで入力を判定する。超過時は送信前に資料chunkを再構成する。
+  </p>
+  <p>
+    この推定は実モデルtokenizerでの計測ではなく、任意のtokenizer／templateに対する32K厳密保証は未達。receiptにexact=falseと推定方式を保存し、実際のトークン数は推論応答usageから記録する。tokenizer
+    digestを捏造しない。実tokenizerによる送信前検査は、Consumerが利用できる公開契約が提供されてから適用する。サーバー改変や物理backendへの直接接続は行わない。
+  </p>
+  <h2>確認結果</h2>
+  <p>
+    公開discoveryの実応答はcontextStill →
+    contextstill-background、llmのmodel=qwen-agent-worker、contextWindowなしだった。これは現在の公開応答の観測であり、手順書の新しいOrnith設定が配備済みという意味ではない。
+  </p>
+  <p>
+    FindingからCovering、最終本文検証、Finalize投入までのHTTP通しテストでは、Providerへの推論以外の計測API要求を発生させず、返されたモデル・credentialの利用、予算推定とusageの区別を確認した。実接続ではRustの共通管理器からdiscovery、create、ready待機、claim、Provider推論、releaseまで成功した。公開modelはqwen-agent-worker、capacityは1、推論usageは入力57・出力27・cached
+    input 42
+    tokenだった。ローカル実行系に反映し、Finding／CoveringのQueue停止を解除した。Findingの実ジョブが同じclaimで返されたProviderへ送信され、予算推定8778、出力4096、余裕4096、window合計16970で開始したことを確認した。このFindingの実応答は入力1973・出力4096
+    token、finish_reason=lengthだった。途中の応答を候補として適用せず保留し、次のジョブから出力上限8192へ改める。全ジョブ完了や4並列実測の達成を示すものではない。
+  </p>
+  <p>
+    Rustテスト577件、関連TypeScriptテスト34件、型検査、Clippy、build、Spec
+    HTML検査を通過した。Providerのready前送信、expiry超過、revision変更後の同一キーへのbody変更、再起動後の旧ID固着を回帰テストで防止する。
+  </p>
+  <h2>公開API更新後の再確認</h2>
+  <p>
+    2026年10月4日の再確認ではcatalogRevisionがa497606de42de02522ed7ff7cd633fb1a2f5ad5848d73e3346e3ddfeba64fc9eに変わり、contextStill
+    →
+    contextstill-backgroundにllm=ornith-contextstill、system-one=laya-multilingual、embedding=multilingual-e5-smallが公開された。LLMのcontextWindowは32768、outputReserveTokensは4096。キュー用のllm
+    subsetで新Connectionを作成し、claimの返すモデルとcredentialで推論が成功した。healthのmaxConcurrentRequestsは4。推論usageは入力15・出力31、finish_reason=stop。検証用Connectionは解放した。
+  </p>
+  <p>
+    古いConnection IDはHTTP
+    410になっていた。ConsumerのGET復旧とDELETE解放では404に加えて410も利用終了として扱い、旧SDKを破棄してdiscoveryから再接続する修正を加えた。関連49テスト、Clippy、buildを通過した。
+  </p>
+</article>

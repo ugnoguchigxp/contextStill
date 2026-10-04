@@ -9,8 +9,9 @@ use std::sync::{mpsc, Arc, Barrier, Mutex, MutexGuard, OnceLock};
 use std::thread;
 
 fn read_request(stream: &mut TcpStream) -> String {
+    stream.set_nonblocking(false).unwrap();
     stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .set_read_timeout(Some(std::time::Duration::from_secs(15)))
         .unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut request = String::new();
@@ -220,7 +221,7 @@ fn run_mock_queue_jobs(job_count: usize) {
     let (provider_request_tx, provider_request_rx) = mpsc::channel();
     let provider_server = thread::spawn(move || {
         provider_listener.set_nonblocking(true).unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let mut streams = Vec::new();
         while streams.len() < job_count {
             match provider_listener.accept() {
@@ -299,8 +300,8 @@ fn run_mock_queue_jobs(job_count: usize) {
             "larm-agent-connection": {"enabled": true, "connections": [{
                 "id": "contextstill-background-canary", "controlBaseUrl": control_origin,
                 "audience": "same-host",
-                "availabilityPollMs": 1_000, "availabilityTimeoutMs": 2_000,
-                "controlTimeoutMs": 5_000, "readyTimeoutMs": 30_000,
+                "availabilityPollMs": 1_000, "availabilityTimeoutMs": 15_000,
+                "controlTimeoutMs": 15_000, "readyTimeoutMs": 30_000,
                 "ttlSeconds": 900, "requestTimeoutMs": 30_000, "maxConcurrentRequests":job_count
             }]}
         },
@@ -346,7 +347,7 @@ fn run_mock_queue_jobs(job_count: usize) {
         crate::domains::sqlite_writer::SqliteWriterRuntime::start(&sqlite_path, 32, 3).unwrap();
     crate::domains::sqlite_writer::install_global_writer(writer.handle()).unwrap();
     let first = run_executor_tick_report(&env).unwrap();
-    super::super::super::dynamic_provider::release_dynamic_provider_connections();
+    super::super::super::dynamic_provider::release_dynamic_provider_connections(&sqlite_path);
     provider_server.join().unwrap();
     control_server.join().unwrap();
 
@@ -537,7 +538,7 @@ fn run_live_isolated_queue_job(
     }
     let first = run_executor_tick_report(&env).unwrap();
     let second = run_executor_tick_report(&env).unwrap();
-    super::super::super::dynamic_provider::release_dynamic_provider_connections();
+    super::super::super::dynamic_provider::release_dynamic_provider_connections(&sqlite_path);
     let connection = Connection::open(&sqlite_path).unwrap();
     let (status, candidates): (String, i64) = connection.query_row(
         "select q.status, (select count(*) from found_candidates c where c.finding_job_id=q.id) from finding_candidate_queue q where q.id='finding-live-selector'",

@@ -1,0 +1,1543 @@
+<article lang="ja">
+  <h1>設定画面の接続・保存・探索表示 契約と実装完了記録</h1>
+  <p>
+    2026年10月4日。採用した一覧・登録更新モーダル・各行の接続確認・下部3領域を実装した。6タブへ既存機能を移し、旧設定パネル、フォーム変換、コントローラー13ファイルを削除した。正規入口は
+    /setting/general、connections、assignments、execution、retrieval、advanced。実装計画は<a
+      href=".archived/settings-larm-agentic-implementation-plan-2026-10-04.html"
+      >完了済み計画</a
+    >へ移した。
+  </p>
+  <p>
+    本書は製品コードの契約と隔離検証の記録である。接続一覧の値と画像は専用E2E環境のfixtureであり、運用中の設定・API
+    Key・Queueを変更した記録ではない。
+  </p>
+  <figure>
+    <img
+      src="assets/settings-larm-agentic-2026-10-04/implemented-connections.png"
+      alt="隔離E2Eで確認した設定済みプロバイダー一覧と利用状況・割り当て・直近確認の3領域"
+    />
+    <figcaption>実装済み画面。接続名・モデル・URLは隔離環境の検証値。</figcaption>
+  </figure>
+  <h2>画面と保存の契約</h2>
+  <ul>
+    <li>
+      接続とモデル：Azure Deployment、固定モデル、LARM
+      Connectionを行別の安定IDで扱う。OpenAI・Bedrock・Codexは既存の単一設定を固定IDで扱う。有効状態は従来どおり種類全体へ適用する。
+    </li>
+    <li>
+      登録・編集は共通モーダルで対象接続だけを保存する。新規追加、更新、入力中の接続確認、取消、認証の保持・変更・解除・環境利用、Azureキー共有を提供する。Escape・背景クリックで閉じ、元の操作ボタンへフォーカスを戻す。
+    </li>
+    <li>
+      他のタブは差分保存。再取得やタブ移動で未保存の入力を消さない。同じ編集箇所が外部変更された場合は保存を止め、最新値への明示的な重ね合わせまたは取消で解決する。
+    </li>
+    <li>
+      FindingのSource/VibeとCoveringのSource Support/External Evidence/MCP
+      Evidenceは独立して保存する。同じ種類の処理へのコピーは対象と変更前後を表示した後の明示操作。Compileと手動Researchを含む13経路を維持する。
+    </li>
+    <li>
+      削除は処理・Poolから参照されていない場合だけ許可する。Azure削除では後続slot、認証、route、Poolを同じ保存で移す。固定モデルの編集では従来の直接参照も更新し、独立したカスタムモデル指定は保持する。
+    </li>
+    <li>
+      旧 /setting/llmprovider、llmpool、taskrouting、distillation-runtime、search、embedding および
+      /settings/* は新タブへの転送だけを残す。Pool・検索・埋め込みは該当sectionへのanchorも付ける。
+    </li>
+  </ul>
+  <h2>APIとデータの共通化</h2>
+  <p>
+    共通DTOはsrc/modules/settings/settings.types.tsとconnection-contracts.tsを正本とする。フロントのsettings-contracts.tsは再exportへ整理し、重複した設定型を削除した。settings-mutations.serviceがrevision、operation
+    receipt、secret準備/確定を統括し、Settings serviceと接続serviceが同じ処理を呼ぶ。
+  </p>
+  <table>
+    <caption>
+      新設定API
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">操作</th>
+        <th scope="col">URL</th>
+        <th scope="col">意味</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>GET</td>
+        <td>/api/settings/connections</td>
+        <td>登録行、保存revision、保存済み設定の直近確認</td>
+      </tr>
+      <tr>
+        <td>POST / PATCH / DELETE</td>
+        <td>/api/settings/connections と /connections/:id</td>
+        <td>個別登録・更新・参照確認付き削除</td>
+      </tr>
+      <tr>
+        <td>PATCH</td>
+        <td>/api/settings/sections</td>
+        <td>sectionの差分保存</td>
+      </tr>
+      <tr>
+        <td>GET</td>
+        <td>/api/settings/operations/:id</td>
+        <td>応答不明時の保存receipt照会</td>
+      </tr>
+      <tr>
+        <td>POST / GET / DELETE</td>
+        <td>/api/settings/connection-tests と /connection-tests/:id</td>
+        <td>有限の接続確認開始、結果照会、表示取消</td>
+      </tr>
+      <tr>
+        <td>GET</td>
+        <td>/api/settings/connections/:id/runtime</td>
+        <td>採用中Connectionの参照。割当・推論を開始しない</td>
+      </tr>
+      <tr>
+        <td>GET</td>
+        <td>/api/settings/agent-policy</td>
+        <td>native実行定数に基づく予算と停止条件、内容hashのrevision</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    保存はexpectedRevisionとoperationIdを必須とし、同じoperationIdの同じ要求は同じ結果を返す。異なる要求への使い回しは拒否する。SQLiteの既存resident
+    writerとPostgreSQL
+    transactionで設定文書、secret参照、receiptを原子的に確定する。OS認証ストアへのI/Oはtransactionの外で準備し、失敗や競合で採用されなかった世代をGC
+    journalで回収する。秘密値は文書・receipt・テスト結果へ保存しない。旧全置換PUTもrevision検証を通し、新UIからは呼ばない。既存のhealth
+    APIは互換用途に維持し、新UIの成功判断には使わない。
+  </p>
+  <h2>接続確認・LARM観測</h2>
+  <p>
+    各行の確認は保存済み設定、モーダルの確認は入力中のsnapshotへ送る。Cloudと固定モデルでは指定したEndpoint/モデルへ小さな推論を1回だけ実行し、401/403/404/429/500を成功扱いしない。CodexはSDK認証確認であることを表示する。入力中の結果は保存済み一覧に反映しない。設定または認証世代が変わった過去の結果はstale表示にする。
+  </p>
+  <p>
+    LARMの認証済みresident facadeは、共通contextStillプロファイル・要求Provider
+    llmを維持する。保存済みの採用Connectionは通常処理と同じpermitを使用する。入力中の試験は通常Connectionと別の短い試験として実行し、稼働中の処理がある場合は試験枠を作らず待機理由を返す。通常処理を超える5本目を送らず、試験の取消で通常Connectionを解放しない。表示取消後も試験は完了・timeoutでpermitを戻す。再起動で結果不明の試験を自動再実行しない。
+  </p>
+  <p>
+    状態表示はresidentの採用済み管理器から読む。actualモデル/Endpoint、Profile、実効同時枠、使用中枠、期限、Provider
+    WindowとConsumer実効Windowを表示する。設定変更後の旧Connectionは更新待ちと明示する。未採用・期限切れ・resident不在は未確認として扱う。capacityを確認できなければ1枠。LARM
+    catalog掲載だけで利用中や4枠とは表示しない。
+  </p>
+  <h2>探索とトークンの表示</h2>
+  <p>
+    1回の実効Windowはmin(Provider Window, 32,768)。出力上限8,192、入力の安全余白はmax(Provider余白,
+    4,096)。Providerの出力予約が4,096以下なら32,768
+    Windowの入力概算上限は20,480となる。入力はUTF-8バイト数とメッセージ余白による保守的な概算で、tokenizerの実測値とは表示しない。Provider
+    usageが返る場合の実消費とは別の量である。
+  </p>
+  <p>
+    1件の通常探索の累積予算は目標98,304、hard131,072、最終確認予約32,768、LLM最大8回。探索6回または目標予算で最終確認へ移る。進展なし2回、取得失敗3回でも打ち切る。DeepStillは最大1回の自動委譲とし、委譲時の累積目標262,144、hard393,216を別表示する。予算自体の自由編集は今回追加していない。DeepStillのloopback
+    URLと専用の2認証参照は編集できる。
+  </p>
+  <h2>設定項目の移行manifest</h2>
+  <p>
+    共通schemaの221項目を列挙した。保存先はruntime/settings.v1、認証値はruntime.secretの参照とOSストア。配列中の[]は行/targetを示す。各routeのkindやIDは接続選択で変更し、内部識別子を直接入力する必要はない。旧profileやmeasurementは互換理由を明示し、従来の有効項目を削除していない。タイムゾーンは従来どおりブラウザの表示設定として即時保存する。
+  </p>
+  <table>
+    <caption>
+      既存項目の移行先と利用先
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">保存path</th>
+        <th scope="col">扱い</th>
+        <th scope="col">移行先</th>
+        <th scope="col">利用先・理由</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>general.distillationPriority.targetPriorityOrder[]</code></td>
+        <td>編集可能</td>
+        <td>一般</td>
+        <td>Queue claim優先度・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].id</code></td>
+        <td>参照値</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].label</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].targets[].provider</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].targets[].localLlmModelId</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].targets[].deploymentSlot</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].targets[].targetId</code></td>
+        <td>参照値</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].targets[].model</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].targets[].connectionId</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].maxConcurrent</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].staleLeaseSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].enabled</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providerPools[].lowPriorityAgingSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Pool）</td>
+        <td>Provider targetのIDは生成/保持。モデル・順序・容量・aging・leaseはPool editorで保存</td>
+      </tr>
+      <tr>
+        <td><code>providers.openai.enabled</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.openai.apiBaseUrl</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.openai.model</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.enabled</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.apiBaseUrl</code></td>
+        <td>互換読取・同期</td>
+        <td>接続とモデル（最初の行から同期）</td>
+        <td>settings.runtime-cacheと既存Provider factory</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.apiPath</code></td>
+        <td>互換読取・同期</td>
+        <td>接続とモデル（最初の行から同期）</td>
+        <td>settings.runtime-cacheと既存Provider factory</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.apiVersion</code></td>
+        <td>互換読取・同期</td>
+        <td>接続とモデル（最初の行から同期）</td>
+        <td>settings.runtime-cacheと既存Provider factory</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.model</code></td>
+        <td>互換読取・同期</td>
+        <td>接続とモデル（最初の行から同期）</td>
+        <td>settings.runtime-cacheと既存Provider factory</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.deployments[].id</code></td>
+        <td>参照値</td>
+        <td>接続とモデル（安定ID、自動付与）</td>
+        <td>connection-contracts・Provider/Pool参照</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.deployments[].credentialMode</code></td>
+        <td>編集可能</td>
+        <td>Azureモーダルの認証操作</td>
+        <td>専用キーまたは最初のAzureキーの共有を選択</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.deployments[].name</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.deployments[].apiBaseUrl</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.deployments[].apiPath</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.deployments[].apiVersion</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.azure-openai.deployments[].model</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.bedrock.enabled</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.bedrock.region</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.bedrock.profile</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.bedrock.model</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.local-llm.enabled</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.local-llm.apiBaseUrl</code></td>
+        <td>互換読取・同期</td>
+        <td>接続とモデル（最初の行から同期）</td>
+        <td>settings.runtime-cacheと既存Provider factory</td>
+      </tr>
+      <tr>
+        <td><code>providers.local-llm.apiPath</code></td>
+        <td>互換読取・同期</td>
+        <td>接続とモデル（最初の行から同期）</td>
+        <td>settings.runtime-cacheと既存Provider factory</td>
+      </tr>
+      <tr>
+        <td><code>providers.local-llm.model</code></td>
+        <td>互換読取・同期</td>
+        <td>接続とモデル（最初の行から同期）</td>
+        <td>settings.runtime-cacheと既存Provider factory</td>
+      </tr>
+      <tr>
+        <td><code>providers.local-llm.models[].id</code></td>
+        <td>参照値</td>
+        <td>接続とモデル（安定ID、自動付与）</td>
+        <td>connection-contracts・Provider/Pool参照</td>
+      </tr>
+      <tr>
+        <td><code>providers.local-llm.models[].name</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.local-llm.models[].apiBaseUrl</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.local-llm.models[].apiPath</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.local-llm.models[].model</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.enabled</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.connections[].id</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.connections[].controlBaseUrl</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.connections[].agentProfile</code></td>
+        <td>互換読取のみ</td>
+        <td>接続とモデル（contextStill固定）</td>
+        <td>旧profile指定を読取時に除去。LARM要求は共通profile契約を使用</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.connections[].audience</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.connections[].availabilityPollMs</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.connections[].availabilityTimeoutMs</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.connections[].controlTimeoutMs</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.connections[].readyTimeoutMs</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.connections[].ttlSeconds</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.connections[].requestTimeoutMs</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.larm-agent-connection.connections[].maxConcurrentRequests</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.codex.enabled</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>providers.codex.model</code></td>
+        <td>編集可能</td>
+        <td>接続とモデル（種類別モーダル）</td>
+        <td>provider-connections・settings.runtime-cache・native Provider manager</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.source.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.source.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.source.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.source.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.source.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.source.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.source.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.source.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.vibe.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.vibe.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.vibe.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.vibe.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.vibe.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.vibe.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.vibe.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.vibe.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.throttling.backgroundEnabled</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Findingの実行間隔）</td>
+        <td>Queue scheduler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.throttling.interactiveWindowSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Findingの実行間隔）</td>
+        <td>Queue scheduler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.throttling.recentBlockSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Findingの実行間隔）</td>
+        <td>Queue scheduler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.throttling.minIntervalSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Findingの実行間隔）</td>
+        <td>Queue scheduler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.throttling.mediumIntervalSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Findingの実行間隔）</td>
+        <td>Queue scheduler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.throttling.busyIntervalSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Findingの実行間隔）</td>
+        <td>Queue scheduler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.throttling.maxIntervalSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Findingの実行間隔）</td>
+        <td>Queue scheduler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.throttling.rateLimitCooldownSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Findingの実行間隔）</td>
+        <td>Queue scheduler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.findCandidate.throttling.jitterSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索（Findingの実行間隔）</td>
+        <td>Queue scheduler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.webSourceResearch.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.webSourceResearch.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.webSourceResearch.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.webSourceResearch.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.webSourceResearch.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.webSourceResearch.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.webSourceResearch.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.webSourceResearch.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deepStillManual.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deepStillManual.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deepStillManual.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deepStillManual.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deepStillManual.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deepStillManual.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deepStillManual.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deepStillManual.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.episodeDistiller.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.episodeDistiller.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.episodeDistiller.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.episodeDistiller.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.episodeDistiller.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.episodeDistiller.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.episodeDistiller.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.episodeDistiller.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.sourceSupport.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.sourceSupport.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.sourceSupport.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.sourceSupport.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.sourceSupport.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.sourceSupport.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.sourceSupport.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.sourceSupport.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.externalEvidence.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.externalEvidence.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.externalEvidence.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.externalEvidence.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.externalEvidence.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.externalEvidence.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.externalEvidence.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.externalEvidence.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.mcpEvidence.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.mcpEvidence.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.mcpEvidence.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.mcpEvidence.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.mcpEvidence.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.mcpEvidence.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.mcpEvidence.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.coverEvidence.mcpEvidence.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deadZoneMergeReview.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deadZoneMergeReview.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deadZoneMergeReview.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deadZoneMergeReview.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deadZoneMergeReview.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deadZoneMergeReview.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deadZoneMergeReview.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.deadZoneMergeReview.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.landscapeCuration.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.landscapeCuration.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.landscapeCuration.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.landscapeCuration.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.landscapeCuration.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.landscapeCuration.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.landscapeCuration.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.landscapeCuration.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.finalizeDistille.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.finalizeDistille.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.finalizeDistille.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.finalizeDistille.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.finalizeDistille.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.finalizeDistille.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.finalizeDistille.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.finalizeDistille.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.mergeActivationFinalize.kind</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.mergeActivationFinalize.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.mergeActivationFinalize.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.mergeActivationFinalize.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.mergeActivationFinalize.providerPoolId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.mergeActivationFinalize.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.mergeActivationFinalize.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.mergeActivationFinalize.connectionId</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.agenticCompile.enabled</code></td>
+        <td>編集可能</td>
+        <td>詳細（Compileの実行設定）</td>
+        <td>Context Compiler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.agenticCompile.provider</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.agenticCompile.model</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.agenticCompile.localLlmModel</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.agenticCompile.fallback[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.agenticCompile.azureDeploymentSlots[]</code></td>
+        <td>編集可能</td>
+        <td>処理の割り当て（独立route editor）</td>
+        <td>接続/Pool/自動選択で種別と参照を設定。model・fallback・Azure slotも維持</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.agenticCompile.timeoutMs</code></td>
+        <td>編集可能</td>
+        <td>詳細（Compileの実行設定）</td>
+        <td>Context Compiler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>taskRouting.agenticCompile.maxTokens</code></td>
+        <td>編集可能</td>
+        <td>詳細（Compileの実行設定）</td>
+        <td>Context Compiler・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>search.providerOrder[]</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（検索）</td>
+        <td>検索Provider・取得処理・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>search.maxProviderAttempts</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（検索）</td>
+        <td>検索Provider・取得処理・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>search.resultCount</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（検索）</td>
+        <td>検索Provider・取得処理・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>search.timeoutMs</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（検索）</td>
+        <td>検索Provider・取得処理・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>search.rateLimitCooldownSeconds</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（検索）</td>
+        <td>検索Provider・取得処理・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>search.providers.brave.enabled</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（検索）</td>
+        <td>検索Provider・取得処理・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>search.providers.exa.enabled</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（検索）</td>
+        <td>検索Provider・取得処理・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>search.providers.duckduckgo.enabled</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（検索）</td>
+        <td>検索Provider・取得処理・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>embedding.provider</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（埋め込み）</td>
+        <td>埋め込みProvider・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>embedding.daemonUrl</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（埋め込み）</td>
+        <td>埋め込みProvider・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>embedding.openaiModel</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（埋め込み）</td>
+        <td>埋め込みProvider・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>embedding.timeoutMs</code></td>
+        <td>編集可能</td>
+        <td>検索・埋め込み（埋め込み）</td>
+        <td>埋め込みProvider・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.timeoutMs</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.candidateTimeoutMs</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.maxToolRounds</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.findCandidateTimeoutMs</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.findCandidateMaxToolCalls</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.coverEvidenceTimeoutMs</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.coverEvidenceSearchMaxCalls</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.coverEvidenceFetchMaxCalls</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.coverEvidenceFetchMaxTokensPerSite</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.toolTimeoutMs</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.toolResultMaxChars</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.failureRetryDelaySeconds</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.readerMaxReads</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.readerMaxCharsPerRead</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.llmContextWindowTokens</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.llmMaxInputTokens</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.llmInputSafetyMarginTokens</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>distillationRuntime.lowImportanceRejectThreshold</code></td>
+        <td>編集可能</td>
+        <td>詳細（従来の処理とツールの制限）</td>
+        <td>従来の処理用の上限を維持。新AgentRuntimeのWindowとは別</td>
+      </tr>
+      <tr>
+        <td><code>advanced.agentRuntime.enabled</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索</td>
+        <td>native agent_runtime・Queue scheduler</td>
+      </tr>
+      <tr>
+        <td><code>advanced.agentRuntime.research.baseUrl</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索</td>
+        <td>native agent_runtime・Queue scheduler</td>
+      </tr>
+      <tr>
+        <td><code>advanced.agentRuntime.research.credentialKey</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索</td>
+        <td>native agent_runtime・Queue scheduler</td>
+      </tr>
+      <tr>
+        <td><code>advanced.agentRuntime.research.gatewayCredentialKey</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索</td>
+        <td>native agent_runtime・Queue scheduler</td>
+      </tr>
+      <tr>
+        <td><code>advanced.agentRuntime.research.gatewayUrl</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索</td>
+        <td>native agent_runtime・Queue scheduler</td>
+      </tr>
+      <tr>
+        <td><code>advanced.agentRuntime.measurement.controlOrigin</code></td>
+        <td>互換読取のみ</td>
+        <td>並列処理と探索（編集対象外）</td>
+        <td>既存値を保持。現行AgentRuntimeは採用Providerのメタデータから概算する</td>
+      </tr>
+      <tr>
+        <td><code>advanced.agentRuntime.measurement.allocationId</code></td>
+        <td>互換読取のみ</td>
+        <td>並列処理と探索（編集対象外）</td>
+        <td>既存値を保持。現行AgentRuntimeは採用Providerのメタデータから概算する</td>
+      </tr>
+      <tr>
+        <td><code>advanced.agentRuntime.measurement.runtime</code></td>
+        <td>互換読取のみ</td>
+        <td>並列処理と探索（編集対象外）</td>
+        <td>既存値を保持。現行AgentRuntimeは採用Providerのメタデータから概算する</td>
+      </tr>
+      <tr>
+        <td><code>advanced.agentRuntime.measurement.credentialKey</code></td>
+        <td>互換読取のみ</td>
+        <td>並列処理と探索（編集対象外）</td>
+        <td>既存値を保持。現行AgentRuntimeは採用Providerのメタデータから概算する</td>
+      </tr>
+      <tr>
+        <td><code>advanced.pipelineLockStaleSeconds</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>advanced.lockTtlSeconds</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>advanced.pipelineClaimLimit</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>advanced.findingQueueTaskIntervalSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索</td>
+        <td>native agent_runtime・Queue scheduler</td>
+      </tr>
+      <tr>
+        <td><code>advanced.coveringQueueTaskIntervalSeconds</code></td>
+        <td>編集可能</td>
+        <td>並列処理と探索</td>
+        <td>native agent_runtime・Queue scheduler</td>
+      </tr>
+      <tr>
+        <td><code>advanced.continuousIdleSleepMs</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>advanced.continuousErrorSleepMs</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>advanced.inventoryRefreshIntervalMs</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>advanced.doctorFreshnessThresholdMinutes</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>advanced.doctorDegradedRateThreshold</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>advanced.doctorKnowledgeZeroUseWarningMinActiveCount</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>advanced.codexLogSyncEnabled</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>advanced.antigravityLogSyncEnabled</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+      <tr>
+        <td><code>advanced.claudeLogSyncEnabled</code></td>
+        <td>編集可能</td>
+        <td>詳細</td>
+        <td>resident/doctor/log sync・settings.runtime-cache</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    認証の移行先はOpenAI/Azure/固定/LARMの接続モーダル、Brave/Exaの検索section、DeepStill/Gatewayの探索section。BedrockはAWS
+    profile/environment、CodexはSDKログインを維持する。空欄の更新キーは既存値を保持し、解除は明示操作だけで行う。
+  </p>
+  <h2>削除と検証</h2>
+  <p>
+    削除：advanced-settings-panel、codex-action-guide、embedding-settings-panel、general-settings-panel、local-llm-pools、provider-endpoints-panel、search-settings-panel、settings-controls、settings-form、settings-primitives、settings-routing、task-routing-settings-panel、use-settings-controller。旧専用CSSと旧UI前提のテストを整理し、重要な保証を新部品の検証へ移した。
+  </p>
+  <table>
+    <caption>
+      確認した範囲
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">検証</th>
+        <th scope="col">結果と範囲</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>TypeScript/API/Provider/UI</td>
+        <td>
+          関連128テスト成功。個別保存・独立route・URL転送・Cloud
+          Providerの回帰確認。追加の空認証保持テストも成功。
+        </td>
+      </tr>
+      <tr>
+        <td>SQLiteと認証</td>
+        <td>
+          専用一時DBで18テスト成功。競合、認証準備失敗、Azure削除、直接参照更新、HTTP失敗、stale結果、receiptの対象取り違え防止。
+        </td>
+      </tr>
+      <tr>
+        <td>native</td>
+        <td>
+          AgentRuntime42、dynamic Provider13、settings
+          facade2テスト成功。4枠満杯で試験5本目を送信せずQueueのidentityを保持。
+        </td>
+      </tr>
+      <tr>
+        <td>隔離E2E</td>
+        <td>
+          登録→保存済み確認→入力中確認→取消→名称更新→別タブの未保存入力保持→差分保存→独立Finding
+          route→Pool追加保存→旧URL→狭い画面/Escape/フォーカス復帰を成功。
+        </td>
+      </tr>
+      <tr>
+        <td>静的検査</td>
+        <td>
+          型検査、Web build、変更範囲のBiome、Rust Clippy、依存境界、SQLite writer所有権、Bun test
+          manifest、差分空白検査を確認。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    全体のmaintainability検査では、今回の設定画面以外に既に追加されている4ファイルの行数超過を検出した：src/db/sqlite/core-schema.ts（1,406/1,367）、queue_lifecycle/provider_lease_tests.rs（1,252/1,200）、provider_connection/service.rs（1,886/1,766）、provider_connection/manager.rs（1,555/1,200）。今回追加したdynamic
+    Providerの設定facadeとテストは責務ごとに別モジュールへ分け、設定変更範囲の上限超過を解消した。全体のサイズ検査が成功したという扱いにはしない。
+  </p>
+  <p>
+    実Cloudの課金推論と運用LARMのConnection操作は隔離E2Eの条件に含めず、稼働環境の接続確認ボタンで対象を指定して行う。PostgreSQLの原子保存経路は実装・型検査済みだが、この検証で実PostgreSQLへ接続した検証は行っていない。実装による運用設定の変更、SSH、別リポジトリの変更は行っていない。
+  </p>
+  <p>
+    <a href="settings-larm-agentic-design-2026-10-04.html">採用した画面設計</a>、<a
+      href="larm-common-provider-adoption-2026-10-04.html"
+      >LARM共通Provider契約</a
+    >も参照する。
+  </p>
+</article>

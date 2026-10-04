@@ -168,7 +168,17 @@ PostgreSQL / pgvector remains an advanced backend for compatibility and future s
 - PostgreSQL remains available for advanced queue/distillation/admin compatibility while remaining stores are migrated.
 - Integration tests truncate data and must target a dedicated test database.
 
-## Wiki CLI
+## 手動調査の探索方法
+
+「調査」画面はDeepStillを既定に保ち、上部の探索方法でCodexを明示選択できます。Codexのモデルは `gpt-6-luna` に固定し、推論は「詳細設定」で低（既定）か中を選びます。テーマだけで開始でき、必要な情報・既知の内容・対象や期間は「条件を追加」の補足1欄へ任意で入力します。既存のCodexログインを使い、CLIの指定には `CONTEXT_STILL_CODEX_CLI_PATH`、認証元には `CODEX_HOME`（未指定は `~/.codex`）を使います。探索失敗時の自動切替・再実行はありません。
+
+Codexの既定は180秒、トークン目標20,000です。「詳細設定」で時間は1–300秒、トークン目標は1,000–100,000に設定できます。SDKの使用量はターン完了時に取得するため、トークン設定は厳密な上限ではありません。時間到達時は中断を要求し、取得できた候補を残します。使用量不明は0ではなく「不明」と表示します。
+
+終了後に有用な候補を選んで「候補評価へ送る」と、既存の根拠評価・保存の流れへ進みます。探索結果が直接確定知識になることはありません。同じテーマを別方式で入力して開始すれば、候補数、資料確認ありの数、有用として選んだ数、時間、トークン使用量を比較できます。Codexの資料確認状態はモデルの申告です。比較条件を合わせるには追加条件をテーマに含めるか、Codexの追加条件を空にします。
+
+外部消費なしの検証は `bun run test:codex-research:smoke`。実サービスの小規模検証は `bun run test:codex-research:live --live` で、通常テストと分離しています。
+
+## Wiki CLIの設定
 
 サーバーのCONTEXT_STILL_WIKI_CLI_NAMESPACEを専用slugに設定するとCLI入口が有効になります。未設定では無効です。CLI書込みはCONTEXT_STILL_DB_BACKEND=sqliteとCONTEXT_STILL_EMBEDDING_PROVIDER=disabledを要求し、既存Rust writerが不在なら保存前に拒否します。本文は既存SOURCE_CONTENT_ROOTのpages以下へ保存し、CLIのcwdでは保存先を決めません。
 

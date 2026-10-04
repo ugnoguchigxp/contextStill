@@ -9,59 +9,11 @@ use super::applicability::{merge_applicability, required_applicability_present};
 use super::helpers::truncate;
 use super::provider::request_covering_completion;
 use super::source::{configured_source_read_ranges, normalized_character_count, source_reference};
-use super::types::{NegativeCoveringExecution, NegativeCoveringResult, SYSTEM_CONTEXT_CATALOG};
+use super::types::{CoveringExecution, CoveringResult};
 
-pub(super) fn render_catalog_prompt(key: &str, variables: &Value) -> Result<String, CliError> {
-    let catalog: Value = serde_json::from_str(SYSTEM_CONTEXT_CATALOG).map_err(|error| {
-        CliError::io(format!("invalid embedded system context catalog: {error}"))
-    })?;
-    let sections = catalog
-        .pointer(&format!(
-            "/contexts/{}/locales/ja-JP/sections",
-            key.replace('~', "~0").replace('/', "~1")
-        ))
-        .and_then(Value::as_array)
-        .ok_or_else(|| CliError::io(format!("system context catalog omitted {key}")))?;
-    let mut rendered_sections = Vec::new();
-    for section in sections {
-        let mut rendered = String::new();
-        for segment in section
-            .get("segments")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            match segment.get("type").and_then(Value::as_str) {
-                Some("literal") => rendered.push_str(
-                    segment
-                        .get("value")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                ),
-                Some("variable") => {
-                    let name = segment
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| CliError::io("system context variable omitted name"))?;
-                    let value = variables.get(name).ok_or_else(|| {
-                        CliError::io(format!("system context variable missing: {name}"))
-                    })?;
-                    match value {
-                        Value::String(text) => rendered.push_str(text),
-                        other => rendered.push_str(&other.to_string()),
-                    }
-                }
-                _ => {}
-            }
-        }
-        if !rendered.trim().is_empty() {
-            rendered_sections.push(rendered);
-        }
-    }
-    Ok(rendered_sections.join("\n\n"))
-}
+pub(super) use crate::domains::agent_runtime::prompt::render_catalog_prompt;
 
-pub(super) fn positive_source_context(execution: &NegativeCoveringExecution) -> Value {
+pub(super) fn positive_source_context(execution: &CoveringExecution) -> Value {
     let read_ranges = execution
         .source_read_ranges
         .clone()
@@ -79,7 +31,7 @@ pub(super) fn positive_source_context(execution: &NegativeCoveringExecution) -> 
 }
 
 pub(super) fn positive_value_user_prompt(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     candidate: &Value,
     source_content: &str,
 ) -> String {
@@ -106,7 +58,7 @@ pub(super) fn parse_positive_response(
     content: &str,
     defaults: &Value,
     default_stage: &'static str,
-) -> Result<NegativeCoveringResult, CliError> {
+) -> Result<CoveringResult, CliError> {
     let record = parse_positive_record(content)?;
     let nested = record.get("candidate").filter(|value| value.is_object());
     let candidate_record = nested.unwrap_or(&record);
@@ -185,7 +137,7 @@ pub(super) fn parse_positive_response(
         .filter(|value| !value.is_empty() && !matches!(*value, "null" | "none" | "-"))
         .map(|value| truncate(value, 160))
         .or_else(|| (status == "insufficient").then(|| "insufficient".to_string()));
-    Ok(NegativeCoveringResult {
+    Ok(CoveringResult {
         status,
         stage,
         candidate,
@@ -379,7 +331,7 @@ pub(super) fn candidate_has_project_identity(candidate: &Value) -> bool {
 }
 
 pub(super) fn refine_positive_applicability(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     candidate: &Value,
     source_content: &str,
     timeout_seconds: u64,
@@ -466,7 +418,7 @@ pub(super) fn has_skill_like_procedure_body(body: &str) -> bool {
 }
 
 pub(super) fn repair_positive_procedure(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     candidate: &Value,
     source_content: &str,
     timeout_seconds: u64,
@@ -562,8 +514,8 @@ pub(super) fn positive_terminal_result(
     stage: &'static str,
     reason: &str,
     references: Vec<Value>,
-) -> NegativeCoveringResult {
-    NegativeCoveringResult {
+) -> CoveringResult {
+    CoveringResult {
         status: status.to_string(),
         stage,
         candidate: None,
@@ -579,8 +531,8 @@ pub(super) fn positive_failure_result(
     stage: &'static str,
     reason: &str,
     references: Vec<Value>,
-) -> NegativeCoveringResult {
-    NegativeCoveringResult {
+) -> CoveringResult {
+    CoveringResult {
         status: status.to_string(),
         stage,
         candidate: None,
@@ -596,9 +548,9 @@ pub(super) fn positive_failure_result(
 }
 
 pub(super) fn prepend_positive_tool_events(
-    mut result: NegativeCoveringResult,
+    mut result: CoveringResult,
     mut events: Vec<Value>,
-) -> NegativeCoveringResult {
+) -> CoveringResult {
     events.extend(result.tool_events);
     result.tool_events = events;
     result

@@ -36,6 +36,34 @@ pub(crate) fn owns_provider_execution(
     assignment: &ProviderLeaseAssignment,
 ) -> Result<bool, CliError> {
     let table_name = queue_table_name(&assignment.queue_name)?;
+    let has_runs = connection
+        .query_row(
+            "select exists(select 1 from sqlite_master where name='agent_runs' and type='table')",
+            [],
+            |r| r.get::<_, bool>(0),
+        )
+        .map_err(|e| CliError::io(e.to_string()))?;
+    if has_runs
+        && matches!(
+            assignment.queue_name.as_str(),
+            "findingCandidate" | "coveringEvidence"
+        )
+    {
+        // A versioned run claim survives release of its per-request lease. Generation and
+        // protocol are checked by the same fence as the run ledger, with no legacy fallback.
+        let exists = connection
+            .query_row(
+                "select exists(select 1 from agent_runs where queue_name=?1 and job_id=?2)",
+                params![assignment.queue_name, assignment.queue_job_id],
+                |r| r.get::<_, bool>(0),
+            )
+            .map_err(|e| CliError::io(e.to_string()))?;
+        if exists {
+            return crate::domains::agent_runtime::ledger::owns_run(connection, assignment)
+                .map_err(CliError::io);
+        }
+    }
+
     connection
         .query_row(
             &format!(
@@ -131,36 +159,13 @@ impl ProviderExecutionHeartbeatGuard {
                     let tx = connection.transaction().map_err(|error| {
                         format!("failed to begin provider execution heartbeat: {error}")
                     })?;
-                    let queue_changed = tx
-                        .execute(
-                            &format!(
-                                "update {table_name}
-                                     set heartbeat_at = CURRENT_TIMESTAMP,
-                                         updated_at = CURRENT_TIMESTAMP
-                                     where id = ?1
-                                       and status = 'running'
-                                       and locked_by = ?2
-                                       and exists (
-                                         select 1
-                                         from llm_provider_leases lease
-                                         where lease.id = ?3
-                                           and lease.status = 'active'
-                                           and lease.queue_name = ?4
-                                           and lease.queue_job_id = ?1
-                                           and lease.worker_id = ?2
-                                       )"
-                            ),
-                            params![
-                                assignment.queue_job_id,
-                                assignment.worker_id,
-                                assignment.id,
-                                assignment.queue_name
-                            ],
-                        )
-                        .map_err(|error| {
-                            format!("failed to heartbeat provider queue job: {error}")
-                        })?;
-                    let lease_changed = tx
+                    if !owns_provider_execution(&tx,&assignment).map_err(|e|e.to_string())? {
+                        return Err("provider execution ownership changed before heartbeat".into());
+                    }
+                    let queue_changed=tx.execute(&format!("update {table_name} set heartbeat_at=CURRENT_TIMESTAMP,
+                        updated_at=CURRENT_TIMESTAMP where id=?1 and status='running' and locked_by=?2"),
+                        params![assignment.queue_job_id,assignment.worker_id]).map_err(|e|e.to_string())?;
+                    let _lease_changed = tx
                         .execute(
                             "update llm_provider_leases
                                  set heartbeat_at = CURRENT_TIMESTAMP,
@@ -179,7 +184,7 @@ impl ProviderExecutionHeartbeatGuard {
                             ],
                         )
                         .map_err(|error| format!("failed to heartbeat provider lease: {error}"))?;
-                    if queue_changed != 1 || lease_changed != 1 {
+                    if queue_changed != 1 {
                         return Err(
                             "provider execution ownership changed before heartbeat".to_string()
                         );

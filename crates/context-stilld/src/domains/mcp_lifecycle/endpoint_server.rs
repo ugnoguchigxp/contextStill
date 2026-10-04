@@ -804,7 +804,10 @@ fn handle_request(
         && (request.path == "/writer/health"
             || request.path == "/writer/query"
             || request.path == "/writer/secrets"
-            || request.path == "/internal/context-compile")
+            || request.path == "/internal/context-compile"
+            || request.path == "/internal/agent-runtime"
+            || request.path == "/internal/settings-provider"
+            || request.path == "/integrations/deepstill/agent/v1/chat/completions")
     {
         return handle_writer_request(request, &dispatch);
     }

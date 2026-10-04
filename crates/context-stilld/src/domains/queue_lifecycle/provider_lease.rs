@@ -42,7 +42,8 @@ pub fn claim_next_job_with_provider_lease_for_connection(
           updated_at = CURRENT_TIMESTAMP
         where pool_id = ?1
           and status = 'active'
-          and coalesce(heartbeat_at, locked_at, updated_at) < datetime(CURRENT_TIMESTAMP, '-' || ?2 || ' seconds')
+          and queue_name <> 'agentResearch'
+              and coalesce(heartbeat_at, locked_at, updated_at) < datetime(CURRENT_TIMESTAMP, '-' || ?2 || ' seconds')
         ",
         (&pool.pool_id, normalized_stale_lease_seconds(pool) as i64),
     )
@@ -220,6 +221,7 @@ pub fn recover_stale_provider_leases_for_connection(
               updated_at = CURRENT_TIMESTAMP
             where pool_id = ?1
               and status = 'active'
+              and queue_name <> 'agentResearch'
               and coalesce(heartbeat_at, locked_at, updated_at) < datetime(CURRENT_TIMESTAMP, '-' || ?2 || ' seconds')
             ",
             (pool_id, stale_lease_seconds.max(30) as i64),

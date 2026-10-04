@@ -13,11 +13,11 @@ use super::external_evidence::{
     ExternalSearchEntry, ExternalSearchOutcome, GuardedExternalEvidence,
 };
 use super::helpers::truncate;
-use super::types::{NegativeCoveringExecution, EXTERNAL_FETCH_BYTE_LIMIT};
+use super::types::{CoveringExecution, EXTERNAL_FETCH_BYTE_LIMIT};
 
 pub(super) fn search_external(
     query: &str,
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     timeout_seconds: u64,
 ) -> Result<ExternalSearchOutcome, String> {
     let providers = execution

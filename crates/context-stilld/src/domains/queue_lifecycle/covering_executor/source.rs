@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use super::applicability::merge_execution_applicability;
 use super::external_fetch::{fetch_guarded_external_url_with_text_limit, read_bounded_body};
 use super::helpers::truncate;
-use super::types::{NegativeCoveringExecution, LOCAL_SOURCE_BYTE_LIMIT};
+use super::types::{CoveringExecution, LOCAL_SOURCE_BYTE_LIMIT};
 
 #[derive(Debug, Clone)]
 pub(super) struct PositiveSourceRead {
@@ -17,7 +17,7 @@ pub(super) struct PositiveSourceRead {
 }
 
 pub(super) fn positive_source_content(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     timeout_seconds: u64,
 ) -> Result<PositiveSourceRead, String> {
     let content = match execution.source_kind.as_str() {
@@ -51,9 +51,34 @@ pub(super) fn positive_source_content(
     Ok(source_read)
 }
 
-pub(super) fn configured_source_read_ranges(
-    execution: &NegativeCoveringExecution,
-) -> Vec<(usize, usize)> {
+pub(crate) fn raw_source_content(
+    kind: &str,
+    key: &str,
+    uri: &str,
+    root: &Path,
+    content: &str,
+    timeout_seconds: u64,
+) -> Result<String, String> {
+    let text = match kind {
+        "vibe_memory" | "knowledge_candidate" => content.to_owned(),
+        "wiki_file" => read_bounded_local_source(&root.join("pages"), key)?,
+        "web_ingest" => {
+            fetch_guarded_external_url_with_text_limit(
+                uri,
+                timeout_seconds,
+                LOCAL_SOURCE_BYTE_LIMIT,
+            )?
+            .text
+        }
+        other => return Err(format!("worker_capability_missing:{other}")),
+    };
+    if text.len() > LOCAL_SOURCE_BYTE_LIMIT {
+        return Err("source_byte_limit".into());
+    }
+    Ok(crate::domains::queue_lifecycle::finding_executor::filter_source_text(&text))
+}
+
+pub(super) fn configured_source_read_ranges(execution: &CoveringExecution) -> Vec<(usize, usize)> {
     let ranges = execution
         .candidate_origin
         .get("readRanges")
@@ -206,7 +231,7 @@ pub(super) fn read_bounded_local_source(root: &Path, raw_path: &str) -> Result<S
         .map_err(|error| format!("source_read_invalid_utf8:{}:{error}", path.display()))
 }
 
-pub(super) fn source_reference(execution: &NegativeCoveringExecution) -> Vec<Value> {
+pub(super) fn source_reference(execution: &CoveringExecution) -> Vec<Value> {
     let uri = if execution.source_uri.trim().is_empty() {
         format!("agent://candidate/{}", execution.found_candidate_id)
     } else {
@@ -338,10 +363,7 @@ pub(super) fn infer_positive_importance(title: &str, body: &str) -> i64 {
     }
 }
 
-pub(super) fn base_positive_candidate(
-    execution: &NegativeCoveringExecution,
-    confidence: i64,
-) -> Value {
+pub(super) fn base_positive_candidate(execution: &CoveringExecution, confidence: i64) -> Value {
     let candidate_type = execution
         .candidate_origin
         .get("candidateType")

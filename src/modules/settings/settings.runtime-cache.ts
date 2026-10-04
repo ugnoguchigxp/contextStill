@@ -604,7 +604,12 @@ export function applyRuntimeSettingsToProcess(
 
   const azureDeployments = azureOpenAiEnabled
     ? settings.providers["azure-openai"].deployments.map((deployment, index) => ({
-        apiKey: secrets[azureOpenAiSecretKey(index)]?.value ?? "",
+        apiKey:
+          secrets[
+            deployment.credentialMode === "shared"
+              ? "azureOpenAiApiKey"
+              : azureOpenAiSecretKey(index)
+          ]?.value ?? "",
         apiBaseUrl: deployment.apiBaseUrl.replace(/\/+$/, ""),
         apiPath: deployment.apiPath,
         apiVersion: deployment.apiVersion,

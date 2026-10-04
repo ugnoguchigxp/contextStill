@@ -40,6 +40,8 @@ type AzureOpenAiProviderOptions = {
   timeoutMs?: number;
   deploymentIndex?: number;
   deploymentSlots?: number[];
+  deploymentConfig?: AzureOpenAiRuntimeDeployment;
+  probe?: boolean;
 };
 
 const azureHealthCheckMaxTokens = 16;
@@ -65,10 +67,14 @@ function isAzureOutputLimitError(message: string): boolean {
   );
 }
 
-async function parseResponse(response: Response): Promise<LlmChatResponse> {
+async function parseResponse(response: Response, probe = false): Promise<LlmChatResponse> {
   const payload = (await response.json()) as AzureOpenAiResponse;
   const content = payload.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content.trim()) {
+  if (
+    typeof content !== "string" ||
+    (!probe && !content.trim()) ||
+    (probe && !["stop", "length"].includes(payload.choices?.[0]?.finish_reason ?? ""))
+  ) {
     throw new Error("Azure OpenAI returned empty response");
   }
   const usage = payload.usage
@@ -93,6 +99,7 @@ async function pingAzureOpenAiDeployment(
   const response = await fetch(buildAzureOpenAiChatUrl(deployment), {
     method: "POST",
     headers: azureOpenAiHeaders(deployment),
+    redirect: "error",
     body: JSON.stringify({
       messages: [{ role: "user", content: "ping" }],
       temperature: 0,
@@ -146,6 +153,8 @@ export function createAzureOpenAiProvider(options: AzureOpenAiProviderOptions = 
   let pinnedDeployment: AzureOpenAiRuntimeDeployment | null = null;
 
   const configuredDeployments = () => {
+    if (options.deploymentConfig)
+      return options.deploymentConfig.apiKey ? [options.deploymentConfig] : [];
     if (typeof deploymentIndex === "number") {
       const deployment = azureOpenAiDeploymentAt(deploymentIndex);
       return deployment ? [deployment] : [];
@@ -153,6 +162,7 @@ export function createAzureOpenAiProvider(options: AzureOpenAiProviderOptions = 
     return configuredAzureOpenAiDeploymentsForSlots(deploymentSlots);
   };
   const selectedDeployments = () => {
+    if (options.deploymentConfig) return [options.deploymentConfig];
     if (typeof deploymentIndex === "number") {
       const deployment = azureOpenAiDeploymentAt(deploymentIndex);
       return deployment ? [deployment] : [];
@@ -183,6 +193,7 @@ export function createAzureOpenAiProvider(options: AzureOpenAiProviderOptions = 
             const response = await fetch(buildAzureOpenAiChatUrl(deployment), {
               method: "POST",
               headers: azureOpenAiHeaders(deployment),
+              redirect: "error",
               body: JSON.stringify({
                 messages: request.messages,
                 temperature: request.temperature ?? 0,
@@ -204,15 +215,15 @@ export function createAzureOpenAiProvider(options: AzureOpenAiProviderOptions = 
               });
             }
 
-            const parsed = await parseResponse(response);
+            const parsed = await parseResponse(response, options.probe);
             pinnedDeployment = deployment;
-            if (typeof deploymentIndex !== "number") {
+            if (typeof deploymentIndex !== "number" && !options.deploymentConfig) {
               markAzureOpenAiDeploymentSucceeded(deployment);
             }
             return parsed;
           } catch (error) {
             lastError = error;
-            if (isAzureRateLimitError(error)) {
+            if (isAzureRateLimitError(error) && !options.deploymentConfig) {
               markAzureOpenAiDeploymentRateLimited(deployment, error);
             }
             if (index >= deployments.length - 1 || !isRetryableAzureError(error)) {
@@ -258,7 +269,7 @@ export function createAzureOpenAiProvider(options: AzureOpenAiProviderOptions = 
           };
         } catch (error) {
           lastError = error;
-          if (isAzureRateLimitError(error)) {
+          if (isAzureRateLimitError(error) && !options.deploymentConfig) {
             markAzureOpenAiDeploymentRateLimited(deployment, error);
           }
         }

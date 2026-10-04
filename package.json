@@ -57,6 +57,8 @@
     "repository-isolation:report": "bun run src/cli/repository-isolation-report.ts",
     "mcp:smoke": "bun run src/cli/mcp-http-smoke.ts",
     "test:manual-research:smoke": "bun run scripts/manual-research-smoke.ts",
+    "test:codex-research:smoke": "bun run scripts/codex-research-smoke.ts",
+    "test:codex-research:live": "bun run scripts/codex-research-live.ts",
     "mcp:smoke:sqlite": "CONTEXT_STILL_DB_BACKEND=sqlite bun run src/cli/mcp-http-smoke.ts",
     "read-file:smoke": "bun run src/cli/read-file-smoke.ts",
     "memory-reader:smoke": "bun run src/cli/memory-reader-smoke.ts",

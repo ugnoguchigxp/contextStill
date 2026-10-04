@@ -25,31 +25,18 @@ type OpenAiResponse = {
 
 type OpenAiProviderOptions = {
   timeoutMs?: number;
+  modelConfig?: { apiBaseUrl: string; apiKey: string; model: string };
+  probe?: boolean;
 };
 
-function isConfigured(): boolean {
-  return Boolean(
-    groupedConfig.openAi.apiKey.trim() &&
-      groupedConfig.openAi.apiBaseUrl.trim() &&
-      groupedConfig.openAi.model.trim(),
-  );
-}
-
-function buildOpenAiUrl(): string {
-  return `${groupedConfig.openAi.apiBaseUrl.replace(/\/+$/, "")}/chat/completions`;
-}
-
-function headers(): HeadersInit {
-  return {
-    Authorization: `Bearer ${groupedConfig.openAi.apiKey.trim()}`,
-    "content-type": "application/json",
-  };
-}
-
-async function parseResponse(response: Response): Promise<LlmChatResponse> {
+async function parseResponse(response: Response, probe = false): Promise<LlmChatResponse> {
   const payload = (await response.json()) as OpenAiResponse;
   const content = payload.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content.trim()) {
+  if (
+    typeof content !== "string" ||
+    (!probe && !content.trim()) ||
+    (probe && !["stop", "length"].includes(payload.choices?.[0]?.finish_reason ?? ""))
+  ) {
     throw new Error("OpenAI returned empty response");
   }
   const usage = payload.usage
@@ -69,6 +56,9 @@ async function parseResponse(response: Response): Promise<LlmChatResponse> {
 
 export function createOpenAiProvider(options: OpenAiProviderOptions = {}): LlmProvider {
   const timeoutMs = Math.max(1000, options.timeoutMs ?? 5000);
+  const config = options.modelConfig ?? groupedConfig.openAi;
+  const isConfigured = () =>
+    Boolean(config.apiKey.trim() && config.apiBaseUrl.trim() && config.model.trim());
 
   return {
     name: "openai",
@@ -81,11 +71,12 @@ export function createOpenAiProvider(options: OpenAiProviderOptions = {}): LlmPr
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await fetch(buildOpenAiUrl(), {
+        const response = await fetch(`${config.apiBaseUrl.replace(/\/+$/, "")}/chat/completions`, {
           method: "POST",
-          headers: headers(),
+          headers: { Authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
+          redirect: "error",
           body: JSON.stringify({
-            model: groupedConfig.openAi.model,
+            model: request.model?.trim() || config.model,
             messages: request.messages,
             temperature: request.temperature ?? 0,
             max_completion_tokens: request.maxTokens,
@@ -107,7 +98,7 @@ export function createOpenAiProvider(options: OpenAiProviderOptions = {}): LlmPr
           });
         }
 
-        return parseResponse(response);
+        return parseResponse(response, options.probe);
       } finally {
         clearTimeout(timer);
       }
@@ -117,8 +108,8 @@ export function createOpenAiProvider(options: OpenAiProviderOptions = {}): LlmPr
         provider: "openai",
         configured: isConfigured(),
         reachable: false,
-        model: groupedConfig.openAi.model,
-        endpoint: groupedConfig.openAi.apiBaseUrl,
+        model: config.model,
+        endpoint: config.apiBaseUrl,
       };
 
       if (!result.configured) {

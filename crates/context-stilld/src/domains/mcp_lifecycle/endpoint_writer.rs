@@ -10,6 +10,59 @@ pub(super) fn handle_writer_request(request: HttpRequest, dispatch: &DispatchCon
         .get("authorization")
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or_default();
+    if request.path == "/integrations/deepstill/agent/v1/chat/completions" {
+        let loopback_host = request
+            .headers
+            .get("host")
+            .and_then(|host| reqwest::Url::parse(&format!("http://{host}")).ok())
+            .is_some_and(|url| {
+                url.username().is_empty()
+                    && url.password().is_none()
+                    && matches!(
+                        url.host_str(),
+                        Some("127.0.0.1" | "localhost" | "[::1]" | "::1")
+                    )
+            });
+        if request.method != "POST"
+            || !loopback_host
+            || request.headers.contains_key("origin")
+            || request.body.len() > 262144
+        {
+            return json_response(
+                403,
+                json!({"ok":false,"error":"research_gateway_request_forbidden"}),
+                &[],
+            );
+        }
+        let payload = match serde_json::from_str(&request.body) {
+            Ok(v) => v,
+            Err(_) => {
+                return json_response(
+                    400,
+                    json!({"ok":false,"error":"research_gateway_request_invalid"}),
+                    &[],
+                )
+            }
+        };
+        return match crate::domains::agent_runtime::gateway::handle(
+            sqlite_core_path,
+            supplied_token,
+            payload,
+        ) {
+            Ok(v) => json_response(200, v, &[]),
+            Err(e) => json_response(
+                if e == "research_slot_busy" {
+                    429
+                } else if e == "research_gateway_unauthorized" {
+                    401
+                } else {
+                    422
+                },
+                json!({"ok":false,"error":{"type":e}}),
+                &[],
+            ),
+        };
+    }
     if !constant_time_eq(supplied_token.as_bytes(), writer_token.as_bytes()) {
         return json_response(
             401,
@@ -17,7 +70,10 @@ pub(super) fn handle_writer_request(request: HttpRequest, dispatch: &DispatchCon
             &[],
         );
     }
-    if request.path == "/internal/context-compile" {
+    if matches!(
+        request.path.as_str(),
+        "/internal/context-compile" | "/internal/agent-runtime" | "/internal/settings-provider"
+    ) {
         if request.method != "POST" {
             return json_response(405, json!({"ok":false,"error":"method_not_allowed"}), &[]);
         }
@@ -38,7 +94,13 @@ pub(super) fn handle_writer_request(request: HttpRequest, dispatch: &DispatchCon
         if !valid_host {
             return json_response(403, json!({"ok":false,"error":"host_mismatch"}), &[]);
         }
-        if request.body.len() > 65536 {
+        if request.body.len()
+            > if request.path == "/internal/agent-runtime" {
+                262144
+            } else {
+                65536
+            }
+        {
             return json_response(
                 413,
                 json!({"ok":false,"error":"compile_request_too_large"}),
@@ -55,6 +117,18 @@ pub(super) fn handle_writer_request(request: HttpRequest, dispatch: &DispatchCon
                 )
             }
         };
+        if request.path == "/internal/settings-provider" {
+            return match crate::domains::settings_provider::handle(sqlite_core_path, payload) {
+                Ok(result) => json_response(200, result, &[]),
+                Err(error) => json_response(422, json!({"error":error}), &[]),
+            };
+        }
+        if request.path == "/internal/agent-runtime" {
+            return match crate::domains::agent_runtime::ingress::handle(sqlite_core_path, payload) {
+                Ok(result) => json_response(200, result, &[]),
+                Err(error) => json_response(422, json!({"ok":false,"error":error}), &[]),
+            };
+        }
         let Some(context) = dispatch.native_context() else {
             return json_response(404, json!({"ok":false,"error":"not_found"}), &[]);
         };

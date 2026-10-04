@@ -7,46 +7,18 @@ use crate::shared::errors::CliError;
 use super::super::events::append_queue_event_for_connection;
 
 use super::helpers::{priority_for_source_kind, retry_backoff_seconds, stable_id};
-use super::types::{
-    NegativeCoveringExecution, NegativeCoveringPersistStatus, NegativeCoveringResult,
-};
+use super::types::{CoveringExecution, CoveringPersistStatus, CoveringResult};
 
-pub(crate) fn persist_negative_covering_result(
+pub(crate) fn persist_covering_result(
     connection: &mut Connection,
-    execution: &NegativeCoveringExecution,
-    result: &NegativeCoveringResult,
-) -> Result<NegativeCoveringPersistStatus, CliError> {
+    execution: &CoveringExecution,
+    result: &CoveringResult,
+) -> Result<CoveringPersistStatus, CliError> {
     let tx = connection
         .transaction()
         .map_err(|error| CliError::io(format!("failed to begin covering persistence: {error}")))?;
-    let owns_claim = tx
-        .query_row(
-            "select exists(
-               select 1
-               from covering_evidence_queue queue_job
-               join llm_provider_leases lease
-                 on lease.id = ?3
-                and lease.queue_name = 'coveringEvidence'
-                and lease.queue_job_id = queue_job.id
-                and lease.worker_id = ?2
-               where queue_job.id = ?1
-                 and queue_job.status = 'running'
-                 and queue_job.locked_by = ?2
-                 and lease.status = 'active'
-             )",
-            params![
-                execution.job_id,
-                execution.provider_lease.worker_id,
-                execution.provider_lease.id
-            ],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|value| value != 0)
-        .map_err(|error| {
-            CliError::io(format!(
-                "failed to verify covering claim ownership: {error}"
-            ))
-        })?;
+    let owns_claim =
+        super::super::provider_execution::owns_provider_execution(&tx, &execution.provider_lease)?;
     if !owns_claim {
         let event_id = stable_id(
             "covering-event",
@@ -91,7 +63,7 @@ pub(crate) fn persist_negative_covering_result(
                 "failed to commit discarded covering result: {error}"
             ))
         })?;
-        return Ok(NegativeCoveringPersistStatus::Superseded);
+        return Ok(CoveringPersistStatus::Superseded);
     }
     let existing_evidence_id = tx
         .query_row(
@@ -210,7 +182,7 @@ pub(crate) fn persist_negative_covering_result(
     let (persist_status, job_status, completed_at, next_run_seconds, release_reason, event_type) =
         if retryable && !exhausted {
             (
-                NegativeCoveringPersistStatus::Retrying,
+                CoveringPersistStatus::Retrying,
                 "pending",
                 None,
                 Some(retry_backoff_seconds(next_attempt_count)),
@@ -223,7 +195,7 @@ pub(crate) fn persist_negative_covering_result(
             )
         } else if retryable {
             (
-                NegativeCoveringPersistStatus::Failed,
+                CoveringPersistStatus::Failed,
                 "failed",
                 None,
                 None,
@@ -232,7 +204,7 @@ pub(crate) fn persist_negative_covering_result(
             )
         } else {
             (
-                NegativeCoveringPersistStatus::Completed,
+                CoveringPersistStatus::Completed,
                 "completed",
                 Some("CURRENT_TIMESTAMP"),
                 None,
@@ -435,7 +407,23 @@ pub(crate) fn persist_negative_covering_result(
                 "failed to release covering provider lease: {error}"
             ))
         })?;
-    if lease_changed != 1 {
+    // Protocol 3 releases the per-request lease immediately after saving the response.
+    // Run ownership was checked inside this transaction before the queue transition;
+    // a matching released lease is therefore valid for its later business projection.
+    let request_already_released = execution.protocol_version == 3
+        && tx
+            .query_row(
+                "select exists(select 1 from llm_provider_leases where id=?1 and status='released'
+             and queue_name='coveringEvidence' and queue_job_id=?2 and worker_id=?3)",
+                params![
+                    execution.provider_lease.id,
+                    execution.job_id,
+                    execution.provider_lease.worker_id
+                ],
+                |r| r.get::<_, bool>(0),
+            )
+            .map_err(|e| CliError::io(e.to_string()))?;
+    if lease_changed != 1 && !request_already_released {
         return Err(CliError::io(
             "covering claim ownership changed before provider lease release",
         ));
@@ -464,6 +452,11 @@ pub(crate) fn persist_negative_covering_result(
             .to_string(),
         ),
     )?;
+    if execution.protocol_version >= 3 {
+        tx.execute("update agent_runs set status=?3,stop_reason=?4,updated_at=CURRENT_TIMESTAMP
+            where queue_name='coveringEvidence' and job_id=?1 and claim_epoch=?2 and status in ('running','ready')",
+            params![execution.job_id,execution.provider_lease.id,if persist_status==CoveringPersistStatus::Completed {"completed"}else{"paused"},result.reason]).map_err(|e|CliError::io(e.to_string()))?;
+    }
     tx.commit()
         .map_err(|error| CliError::io(format!("failed to commit covering result: {error}")))?;
     Ok(persist_status)
@@ -473,7 +466,7 @@ fn sha256_hex(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
 }
 
-fn trusted_identity(execution: &NegativeCoveringExecution) -> Value {
+fn trusted_identity(execution: &CoveringExecution) -> Value {
     // Identity can only originate from ingress metadata; model output is never consulted.
     execution
         .candidate_metadata

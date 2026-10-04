@@ -1,6 +1,6 @@
-import { verifyPromptMessageHash, verifyRenderedHash } from "s11tnext";
-import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { verifyPromptMessageHash, verifyRenderedHash } from "s11tnext";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -22,6 +22,7 @@ describe("system-context.service", () => {
       "contextDecision.answer",
       "contextDecision.judge",
       "contextDecision.repair",
+      "coverEvidence.agentic",
       "coverEvidence.applicabilityRefinement",
       "coverEvidence.externalFetchSelection",
       "coverEvidence.externalFinal",
@@ -33,6 +34,7 @@ describe("system-context.service", () => {
       "episodeDistiller.generate",
       "episodeDistiller.nearDuplicateReview",
       "episodeDistiller.semanticChunk",
+      "findCandidate.agentic",
       "findCandidate.codexEscalation",
       "findCandidate.extract",
       "findCandidate.vibeMemory",
@@ -42,6 +44,7 @@ describe("system-context.service", () => {
       "landscape.deadZoneMergeReview",
       "provider.codex.finalResponse",
       "shared.jsonOnly",
+      "sourceResearch.codexExploration",
       "sourceResearch.web",
     ]);
     for (const context of contexts) {
@@ -52,6 +55,10 @@ describe("system-context.service", () => {
     expect(
       contexts.filter((context) => context.sourceLocale === "en-US").map((context) => context.key),
     ).toEqual([
+      "contextCompiler.agenticRefine",
+      "contextCompiler.compose",
+      "contextCompiler.plan",
+      "contextCompiler.selectEvidence",
       "contextDecision.answer",
       "contextDecision.judge",
       "contextDecision.repair",
@@ -60,6 +67,7 @@ describe("system-context.service", () => {
       "landscape.curationVerify",
       "landscape.deadZoneMergeReview",
       "provider.codex.finalResponse",
+      "sourceResearch.codexExploration",
     ]);
   });
 

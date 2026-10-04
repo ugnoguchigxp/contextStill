@@ -1,0 +1,204 @@
+<article lang="ja">
+  <h1>全7Queueの失敗・停滞調査（2026年10月4日）</h1>
+  <p>
+    2026年10月4日23:32:31
+    JSTのSQLite読取専用transactionを基準とする。直近24時間は10月3日23:32:31〜10月4日23:32:31
+    JST。Queue状態、実行台帳、イベント、daemonログ、LARM公開接続・healthを照合した。調査では実装、設定、Queueの再投入、daemonの再起動を変更していない。
+  </p>
+
+  <h2>結論</h2>
+  <ol>
+    <li>
+      最も深刻なのはFindingで、新規33ジョブから正常完了したジョブは0件。23件が出力打ち切り、2件が形式不正、1件が入力予算超過、1件が通信結果不明で保留、6件がタイムアウトでskippedになった。候補が後段へ出ず、CoveringとFinalizeへの供給が止まっている。
+    </li>
+    <li>
+      LARMの共通接続には断続的な更新・準備待ちがある。23:10:30のclaim後、次のclaimは23:29:52まで約19分空いた。23:29:45にはLARMがready・推論受付可能・4枠空きを返す一方、ローカル接続状態はready_timeoutだった。調査中に同じ接続で復旧したため、現在も全Queueが停止中とは判断しない。
+    </li>
+    <li>
+      EpisodeとCurationは処理できている。直近24時間のEpisode完了は27件、失敗は6件。Curation完了は88件、再試行は39件。全Queue一律の停止やDB障害ではない。
+    </li>
+    <li>
+      過去の未解消failedは合計12,812件、pausedは2,716件。laneの停止は全7種類とも解除済みだが、ジョブ単位のfailed・再実行日時なしのpausedは通常claimされない。接続復旧だけで過去の残件が消えることはない。
+    </li>
+  </ol>
+
+  <h2>Queue別の状況</h2>
+  <table>
+    <caption>
+      読取スナップショット時点の残件と直近24時間の結果。failed・pausedは全期間の残件。
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Queue</th>
+        <th scope="col">現在の残件</th>
+        <th scope="col">直近24時間</th>
+        <th scope="col">原因・解釈</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">findingCandidate</th>
+        <td>failed 4,487、paused 166、pending/running 0</td>
+        <td>新規33件、正常完了0、paused 27、timeout/skipped 6</td>
+        <td>
+          8,192 tokenでも応答が完結しない。形式不正の修復、共通接続待ち、ジョブ期限にも問題がある。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">coveringEvidence</th>
+        <td>failed 6,033、pending/running 0</td>
+        <td>実行イベント0</td>
+        <td>
+          新しい処理対象がない。過去のfailedには認証401が2,114件、接続・timeout系が2,387件。現在の実機成功は確認できない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">episodeDistiller</th>
+        <td>failed 2,273、paused 2,550、pending/running 0</td>
+        <td>completed 27、failed 6、retried 8</td>
+        <td>
+          直近6失敗はすべて全segmentの出力打ち切り。過去のpaused
+          2,549件はprovider_unavailable_exhausted。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">landscapeCuration</th>
+        <td>failed 19、pending 316、running 1</td>
+        <td>completed 88、skipped 45、retried 39、failed 0</td>
+        <td>
+          処理は継続。完了88件はすべてkeep_separateで、知識の統合・更新成功数を意味しない。モデル出力の契約違反が再試行の主因。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">deadZoneMergeReview</th>
+        <td>残件0、累計completed 4</td>
+        <td>実行イベント0</td>
+        <td>失敗残件なし。最終完了は6月14日02:42:30 JST。現在のLARM routeでの実行は未検証。</td>
+      </tr>
+      <tr>
+        <th scope="row">finalizeDistille</th>
+        <td>残件0、累計completed 8,647、skipped 23</td>
+        <td>実行イベント0</td>
+        <td>
+          Coveringからの新しい投入がない。最終完了は10月3日15:18:36 JST。現行の失敗残件はない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">mergeActivationFinalize</th>
+        <td>残件0、累計completed 4</td>
+        <td>実行イベント0</td>
+        <td>失敗残件なし。最終完了は6月14日02:43:28 JST。現在のLARM routeでの実行は未検証。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    completed、skipped、pausedは別の意味を持つ。Coveringのcompletedにも根拠不足によるinsufficientが含まれ、Findingのagent_runs.completedにも候補なしのtimeoutが含まれる。正常な候補生成・知識保存の判断にはQueueのoutcomeと後段投入を合わせて確認する必要がある。
+  </p>
+
+  <h2>Findingの直接原因</h2>
+  <ul>
+    <li>
+      直近のLLM応答38件のうち23件がfinish_reason=length。2件は出力4,096 token、21件は8,192
+      tokenを使い切っていた。単純に4,096から8,192へ増やすだけでは解消していない。
+    </li>
+    <li>
+      finish_reason=stopの15応答のうち、4件はMarkdownコードフェンス付き、1件はJSONとして解析できない本文。残り10件がJSONとして解析できることは、envelopeの契約・根拠検証が成功したことを意味しない。
+    </li>
+    <li>
+      engine.rsのapply_responseはserde_json::from_strで本文全体をenvelopeへ変換する。実応答にはコードフェンスの後に候補件数を説明する文章が付いていた。形式修復は1回だけ許すが、修復後も契約違反が残り、invalid_agent_outputの2件はともに2回呼び出し後の保留だった。
+    </li>
+    <li>
+      context_limitの1件は形式修復後に発生し、原資料chunkを縮小しても送信できなかった。修復履歴に不正応答の本文全体を保持する実装が入力を膨らませる可能性がある。正確な超過要素の内訳は今回未採取。
+    </li>
+    <li>
+      timeoutの6件はすべてformatRepaired=true、LLM呼び出しは1回だけだった。修復を待つ間に期限が切れ、候補なしでskippedへ投影された。共通接続待ち・再claim待ちが期限を消費することが悪化要因と考えられる。
+    </li>
+    <li>
+      length応答は使用量を保存したあと、不完全な本文を候補として適用せずpausedにする。安全な保留だが、自動再開日時を設定しないため、出力契約を修正しても残件の明示的な復旧が必要。
+    </li>
+  </ul>
+  <p>
+    打ち切り応答の途中本文は保存されず、contentは空、usageとterminalErrorが残る。そのため、思考部分が長いのか、候補を出しすぎたのか、出力反復なのかは現在の台帳だけでは断定できない。
+  </p>
+
+  <h2>共通接続の停滞</h2>
+  <p>
+    全LLM
+    routeはcontextstill-backgroundを共有する。23:29:45の公開応答は接続status=ready、llm.readiness=ready、claimable=false。healthはready=true、acceptingRequests=true、activeRequests=0、maxConcurrentRequests=4だった。通信不能・モデル未起動・4枠占有という説明とは一致しない。ローカル永続状態とdaemonログにはready_timeoutが残っていた。
+  </p>
+  <p>
+    現在のソースではprovider_connection/manager.rsのrenew_and_reclaimがrenew後にservice.rsのwait_until_readyを呼び、この関数はreadiness=readyに加えてclaimable=trueを要求する。既存接続の公開claimable=falseと更新後の待機条件の不整合が停滞の有力な原因であり、初回claimと更新後の再claimの契約を照合する必要がある。ただし、今回renew応答そのものは採取しておらず、サーバー側でclaimable=falseになった内部理由は未確認。
+  </p>
+  <p>
+    23:29:52〜53には同じConnection
+    IDでFinding、Episode、Curationのclaimが再開した。23:32:36のhealthでは1リクエストが実行中で、公開claimableは引き続きfalseだった。従って、claimable=falseだけで全実行が不可能と判断してはならない。観測結果は断続的な接続更新待ちを示す。
+  </p>
+  <p>
+    daemonのPID
+    77149は18:33:17に起動し、ディスク上のバイナリ更新は23:24:32だった。調査時点のソースと稼働imageが一致する保証はない。修正確認ではビルド済みファイルの更新に加えて、稼働imageの反映と少なくとも1回の接続更新を含む実機検証が必要。
+  </p>
+
+  <h2>EpisodeとCurationの失敗理由</h2>
+  <p>
+    Episodeの直近6
+    failedはすべて「全segment失敗・finish_reason=length」。現行実装のsegment_budgetは8,000文字以下のsegmentに4,096
+    token、それ以上に8,192
+    tokenを割り当てる。同じ出力予算での再試行では同じ打ち切りが起こり得る。ただし、今回6件の実送信上限とusageは個別に記録されていないため、各失敗が4,096か8,192かは断定しない。
+  </p>
+  <p>
+    Curationの39 retriedは、decision/rationale不正23件、出力打ち切り12件、期限切れProvider
+    tokenによる401が2件、source group
+    coverage不正1件、接続失敗1件だった。decision/rationale検証はschemaVersion=2、許可action、空でない1,200文字以下のrationale、1〜8件のreasonCodesを確認するが、現行エラーは違反した条件を区別していない。
+  </p>
+  <p>
+    401の2件はMODEL_CONTRACT_INVALID、attemptConsumed=trueとして記録されている。curation_executor.rsのclassify_curation_errorは401をProvider系に分類せず、既定のModelContractへ落とす。認証の期限切れをモデル出力不正として数えるため、接続再取得で回復できる失敗にも試行回数を消費している。
+  </p>
+  <p>
+    Curationのfailed
+    19件は9月8日の古い残件で、説明文のschema上限違反16件とEmbedding接続失敗3件。現在の39回の再試行とは別である。
+  </p>
+
+  <h2>過去の残件と復旧順序</h2>
+  <p>
+    failed残件の主な分類は、FindingのMuse/session系3,112件・出力打ち切り916件、Coveringの接続/timeout系2,387件・401が2,114件、EpisodeのMuse/session系1,489件・401が321件。これらは複数月の履歴であり、現在のornith-contextstillの不具合件数として扱わない。分類は最終last_errorの文字列による概算で、各分類の具体的な規則は集計JSONのfailedErrorCategoryRulesを参照する。
+  </p>
+  <ol>
+    <li>
+      共通接続の初回claim・renew・再claimの意味を照合し、断続的なready_timeoutを解消する。期限切れtokenの401を接続回復へ分類する。少なくとも1更新周期を観測し、claimと正常完了が続くことを確認する。
+    </li>
+    <li>
+      FindingのJSON出力契約を実モデルで満たすようにする。候補数・本文量を抑えた短い実入力で完了を確認し、修復履歴と期限処理を見直す。出力上限の増加だけで完了としない。
+    </li>
+    <li>
+      FindingからCovering、Finalizeまで同じ実候補で通し検証する。今回Covering/Finalizeに新規ジョブがなかったため、現行の後段経路が正常という証拠は得られていない。
+    </li>
+    <li>
+      Episodeのsegment/出力予算、Curationのdecision・rationale・coverage制約を個別に検証する。Curationのkeep_separate完了と知識変更の成功を分けて測る。
+    </li>
+    <li>
+      原因修正後に、失敗種類とinput
+      generationを確認して少数の残件から復旧する。Provider障害残件、形式違反残件、結果不明のジョブを一括で再投入しない。結果不明では二重適用を防ぐ照合が先に必要。
+    </li>
+  </ol>
+
+  <h2>調査根拠と限界</h2>
+  <ul>
+    <li>
+      <a href="assets/queue-failure-2026-10-04/summary.json"
+        >同一transactionで採取したQueue・実行台帳・イベント集計と、認証情報を除外したLARM公開応答</a
+      >。本文の主な件数はこのスナップショットに対応する。
+    </li>
+    <li>
+      実装確認対象はRustのprovider_connection/manager.rs、service.rs、agent_runtime/engine.rs、ledger.rs、projection.rs、queue_lifecycle/provider_lease.rs、curation_executor.rs、episode_executor/distillation.rs。ログはlogs/context-stilld.log。
+    </li>
+    <li>
+      日付はISO形式、SQLite日時、unix-ms形式が混在するため、集計ではUTC秒へ正規化した。文字列のMAXや単純な日時比較で最新順を判断していない。
+    </li>
+    <li>
+      agent_runtimeのyield_queueはQueueとagent_runsを更新する一方、その都度のpaused/retriedイベントを追加しない。イベントだけを見るとFindingの27保留を見落とす。agent_steps.succeededも応答受領済みを意味し、出力の契約適合・候補採用成功を保証しない。
+    </li>
+    <li>
+      調査中もdaemonは稼働し、接続待ちの解消とEpisodeの追加完了を観測した。採取前後で件数は変わる。途中本文やrenewの生応答、別サービスの内部ログは未採取。
+    </li>
+  </ul>
+</article>

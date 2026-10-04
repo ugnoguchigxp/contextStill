@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { routeClaimGroupId } from "../src/modules/queue/core/scheduler";
-import { routeWithProviderPool } from "../web/src/modules/admin/components/settings/settings-routing";
+import { routeWithProviderPool } from "../web/src/modules/admin/components/settings/route-editor";
 
 test("selecting a pool clears fixed models and uses the pool with auto routing", () => {
   const route = routeWithProviderPool(

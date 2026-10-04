@@ -1,5 +1,7 @@
 import { groupedConfig } from "../../config.js";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
+import { runNativeFinding } from "../agent-runtime/native-client.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import type { DistillationDomainSmokeResult } from "../distillation-domain.types.js";
 import {
@@ -67,6 +69,7 @@ export type FindCandidateResult = {
   candidates: CandidateRecord[];
   insertedIds?: string[];
   readRanges: Array<{ from: number; toExclusive: number }>;
+  readRangeUnit?: "utf8_bytes" | "tokens";
   parseDiagnostics?: StorageCandidateParseDiagnostics;
 };
 
@@ -378,6 +381,12 @@ export function formatCliTextCandidates(candidates: CandidateRecord[]): string {
 }
 
 export async function runFindCandidate(input: FindCandidateInput): Promise<FindCandidateResult> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") return runNativeFinding(input);
+  return runLegacyPostgresFinding(input);
+}
+
+/** PostgreSQL compatibility only; managed SQLite is executed by the resident. */
+async function runLegacyPostgresFinding(input: FindCandidateInput): Promise<FindCandidateResult> {
   const targetStateId = input.targetStateId?.trim() ?? "";
   const rawTarget =
     targetStateId.length > 0

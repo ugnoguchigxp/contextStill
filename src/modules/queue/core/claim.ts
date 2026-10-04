@@ -3,6 +3,7 @@ import { groupedConfig } from "../../../config.js";
 import { resolveDatabaseBackendConfig } from "../../../db/backend.js";
 import { db } from "../../../db/index.js";
 import { isQueuePaused } from "./control.js";
+import { legacyProtocolPredicate } from "./legacy-protocol.js";
 import type { DistillationQueueName } from "./types.js";
 import { queueTableNameByQueue } from "./types.js";
 
@@ -25,6 +26,7 @@ export async function claimNextQueueJob(params: {
   const tableName = queueTableNameByQueue[params.queueName];
   if (resolveDatabaseBackendConfig().kind === "sqlite") {
     const sqlite = await getSqliteCoreDatabase();
+    const legacyProtocol = legacyProtocolPredicate(sqlite.db, params.queueName);
     const staleSeconds = Math.max(
       30,
       Math.min(120, Math.floor(groupedConfig.distillation.lockTtlSeconds)),
@@ -45,7 +47,7 @@ export async function claimNextQueueJob(params: {
             last_error = coalesce(last_error, 'stale_running_recovered'),
             last_outcome_kind = 'stale_recovered',
             updated_at = CURRENT_TIMESTAMP
-          where status = 'running'
+          where status = 'running' and ${legacyProtocol}
             and coalesce(heartbeat_at, locked_at, updated_at) < ?
         `,
         )
@@ -62,7 +64,7 @@ export async function claimNextQueueJob(params: {
           `
           select id
           from ${tableName}
-          where (
+          where ${legacyProtocol} and (
             (status = 'pending' and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP))
             or (status = 'paused' and next_run_at is not null and datetime(next_run_at) <= CURRENT_TIMESTAMP)
           )
@@ -85,7 +87,7 @@ export async function claimNextQueueJob(params: {
             locked_at = CURRENT_TIMESTAMP,
             heartbeat_at = CURRENT_TIMESTAMP,
             updated_at = CURRENT_TIMESTAMP
-          where id = ?
+          where id = ? and ${legacyProtocol}
             and (
               (status = 'pending' and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP))
               or (status = 'paused' and next_run_at is not null and datetime(next_run_at) <= CURRENT_TIMESTAMP)

@@ -1,0 +1,48 @@
+Generation: built-in image_gen; use case: ui-mockup.
+
+Image 1: connections.png
+Use case: ui-mockup
+Asset type: high fidelity desktop settings proposal for the existing ContextStill web application. Create one complete polished 1600x1100 landscape screen, straight-on flat screenshot, not a laptop or perspective render.
+Primary request: Japanese settings interface that distinguishes editable LARM connection settings from read-only returned Providers and shows four concurrent queue requests sharing one LLM connection. This is a proposal, with sample values.
+Style: restrained production SaaS UI, pure white cards, pale slate background, navy typography and active tabs/buttons, thin slate borders, modest 8px radius, green small status pills, excellent readable Japanese sans serif, generous spacing, no gradients, no decorative illustrations.
+Layout:
+Top horizontal product bar: "contextStill" at left, links "Overview", "Source", "Queue", "Knowledge", "Settings" (Settings active).
+Header title "設定", supporting text "接続先と処理の動きを管理", small pill "画面案・表示例", secondary button "状態を更新", primary button "変更を保存".
+Second horizontal tabs: "一般", "接続とモデル" active, "処理の割り当て", "並列処理と探索", "検索・埋め込み", "詳細".
+Wide central content left 68%, right 32%.
+Left upper card title "LARM 接続", green badge "利用中". Short helper "モデルと接続情報はLARMから受け取ります". Editable row "接続先" value "http://192.168.0.130:9000" (sample), row "認証" badge "登録済み". Two read-only values "要求プロファイル" "contextStill", "解決プロファイル" "contextstill-background". Buttons "接続を試す" and understated "接続の詳細".
+Left lower card title "公開されているProvider". A clearly laid out table with columns "用途", "モデル", "利用状態". Rows:
+"LLM" | "ornith-contextstill" | green "利用中"
+"System One" | "laya-multilingual" | neutral "利用可能・未要求"
+"Embedding" | "multilingual-e5-small" | neutral "利用可能・未要求"
+Footnote "このキュー接続はLLMのみ要求しています".
+Right upper card title "LLMの同時処理". Editable field "アプリの上限" numeric stepper "4". Read-only rows "LARMの上限" "4", "実効上限" large "4". Four tiny equal slot boxes, first three green busy, fourth pale. Caption "使用中 3 / 4（表示例）". Helper "異なるキューを優先。空き枠ではFinding・Coveringを並列処理。"
+Right lower card title "1回のLLM呼び出し". Large "32,768" smaller "tokens". Thin horizontal segmented bar, slate input, navy output, gray margin. Label rows "入力の推定上限" "20,480", "出力の上限" "8,192", "安全余裕" "4,096". Small footnote "入力は概算。実測は処理結果で確認。"
+Bottom short full-width collapsed card "その他の接続" with chips "Azure OpenAI", "OpenAI", "Bedrock", "固定エンドポイント", each no secrets or fields exposed.
+Constraints: exact correct model strings and profile capitalization. Do not show bearer tokens, resource allocation IDs, KV cache editable controls, or four separate LLM models. All runtime/model numbers read-only except App limit. Modern clean believable app, readable labels, no extra text or brand. Every shown live-looking value is sample and screen header marked proposal.
+
+Image 2: assignments.png
+Use case: ui-mockup
+Asset type: high fidelity desktop ContextStill settings proposal, second screen of the same design system, landscape 1600x1100 flat browser-content screenshot.
+Primary request: make Finding and Covering assignments independent and make Agentic exploration limits and DeepStill delegation understandable. White cards on pale slate, navy headings/buttons/selected tabs, thin gray borders, restrained emerald badges, rounded 8px edges, spacious readable Japanese sans-serif. No illustration, no perspective, no laptop, no gradients.
+Layout: top horizontal product navigation "contextStill", "Overview", "Source", "Queue", "Knowledge", "Settings" active. Heading "設定", subtitle "接続先と処理の動きを管理", pill "画面案・表示例". Buttons "状態を更新" and "変更を保存". Tabs "一般", "接続とモデル", "処理の割り当て" active, "並列処理と探索", "検索・埋め込み", "詳細".
+Main content two columns, left 60%, right 40%.
+Left large card title "処理の割り当て", helper "各処理を個別に変更できます".
+Subheading "Finding", small outline button "このグループに適用".
+Two independent table-like rows "Source" and "Vibe Memory". Each row shows editable dropdown "LARM / contextStill", then small separate observed text "現在: ornith-contextstill", muted badge "確認済み".
+Subheading "Covering", small outline button "このグループに適用".
+Three independent rows "Source Support", "External Evidence", "MCP Evidence". Each has same independent "LARM / contextStill" dropdown and small "現在: ornith-contextstill" with muted badge.
+Small footer "一括変更は対象と差分を確認して適用".
+Below left card a slim collapsed card title "その他の処理" with short chips "Compile", "手動Research", "Finalize". These are separate assignments; no model strings in chips.
+Right top card title "Finding・Coveringの探索", toggle ON labeled "Agentic処理". Helper "必要な情報を集め、進展がなければ切り上げます". Read-only rows:
+"1回の呼び出し上限" "32,768 tokens"
+"1件の目安" "98,304 tokens"
+"1件の打ち切り上限" "131,072 tokens"
+"LLM呼び出し" "最大8回"
+A small subtle status "共通ポリシー・参照値".
+Right bottom card title "DeepStillへの追加調査", neutral green badge "連携可能（表示例）". Helper "未解決の問いに限って調査を委譲".
+Read-only rows "委譲を含む目安" "262,144 tokens", "委譲を含む上限" "393,216 tokens".
+Two concise text lines "委譲は1回まで・同じLLM枠を共有" and "手動Researchは別の割り当て".
+Small secondary link "連携の詳細".
+Full-width bottom calm gray note card title "探索の終了条件", text "情報が増えない処理が2回、取得失敗が3回、または予算に到達したら結論の確認へ進みます。"
+Constraints: correct Japanese labels and exact strings/numbers. All budget numbers read-only, only routing dropdowns and Agentic switch editable. App still uses the returned Provider model, not a hardcoded selection. No bearer tokens or allocation IDs. No live metrics claimed, label screen as proposal. Polished practical UI, low visual noise, no arbitrary decorations.

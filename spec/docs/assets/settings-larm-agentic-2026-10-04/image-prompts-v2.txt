@@ -1,0 +1,33 @@
+Generation: built-in image_gen; use case: ui-mockup.
+Replaces the first connections overview. Original connections.png is an earlier proposal, not the current overview.
+
+Image: providers-cloud-v2.png
+Use case: ui-mockup
+Asset type: revised ContextStill desktop settings screenshot proposal, flat straight-on 1600x1300 landscape/tall landscape screen. This is a design proposal, sample data, not a real running app.
+Primary request: The "接続とモデル" tab must first display the configured provider list including Cloud APIs, with fully visible add/edit/test/credential setup flows. Cloud APIs are first-class settings, not hidden behind an "other connections" section. LARM is one item alongside Cloud providers.
+Style: existing ContextStill design language: white cards on pale slate, navy text and buttons, thin slate borders, modest 8px corners, clean readable Japanese typography, generous spacing, low visual noise, no art, no perspective, no gradients. Use table header with restrained gray fill and selected Azure row pale blue.
+Top bar: "contextStill" then "Overview", "Source", "Queue", "Knowledge", "Settings" active.
+Header "設定", subtitle "接続先と処理の動きを管理", pill "画面案・表示例", secondary "状態を更新", primary "変更を保存".
+Tabs "一般", "接続とモデル" active, "処理の割り当て", "並列処理と探索", "検索・埋め込み", "詳細".
+Top main card full width title "設定済みプロバイダー", helper "接続先・認証・利用状態を一覧で確認", top-right navy button "＋ プロバイダーを追加".
+Table seven columns: "名前", "種類", "モデル / Deployment", "認証", "接続確認", "割り当て", "操作".
+Six rows, exact text:
+"LARM / Background" | "LARM" | "ornith-contextstill" | "登録済み" | green "利用中" | "Finding・Covering" | "詳細"
+"Azure / Main" | "Azure OpenAI" | "research-main" | "登録済み" | green "確認済み" | "Compile" | "編集"
+"Azure / Sub" | "Azure OpenAI" | "research-sub" | "共通キー" | gray "未確認" | "未割り当て" | "編集"
+"OpenAI" | "OpenAI" | "設定済みモデル" | "登録済み" | gray "未確認" | "未割り当て" | "編集"
+"Bedrock" | "AWS Bedrock" | "設定済みモデル" | "プロファイル" | gray "未確認" | "未割り当て" | "編集"
+"Local / Worker" | "固定エンドポイント" | "local-worker" | "任意" | gray "未確認" | "未割り当て" | "編集"
+Azure / Main selected with restrained blue row background. Do not show all rows as healthy.
+Below two columns: wide 68% actual editable Cloud API detail card and narrower 32% context/help card.
+Left card heading "Azure / Main", pill "Azure OpenAI", toggle enabled with text "有効".
+Form rows arranged two columns where sensible:
+"表示名" input "Azure / Main"
+"Endpoint" input "https://example.openai.azure.com" (obviously sample).
+"Deployment / Model" input "research-main"
+"API Version" input "保存済みの値" (placeholder example, not a recommended API version).
+"API Key" password entry with dots, small pill "登録済み", secondary button "変更"; helper "未入力なら登録済みのキーを保持".
+Collapsed disclosure "API Path・詳細設定".
+Buttons at bottom: outlined "接続を確認", muted text button "削除"; small footer "編集内容は「変更を保存」で反映".
+Right compact card title "この接続の割り当て", one row "Compile", link "処理の割り当てを開く". Below another card title "プロバイダーの追加", short explanatory lines "Azure OpenAI / OpenAI", "AWS Bedrock", "固定エンドポイント / LARM". Footer "種類に応じた設定と認証を登録".
+Constraints: Cloud API settings visible and editable. LARM still managed by claim returned model, no manual LARM model field or leaked token. Do not turn all providers into LARM; six individual logical endpoints. No "その他の接続" collapsed group. No token quotas or giant runtime status cards replacing the provider list. API Key password only fake dots, never real credentials. Every value sample. Accurate labels and very readable table/form.

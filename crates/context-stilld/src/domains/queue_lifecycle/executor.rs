@@ -18,9 +18,8 @@ use crate::shared::{config::EnvProvider, errors::CliError, process};
 
 use super::claim::claim_next_queue_job_for_connection;
 use super::covering_executor::{
-    execute_covering, load_claimed_negative_execution, persist_negative_covering_result,
-    CoveringExternalSearchConfig, NegativeCoveringExecution, NegativeCoveringHeartbeatGuard,
-    NegativeCoveringPersistStatus, NegativeCoveringResult,
+    execute_covering, load_claimed_covering_execution, persist_covering_result, CoveringExecution,
+    CoveringExternalSearchConfig, CoveringHeartbeatGuard, CoveringPersistStatus, CoveringResult,
 };
 use super::dynamic_provider::{
     claim_dynamic_provider_execution_for_path, dynamic_provider_routes_configured,
@@ -319,8 +318,8 @@ fn has_provider_queue_pool(path: &std::path::Path) -> Result<bool, CliError> {
     Ok(!provider_pools(&settings).is_empty())
 }
 
-fn covering_worker_failure_result(reason: &str) -> NegativeCoveringResult {
-    NegativeCoveringResult {
+fn covering_worker_failure_result(reason: &str) -> CoveringResult {
+    CoveringResult {
         status: "tool_failed".to_string(),
         stage: "load",
         candidate: None,
@@ -507,7 +506,7 @@ fn run_split_provider_executor_tick_for_path(
 fn run_pool_covering_job(
     sqlite_path: &std::path::Path,
     config: &ExecutorTickConfig,
-) -> Result<Option<NegativeCoveringPersistStatus>, CliError> {
+) -> Result<Option<CoveringPersistStatus>, CliError> {
     let claim_config = config.clone();
     let execution =
         sqlite_writer::execute_for_path(sqlite_path, "queue.covering_claim", move |connection| {
@@ -523,8 +522,8 @@ fn run_pool_covering_job(
 fn execute_and_persist_covering(
     sqlite_path: &std::path::Path,
     config: &ExecutorTickConfig,
-    execution: NegativeCoveringExecution,
-) -> Result<NegativeCoveringPersistStatus, CliError> {
+    execution: CoveringExecution,
+) -> Result<CoveringPersistStatus, CliError> {
     let _claim_guard = ProviderClaimGuard {
         sqlite_path: sqlite_path.to_path_buf(),
         job: super::types::ClaimedProviderLeaseJob {
@@ -533,8 +532,37 @@ fn execute_and_persist_covering(
             provider_lease: execution.provider_lease.clone(),
         },
     };
+    let reader = open_query_only_connection(sqlite_path)?;
+    let settings = load_settings_document(&reader)?.unwrap_or_else(|| json!({}));
+    if crate::domains::agent_runtime::engine::should_run(
+        &reader,
+        &settings,
+        &execution.provider_lease,
+    )
+    .map_err(CliError::io)?
+    {
+        let done = crate::domains::agent_runtime::engine::tick(
+            sqlite_path,
+            execution.provider_lease.clone(),
+            crate::domains::agent_runtime::engine::TickRequest {
+                target: &execution.target,
+                key: execution.api_key.as_deref(),
+                settings: &settings,
+                timeout: config.llm_timeout_seconds,
+                covering: Some(&execution),
+                source_root: &config.source_read_root,
+            },
+            &mut || {},
+        )
+        .map_err(CliError::io)?;
+        return Ok(if done {
+            CoveringPersistStatus::Completed
+        } else {
+            CoveringPersistStatus::Retrying
+        });
+    }
     // Keep heartbeats alive through persistence, including time waiting for the writer.
-    let heartbeat = NegativeCoveringHeartbeatGuard::start(sqlite_path, &execution);
+    let heartbeat = CoveringHeartbeatGuard::start(sqlite_path, &execution);
     let outcome = catch_unwind(AssertUnwindSafe(|| match &heartbeat {
         Ok(_) => Ok(execute_covering(&execution, config.llm_timeout_seconds)),
         Err(error) => Err(error.to_string()),
@@ -547,7 +575,7 @@ fn execute_and_persist_covering(
         Err(_) => covering_worker_failure_result("covering_executor_panicked"),
     };
     sqlite_writer::execute_for_path(sqlite_path, "queue.covering_persist", move |connection| {
-        persist_negative_covering_result(connection, &execution, &result).map_err(|e| e.to_string())
+        persist_covering_result(connection, &execution, &result).map_err(|e| e.to_string())
     })
     .map_err(|e| CliError::io(format!("SQLite writer covering persistence failed: {e}")))
 }
@@ -570,10 +598,11 @@ fn run_split_provider_worker_tick_for_path(
             if let Some(outcome) = run_pool_covering_job(sqlite_path, &config)? {
                 claimed += 1;
                 match outcome {
-                    NegativeCoveringPersistStatus::Completed => completed += 1,
-                    NegativeCoveringPersistStatus::Failed => failed += 1,
-                    NegativeCoveringPersistStatus::Retrying
-                    | NegativeCoveringPersistStatus::Superseded => retried += 1,
+                    CoveringPersistStatus::Completed => completed += 1,
+                    CoveringPersistStatus::Failed => failed += 1,
+                    CoveringPersistStatus::Retrying | CoveringPersistStatus::Superseded => {
+                        retried += 1
+                    }
                 }
                 continue;
             }
@@ -584,7 +613,7 @@ fn run_split_provider_worker_tick_for_path(
             config.rust_covering_mode.as_str(),
             &config.covering_canary_job_ids,
         )?;
-        let (setup, _dynamic_manager) = match dynamic_setup {
+        let (setup, mut dynamic_manager) = match dynamic_setup {
             Some(dynamic) => (
                 PreparedProviderClaim {
                     job: dynamic.job.clone(),
@@ -637,12 +666,44 @@ fn run_split_provider_worker_tick_for_path(
                     continue;
                 }
             };
+            if crate::domains::agent_runtime::engine::should_run(
+                &reader,
+                &settings,
+                &setup.job.provider_lease,
+            )
+            .map_err(CliError::io)?
+            {
+                let done = crate::domains::agent_runtime::engine::tick(
+                    sqlite_path,
+                    setup.job.provider_lease.clone(),
+                    crate::domains::agent_runtime::engine::TickRequest {
+                        target: &setup.target,
+                        key: setup.api_key.as_ref().map(|k| k.as_str()),
+                        settings: &settings,
+                        timeout: setup.request_timeout_seconds,
+                        covering: Some(&execution),
+                        source_root: &config.source_read_root,
+                    },
+                    &mut || {
+                        if let Some(dynamic) = dynamic_manager.as_mut() {
+                            dynamic.release_for_io();
+                        }
+                    },
+                )
+                .map_err(CliError::io)?;
+                if done {
+                    completed += 1;
+                } else {
+                    retried += 1;
+                }
+                continue;
+            }
             let mut covering_config = config.clone();
             covering_config.llm_timeout_seconds = setup.request_timeout_seconds;
             let outcome = execute_and_persist_covering(sqlite_path, &covering_config, execution)?;
             match outcome {
-                NegativeCoveringPersistStatus::Completed => completed += 1,
-                NegativeCoveringPersistStatus::Failed => failed += 1,
+                CoveringPersistStatus::Completed => completed += 1,
+                CoveringPersistStatus::Failed => failed += 1,
                 _ => retried += 1,
             }
             continue;
@@ -671,6 +732,43 @@ fn run_split_provider_worker_tick_for_path(
                 }
             }
             continue;
+        }
+
+        if setup.job.queue_name == "findingCandidate" {
+            let reader = open_query_only_connection(sqlite_path)?;
+            let settings = load_settings_document(&reader)?.unwrap_or_else(|| json!({}));
+            if crate::domains::agent_runtime::engine::should_run(
+                &reader,
+                &settings,
+                &setup.job.provider_lease,
+            )
+            .map_err(CliError::io)?
+            {
+                let done = crate::domains::agent_runtime::engine::tick(
+                    sqlite_path,
+                    setup.job.provider_lease.clone(),
+                    crate::domains::agent_runtime::engine::TickRequest {
+                        target: &setup.target,
+                        key: setup.api_key.as_ref().map(|k| k.as_str()),
+                        settings: &settings,
+                        timeout: setup.request_timeout_seconds,
+                        covering: None,
+                        source_root: &config.source_read_root,
+                    },
+                    &mut || {
+                        if let Some(dynamic) = dynamic_manager.as_mut() {
+                            dynamic.release_for_io();
+                        }
+                    },
+                )
+                .map_err(CliError::io)?;
+                if done {
+                    completed += 1;
+                } else {
+                    retried += 1;
+                }
+                continue;
+            }
         }
 
         let is_dynamic = setup
@@ -1203,7 +1301,7 @@ fn rust_covering_config<E: EnvProvider>(
 fn claim_covering_with_connection(
     connection: &mut Connection,
     config: &ExecutorTickConfig,
-) -> Result<Option<NegativeCoveringExecution>, CliError> {
+) -> Result<Option<CoveringExecution>, CliError> {
     let Some(settings) = load_settings_document(connection)? else {
         return Ok(None);
     };
@@ -1330,7 +1428,7 @@ fn load_covering_execution(
     target: LocalLlmTargetConfig,
     api_key: Option<String>,
     config: &ExecutorTickConfig,
-) -> Result<NegativeCoveringExecution, CliError> {
+) -> Result<CoveringExecution, CliError> {
     let low_importance_reject_threshold = settings
         .pointer("/distillationRuntime/lowImportanceRejectThreshold")
         .and_then(Value::as_f64)
@@ -1369,7 +1467,7 @@ fn load_covering_execution(
         brave_api_key: load_secret_value(connection, "braveApiKey"),
         exa_api_key: load_secret_value(connection, "exaApiKey"),
     };
-    load_claimed_negative_execution(
+    load_claimed_covering_execution(
         connection,
         claimed,
         target,

@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 use std::time::Instant;
 
 #[path = "finding_executor/tests/parsing_tests.rs"]
@@ -661,4 +662,28 @@ fn blocked_finding_provider_does_not_block_single_writer() {
     server.join().unwrap();
     runtime.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn sensitive_inline_json_and_escaped_values_never_leave_a_secret_suffix() {
+    for input in [
+        r#"{"safe":"value","apiKey":"do-not-share","password":"also-private"}"#,
+        r#""apiKey": "escaped\\\"private-value", "other":"secret-suffix""#,
+        r#"{"password":"do-not-share"}"#,
+        r#"{"access_token":"do-not-share"}"#,
+    ] {
+        let filtered = super::filter_source_text(input);
+        for secret in [
+            "do-not-share",
+            "also-private",
+            "private-value",
+            "secret-suffix",
+        ] {
+            assert!(!filtered.contains(secret), "{filtered}");
+        }
+    }
+    assert_eq!(
+        super::filter_source_text(r#"  "apiKey": "private", "#),
+        r#"  "apiKey": "[REDACTED SENSITIVE VALUE]", "#
+    );
 }

@@ -125,7 +125,7 @@ function normalizeProviderPools(
     if (targets.length === 0) continue;
     const maxConcurrent = Math.max(
       1,
-      Math.min(targets.length, Math.floor(Number(record.maxConcurrent) || targets.length)),
+      Math.min(64, Math.floor(Number(record.maxConcurrent) || targets.length)),
     );
     pools.push({
       id,
@@ -145,7 +145,7 @@ function normalizeProviderPools(
     seen.add(id);
   }
 
-  if (pools.length === 0) {
+  if (pools.length === 0 && !Array.isArray(values)) {
     const targets = settings.providers["local-llm"].models.map((model) => ({
       provider: "local-llm" as const,
       localLlmModelId:
@@ -229,6 +229,13 @@ function normalizeAzureDeployment(
         : "";
   return {
     name: name || azureDeploymentName(index),
+    id:
+      typeof value.id === "string" && value.id.trim()
+        ? value.id.trim()
+        : `azure-deployment-${index + 1}`,
+    ...(value.credentialMode === "shared" || value.credentialMode === "dedicated"
+      ? { credentialMode: value.credentialMode }
+      : {}),
     apiBaseUrl,
     apiPath,
     apiVersion,
@@ -802,7 +809,7 @@ function sanitizeRoute(
       ? (resolveConfiguredLocalLlmRouteTarget(settings, route.model)?.routeValue ??
         configuredLocalLlmTarget?.routeValue ??
         resolveConfiguredRouteModel(settings, route.provider))
-      : resolveConfiguredRouteModel(settings, route.provider);
+      : route.model?.trim() || resolveConfiguredRouteModel(settings, route.provider);
   const requestedProviderPoolId =
     typeof route.providerPoolId === "string" && route.providerPoolId.trim()
       ? route.providerPoolId.trim()
@@ -1032,9 +1039,10 @@ function mergeRuntimeSettings(
     merged,
     merged.taskRouting.coverEvidence.externalEvidence,
   );
-  const coverEvidenceRoute = cloneRoute(merged.taskRouting.coverEvidence.externalEvidence);
-  merged.taskRouting.coverEvidence.sourceSupport = cloneRoute(coverEvidenceRoute);
-  merged.taskRouting.coverEvidence.mcpEvidence = cloneRoute(coverEvidenceRoute);
+  merged.taskRouting.coverEvidence.mcpEvidence = sanitizeRoute(
+    merged,
+    merged.taskRouting.coverEvidence.mcpEvidence,
+  );
   merged.taskRouting.finalizeDistille = sanitizeRoute(merged, merged.taskRouting.finalizeDistille);
   merged.taskRouting.mergeActivationFinalize = sanitizeRoute(
     merged,
@@ -1052,8 +1060,9 @@ function mergeRuntimeSettings(
     merged.taskRouting.agenticCompile.fallback,
   );
   merged.taskRouting.agenticCompile.model =
-    resolveConfiguredRouteModel(merged, merged.taskRouting.agenticCompile.provider) ??
-    merged.taskRouting.agenticCompile.model;
+    merged.taskRouting.agenticCompile.model?.trim() ||
+    resolveConfiguredRouteModel(merged, merged.taskRouting.agenticCompile.provider) ||
+    "";
   merged.taskRouting.agenticCompile.localLlmModel =
     merged.taskRouting.agenticCompile.provider === "local-llm" ||
     merged.taskRouting.agenticCompile.fallback.includes("local-llm")

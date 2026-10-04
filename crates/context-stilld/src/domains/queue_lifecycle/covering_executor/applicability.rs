@@ -7,7 +7,7 @@ use crate::domains::mcp_lifecycle::project_identity::{
 };
 
 use super::helpers::non_empty;
-use super::types::NegativeCoveringExecution;
+use super::types::CoveringExecution;
 
 pub(super) fn merge_applicability(origin: &Value, metadata: &Value, parsed: &Value) -> Value {
     let mut merged = serde_json::Map::new();
@@ -60,7 +60,7 @@ pub(super) fn merge_applicability(origin: &Value, metadata: &Value, parsed: &Val
 }
 
 pub(super) fn merge_execution_applicability(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     parsed: &Value,
 ) -> Value {
     let mut metadata = execution.candidate_metadata.clone();
@@ -72,7 +72,7 @@ pub(super) fn merge_execution_applicability(
     merge_applicability(&execution.candidate_origin, &metadata, parsed)
 }
 
-pub(super) fn trusted_source_project_identity(source_metadata: &Value) -> Option<Value> {
+pub(crate) fn trusted_source_project_identity(source_metadata: &Value) -> Option<Value> {
     let mut inputs = Vec::new();
     if let Some(identity) = source_metadata.get("projectIdentity") {
         inputs.push(CompileProjectIdentityInput {

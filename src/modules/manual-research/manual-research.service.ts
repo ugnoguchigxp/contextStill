@@ -4,6 +4,11 @@ import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { getRuntimeSqliteCoreDatabase } from "../../db/sqlite/runtime.js";
 import { canonicalJsonSha256 } from "../../shared/utils/canonical-json.js";
 import {
+  codexResearchOptionsSchema,
+  type CodexResearchOptions,
+} from "./codex-research.contract.js";
+import { reconcileCodexResearch, cancelCodexResearch } from "./codex-research.lifecycle.js";
+import {
   cancelDeepStill,
   fetchDeepStillDetail,
   projectDeepStillResult,
@@ -12,10 +17,21 @@ import {
   type ManualResearchResult,
 } from "./deepstill-client.js";
 
-export const createManualResearchSchema = z.object({
-  topic: z.string().trim().min(2).max(400),
-  clientRequestKey: z.string().uuid(),
-});
+export const createManualResearchSchema = z
+  .object({
+    topic: z.string().trim().min(2).max(400),
+    clientRequestKey: z.string().uuid(),
+    engine: z.enum(["deepstill", "codex"]).default("deepstill"),
+    codex: codexResearchOptionsSchema.optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.engine === "deepstill" && input.codex)
+      ctx.addIssue({
+        code: "custom",
+        path: ["codex"],
+        message: "Codex options require engine=codex",
+      });
+  });
 
 type Row = {
   id: string;
@@ -31,6 +47,8 @@ type Row = {
   created_at: string;
   updated_at: string;
   last_synced_at: string | null;
+  engine: "deepstill" | "codex" | null;
+  options_json: string | null;
 };
 
 export type ManualResearchRun = {
@@ -44,6 +62,8 @@ export type ManualResearchRun = {
   createdAt: string;
   updatedAt: string;
   lastSyncedAt: string | null;
+  engine: "deepstill" | "codex";
+  codex: CodexResearchOptions | null;
 };
 
 function toPublic(row: Row): ManualResearchRun {
@@ -58,19 +78,27 @@ function toPublic(row: Row): ManualResearchRun {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastSyncedAt: row.last_synced_at,
+    engine: row.engine ?? "deepstill",
+    codex:
+      row.engine === "codex" && row.options_json
+        ? (JSON.parse(row.options_json) as CodexResearchOptions)
+        : null,
   };
 }
 
-async function database() {
+export async function manualResearchDatabase() {
   if (resolveDatabaseBackendConfig().kind !== "sqlite") {
     throw new Error("MANUAL_RESEARCH_REQUIRES_SQLITE");
   }
   return (await getRuntimeSqliteCoreDatabase()).db;
 }
+const database = manualResearchDatabase;
+const selectRuns =
+  "SELECT r.*,e.engine,e.options_json FROM manual_research_runs r LEFT JOIN manual_research_explorations e ON e.run_id=r.id";
 
 async function rawRun(id: string): Promise<Row | null> {
   const db = await database();
-  return db.query<Row, [string]>("SELECT * FROM manual_research_runs WHERE id=?").get(id);
+  return db.query<Row, [string]>(`${selectRuns} WHERE r.id=?`).get(id);
 }
 
 export async function getManualResearch(id: string): Promise<ManualResearchRun | null> {
@@ -81,7 +109,7 @@ export async function getManualResearch(id: string): Promise<ManualResearchRun |
 export async function listManualResearch(): Promise<ManualResearchRun[]> {
   const db = await database();
   return db
-    .query<Row, []>("SELECT * FROM manual_research_runs ORDER BY created_at DESC LIMIT 100")
+    .query<Row, []>(`${selectRuns} ORDER BY r.created_at DESC LIMIT 100`)
     .all()
     .map(toPublic);
 }
@@ -89,24 +117,43 @@ export async function listManualResearch(): Promise<ManualResearchRun[]> {
 export class ManualResearchConflict extends Error {}
 
 export async function createManualResearch(
-  input: z.infer<typeof createManualResearchSchema>,
+  input: z.input<typeof createManualResearchSchema>,
 ): Promise<ManualResearchRun> {
+  const parsed = createManualResearchSchema.parse(input);
+  const engine = parsed.engine;
+  const codex = engine === "codex" ? codexResearchOptionsSchema.parse(parsed.codex ?? {}) : null;
   const db = await database();
-  const requestHash = canonicalJsonSha256({
-    topic: input.topic,
-    mode: "live",
-    strategy: "balanced",
-    knowledge: false,
-    budget: MANUAL_RESEARCH_BUDGET,
-  });
+  const requestHash = canonicalJsonSha256(
+    engine === "codex"
+      ? { topic: parsed.topic, engine, codex }
+      : {
+          topic: parsed.topic,
+          mode: "live",
+          strategy: "balanced",
+          knowledge: false,
+          budget: MANUAL_RESEARCH_BUDGET,
+        },
+  );
   const id = randomUUID();
   const now = new Date().toISOString();
-  db.query(
-    "INSERT INTO manual_research_runs(id,client_request_key,topic,request_hash,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(client_request_key) DO NOTHING",
-  ).run(id, input.clientRequestKey, input.topic, requestHash, "created", now, now);
-  const row = db
-    .query<Row, [string]>("SELECT * FROM manual_research_runs WHERE client_request_key=?")
-    .get(input.clientRequestKey);
+  db.exec("BEGIN IMMEDIATE");
+  let row: Row | null;
+  try {
+    db.query(
+      "INSERT INTO manual_research_runs(id,client_request_key,topic,request_hash,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(client_request_key) DO NOTHING",
+    ).run(id, parsed.clientRequestKey, parsed.topic, requestHash, "created", now, now);
+    if (codex)
+      db.query(
+        "INSERT OR IGNORE INTO manual_research_explorations(run_id,engine,options_json) SELECT id,'codex',? FROM manual_research_runs WHERE id=?",
+      ).run(JSON.stringify(codex), id);
+    row = db
+      .query<Row, [string]>(`${selectRuns} WHERE r.client_request_key=?`)
+      .get(parsed.clientRequestKey);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
   if (!row) throw new Error("MANUAL_RESEARCH_CREATE_NOT_CONFIRMED");
   if (row.request_hash !== requestHash)
     throw new ManualResearchConflict("CLIENT_REQUEST_KEY_CONFLICT");
@@ -130,6 +177,7 @@ export async function requestManualResearchCancel(id: string): Promise<ManualRes
     )
     .run(new Date().toISOString(), id);
   if (request.changes !== 1) throw new Error("MANUAL_RESEARCH_CANCEL_NOT_CONFIRMED");
+  if (row.engine === "codex") cancelCodexResearch(id);
   void reconcileManualResearch(id);
   const updated = await getManualResearch(id);
   if (!updated) throw new Error("MANUAL_RESEARCH_CANCEL_NOT_CONFIRMED");
@@ -184,6 +232,10 @@ export async function reconcileManualResearch(id: string): Promise<void> {
       return;
     if (row.sync_error && Date.now() - Date.parse(row.updated_at) < 10_000) return;
     const db = await database();
+    if (row.engine === "codex") {
+      await reconcileCodexResearch(toPublic(row), db);
+      return;
+    }
     if (row.cancel_requested && !row.plugin_job_id) {
       const updated = db
         .query(

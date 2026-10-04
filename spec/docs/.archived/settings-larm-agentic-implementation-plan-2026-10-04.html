@@ -1,0 +1,759 @@
+<article lang="ja">
+  <h1>設定画面の刷新・レガシー画面削除 実装計画</h1>
+  <p>
+    2026年10月4日。状態：実装完了。ユーザーが採用したプロバイダー一覧・登録更新モーダル・行ごとの接続テスト・テーブル下の参照情報を実装し、既存の設定機能を移した後に旧画面を削除する。計画に沿う製品コードと隔離検証を完了した。稼働中の設定・Queueは変更していない。
+  </p>
+  <p>
+    画面の正本は<a href="../settings-larm-agentic-design-2026-10-04.html"
+      >LARM・Agentic処理に合わせた設定画面の見直し案</a
+    >の第3案。本書はその実装順序、保存契約、移行、削除対象、検証と完了条件を定める。画像に含まれる状態・URL・モデルは表示例であり、初期設定として保存しない。
+  </p>
+  <figure>
+    <img
+      src="../assets/settings-larm-agentic-2026-10-04/providers-modal-v3.png"
+      alt="採用された設定済みプロバイダー一覧と、利用状況・割り当て・直近接続テストの参照領域"
+    />
+    <figcaption>
+      採用する一覧画面。行ごとの接続確認・編集、モーダルでの追加、選択した接続の参照情報を実装する。
+    </figcaption>
+  </figure>
+  <figure>
+    <img
+      src="../assets/settings-larm-agentic-2026-10-04/provider-edit-modal-v3.png"
+      alt="採用されたAzure OpenAI設定の更新モーダル"
+    />
+    <figcaption>
+      共通モーダルの更新例。対象の接続だけを保存する。新規登録は種類の選択と登録操作を加える。
+    </figcaption>
+  </figure>
+  <h2>完成させる範囲</h2>
+  <ul>
+    <li>
+      設定画面を「一般」「接続とモデル」「処理の割り当て」「並列処理と探索」「検索・埋め込み」「詳細」の6タブへ整理する。
+    </li>
+    <li>
+      Azure OpenAI・OpenAI・AWS Bedrock・固定エンドポイント・LARM・Codex
+      SDKの既存設定を維持し、登録済み接続を一覧化する。新規登録・更新はモーダルで完結する。
+    </li>
+    <li>
+      接続テストを各行に置き、テーブル下には選択した接続の利用状況・割り当て・直近テスト結果を表示する。
+    </li>
+    <li>
+      Findingの2経路とCoveringの3経路を個別に編集し、共通AgenticポリシーとDeepStill自動委譲を設定・確認できるようにする。
+    </li>
+    <li>全設定置換と個別保存の競合、追加項目の欠落、古い観測表示を修正する。</li>
+    <li>
+      旧パネル・旧コントローラー・旧フォーム変換・不要なスタイル・旧UI専用テストを削除し、新画面への移行を完了する。
+    </li>
+  </ul>
+  <p>
+    既存の設定データ、利用中の認証、Queueの実行契約は保持する。LARMモデル・配備・物理KVキャッシュの変更や他のリポジトリの変更は範囲に含めない。探索予算は現在の共通ポリシーの参照表示とし、予算自体を編集可能にする変更はこの計画に含めない。
+  </p>
+  <h2>現在の実装から先に直す点</h2>
+  <ol>
+    <li>
+      <code>settings-form.ts</code
+      >がadvancedを作り直すとagentRuntimeが欠落する。追加項目を保持する保存契約を先に用意する。
+    </li>
+    <li>
+      <code>saveRuntimeSettings</code
+      >は設定全体を置換し、ドキュメントのexpectedVersionを指定していない。別画面・別タブの古いsnapshotをそのまま保存させない。
+    </li>
+    <li>
+      <code>use-settings-controller.tsx</code
+      >は再取得時にdraftとsecretDraftsを初期化する。状態更新とフォーム初期化を分離する。
+    </li>
+    <li>
+      Azureは配列slot、固定モデルはモデル名等でテストを指定する。新画面の行選択・削除・更新には安定した接続IDが必要。
+    </li>
+    <li>
+      従来のhealthCheckは到達性を評価し、一部はHTTP
+      4xxでもreachable=trueにする。その値だけで新画面の「接続確認成功」を判断しない。
+    </li>
+    <li>
+      <code>larm-status.ts</code
+      >は最初の接続だけを見て別のローカルhealthを代用する。採用済みConnectionとProviderごとの状態を表示する新しい読取契約へ移す。
+    </li>
+    <li>
+      Finding／Coveringの1行更新がグループの他経路も変更する。route更新を独立した差分操作へ変える。
+    </li>
+  </ol>
+  <h2>実装順序と各工程の完了条件</h2>
+  <table>
+    <caption>
+      工程の依存関係と完了条件
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">工程</th>
+        <th scope="col">作業</th>
+        <th scope="col">完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1. 保存契約・移行</td>
+        <td>共通型、行ID、差分保存、revision検証、認証の準備と確定、既存設定の移行を実装する。</td>
+        <td>
+          既存設定を読み書きして新しい項目が欠落せず、個別保存と他タブ保存が相互に上書きしない。
+        </td>
+      </tr>
+      <tr>
+        <td>2. 観測・接続テスト</td>
+        <td>
+          登録一覧、Connection別状態、ポリシー参照、保存済み／draftの接続テストAPIを用意する。
+        </td>
+        <td>観測だけでConnection・推論を発生させず、指定した1行を正しく検証できる。</td>
+      </tr>
+      <tr>
+        <td>3. 一覧・モーダル</td>
+        <td>新しい設定shell、プロバイダー表、登録更新モーダル、下部3領域、状態表示を実装する。</td>
+        <td>各種類の登録・編集・保存・テスト・削除と、選択／空状態／キーボード操作が動作する。</td>
+      </tr>
+      <tr>
+        <td>4. 他タブの移行</td>
+        <td>
+          独立した割り当て、Pool、探索、DeepStill、一般、検索、Embedding、詳細へ既存機能を移す。
+        </td>
+        <td>全既存項目の移行先または互換読取理由が確定し、旧パネルを使わず操作できる。</td>
+      </tr>
+      <tr>
+        <td>5. 切替・レガシー削除</td>
+        <td>新画面へ入口を切り替え、旧UI・旧変換・不要な依存・スタイル・テストを削除する。</td>
+        <td>旧UI実装へのimportと実行経路が0件。旧URLは新画面への転送だけを残す。</td>
+      </tr>
+      <tr>
+        <td>6. 通し検証・完了</td>
+        <td>競合・認証・容量・移行の回帰検証、隔離E2E、画面確認、build・境界検査を行う。</td>
+        <td>旧UI削除を含む全受け入れ条件を満たし、残課題を必須工程の後回しとして残さない。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    工程1→2→3→4→5→6で進める。途中で旧画面を参照することはできるが、旧画面を恒久的に選べる切替や旧画面へのfallbackは追加しない。切替と削除は同じ実装対応の完了範囲に含める。
+  </p>
+  <h2>共通データ契約</h2>
+  <p>
+    ブラウザーから使える純粋な共通契約を<code>src/modules/settings/</code>に分離する。DB、環境変数、secret取得処理はそのモジュールに含めない。フロントエンドの手書き設定DTOを共通型へ置き換え、バックエンドの解析・保存・画面フォームが同じ項目と制約を使う。Rust側は同じfixtureによる互換テストを持つ。
+  </p>
+  <table>
+    <caption>
+      新しいAPI・画面モデルの責務
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">モデル</th>
+        <th scope="col">必須情報</th>
+        <th scope="col">扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>設定済み接続</td>
+        <td>
+          安定ID、種類、表示名、モデル／Deployment、登録状態、有効状態の適用範囲、認証状態、参照先。
+        </td>
+        <td>既存runtime設定から導出する。LARM公開カタログとは別の登録一覧。</td>
+      </tr>
+      <tr>
+        <td>保存差分</td>
+        <td>変更対象、expectedRevision、変更項目、認証操作、operation ID。</td>
+        <td>サーバーで最新設定に適用し、全体検証とCASで確定。未編集項目は維持。</td>
+      </tr>
+      <tr>
+        <td>観測</td>
+        <td>
+          対象ID、observedAt、対応revision、採用Connection、Provider、実効容量、期限、状態と原因。
+        </td>
+        <td>参照用。編集値と分離し、古い観測を最新状態へ流用しない。</td>
+      </tr>
+      <tr>
+        <td>接続テスト</td>
+        <td>
+          test
+          ID、保存済み／draft区分、対象IDとrevision、確認方式、開始・終了時刻、status、結果と原因。
+        </td>
+        <td>
+          idle、queued、running、success、failed、cancelled、staleを区別。到達性と推論成功も分ける。
+        </td>
+      </tr>
+      <tr>
+        <td>探索ポリシー</td>
+        <td>
+          policy
+          revision、Window計算条件、出力予約、総予算、最終確認予約、回数と停止条件、推定方式。
+        </td>
+        <td>native側の実装を情報源にする。画面に別のハードコードを持たない。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    認証は保持・変更・共通キー継承・環境変数利用・明示解除を種類ごとに表現する。対応しない操作は表示しない。secret本文、短期Provider
+    token、認証入りURLは読取APIとテスト結果へ含めない。
+  </p>
+  <h3>接続IDと既存データの移行</h3>
+  <ul>
+    <li>
+      LARMは既存connection.id、固定エンドポイントは既存model.idを維持する。表示名・URL・モデルの更新でIDを再生成しない。
+    </li>
+    <li>
+      Azureの各Deploymentに永続IDを追加する。既存のIDなし配列には1度だけIDを付け、以後は名前や並び順からIDを作り直さない。OpenAI・Bedrock・Codexの単一設定は種類ごとの固定IDで表現する。
+    </li>
+    <li>
+      実行側で使うAzureのslotと新しい行IDはサーバーで対応付ける。UIからslotを直接保存しない。route・Pool・Compile等のslot参照は当面既存契約を維持し、配列削除時の参照更新を一緒に確定する。
+    </li>
+    <li>
+      Azureの専用キーと共通キー、固定モデルの認証対応を移行fixtureで固定する。slotの詰め直しによりsecretのkeyを変更する必要がある場合は、OSストアへの新参照準備を外部フェーズで済ませ、参照切替をDB
+      commitと一緒に行う。平文secretを設定JSONへ移さない。
+    </li>
+    <li>
+      参照中の接続削除は、参照先の解除または置換を含む明示操作にする。Pool順序や他の割り当てを黙って変えない。
+    </li>
+    <li>
+      現行の種類全体のenabledは維持し、画面でも適用範囲を表示する。接続行ごとのenabled追加やOpenAI／Bedrockの複数登録化は今回の必須範囲へ広げない。
+    </li>
+    <li>
+      移行は再実行してもID・認証・割り当てが変わらないようにする。移行前データの読取互換を保ち、書込み時に新しい表現を確定する。表示名を追加する場合は共通スキーマとnative側の読取を合わせる。
+    </li>
+  </ul>
+  <h2>個別保存・競合・認証の確定</h2>
+  <p>
+    新UIは接続モーダルから対象だけを保存する。他タブも許可した設定範囲の差分だけを保存し、保存済みProviderを丸ごと含む古いsnapshotを送らない。編集を始めたrevisionと変更前値を保持し、競合はHTTP
+    409として返す。無関係な変更は再取得した設定へ差分を再適用できるが、同じ項目の競合は自動上書きしない。
+  </p>
+  <ol>
+    <li>
+      対象と操作を検証し、最新ドキュメント・関連secret参照のversionを読み、参照影響と移行内容を算出する。
+    </li>
+    <li>
+      必要な新しいsecretをOS認証ストアへ準備し、既存のGC
+      journal契約を使って未採用参照を回収可能にする。変更しない認証は読み書きし直さない。
+    </li>
+    <li>
+      短いDB
+      transactionでドキュメントのrevision、変更するsecret行のversionを検証し、接続・route／Poolの差分・secret参照・operation完了記録を一緒に確定する。SQLiteは既存residentの単一writerへ委譲する。OS認証ストアやネットワークの待機をwriter
+      transactionへ入れない。
+    </li>
+    <li>
+      成功後にcacheを無効化し、APIが採用したrevisionとruntimeが採用したrevisionを区別する。旧secret参照の削除はcommit後に既存GC契約で行う。
+    </li>
+    <li>
+      通信タイムアウトでcommitが不明ならoperation
+      IDから結果を確認する。既に採用されたsecret参照を補償削除しない。失敗時はモーダルの入力を保持し、成功扱いで閉じない。
+    </li>
+  </ol>
+  <p>
+    SQLite・PostgreSQL双方の現行サポートを維持する。CASは既存行の更新だけでなく初回作成でも適用する。operation
+    IDは対象とrequest
+    digestに結び付け、再送で重複登録しない。OSストアとDBが分散していることを前提とし、平文を含まないoperation記録とGCで復旧する。secretは変更された値だけを処理し、一覧取得で認証を解除しない。
+  </p>
+  <p>
+    既存PUT
+    /api/settingsは新UIから使わない。残る呼び出し元を調べ、revision付き差分操作へ移す。旧全置換を許可したまま新モーダルだけCASにしても上書き事故を防げないため、新画面への切替時には既存PUTもrevision検証と互換変換を通す。最終的に必要な外部呼び出し元がなければ旧全置換の入口を削除する。
+  </p>
+  <h2>APIの実装案</h2>
+  <p>
+    以下は追加する契約であり、現時点で実装済みのAPIではない。<code>api/modules/settings/settings.routes.ts</code>に統合し、既存の管理認証とservice／repository境界を使う。設定読み取りとruntime観測は別の更新周期を持てるようにする。
+  </p>
+  <table>
+    <caption>
+      追加・置換する設定API
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">操作</th>
+        <th scope="col">API案</th>
+        <th scope="col">主な条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>登録一覧</td>
+        <td>GET /api/settings/provider-connections</td>
+        <td>登録済み設定と参照先、認証状態。接続作成・推論はしない。</td>
+      </tr>
+      <tr>
+        <td>新規登録</td>
+        <td>POST /api/settings/provider-connections</td>
+        <td>種類別入力、expectedRevision、operation ID。成功時に永続IDとrevisionを返す。</td>
+      </tr>
+      <tr>
+        <td>更新・削除</td>
+        <td>PATCH／DELETE /api/settings/provider-connections/:id</td>
+        <td>対象をIDで解決し、参照影響、secret操作、競合を検証する。</td>
+      </tr>
+      <tr>
+        <td>他タブ保存</td>
+        <td>PATCH /api/settings</td>
+        <td>許可したsectionまたはrouteの差分。providersを他タブのsnapshotで上書きできない。</td>
+      </tr>
+      <tr>
+        <td>runtime状態</td>
+        <td>GET /api/settings/provider-connections/:id/runtime</td>
+        <td>採用Connection・Provider・capacity・期限・観測時刻。情報不足を未確認とする。</td>
+      </tr>
+      <tr>
+        <td>探索ポリシー</td>
+        <td>GET /api/settings/agent-policy</td>
+        <td>実装に対応する参照値とpolicy revision。DeepStill設定値の読取とは分ける。</td>
+      </tr>
+      <tr>
+        <td>保存済み接続テスト</td>
+        <td>POST /api/settings/provider-connections/:id/tests</td>
+        <td>保存revisionを指定。202とtest IDを返し、対象の同時二重実行を防ぐ。</td>
+      </tr>
+      <tr>
+        <td>入力中の接続テスト</td>
+        <td>POST /api/settings/provider-tests</td>
+        <td>種類別draftと認証操作。未編集の認証は対象IDから解決。draftを保存しない。</td>
+      </tr>
+      <tr>
+        <td>結果・取消・再送確認</td>
+        <td>
+          GET／DELETE /api/settings/provider-tests/:testId、GET
+          /api/settings/operations/:operationId
+        </td>
+        <td>有限のTTLと件数で保持。取消で通常Connectionを解放しない。結果にsecretを含めない。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    旧種別単位・Azure
+    slot単位・モデル名単位のテストAPIは呼び出し元を調べ、新UIはID指定へ統一する。必要な互換入口は同じ実装を呼ぶ薄いadapterだけにし、独立したテスト処理を二重に保守しない。設定画面から使われなくなっても他機能が使うProvider
+    factoryやhealthCheck自体は削除しない。
+  </p>
+  <h2>接続テストとLARMの扱い</h2>
+  <ul>
+    <li>
+      保存済みテストは対象のEndpoint・モデル・認証を固定したsnapshotで実行する。Azureの別Deploymentや固定モデルのPoolへfallbackせず、押した1行だけを調べる。
+    </li>
+    <li>
+      到達、認証、モデル利用、推論または認証確認の結果を分ける。401／403、モデル不明、429、5xx、タイムアウトを「成功」にしない。推論応答の本文が空でも、契約を満たす有効応答かどうかを判定し、単純なcontent.trim()だけに依存しない。
+    </li>
+    <li>
+      Cloud APIは既存Provider
+      factoryへ対象設定を明示し、環境全体のconfigを書き換えてdraftを試さない。Codex
+      SDKは現行の認証確認・ログイン契約を維持する。
+    </li>
+    <li>
+      LARMはnativeのProvider管理器を使い、公開Profile
+      selectorはcontextStill。公開Provider、要求subset、採用したclaimは分けて表示する。別端末のaudience等は共通手順に従う。
+    </li>
+    <li>
+      保存設定に一致する採用済みConnectionなら共通permitを使う。不一致・未接続・draftでは管理器に所有される有限期限の試験Connectionを用い、終了・失敗・取消・再起動後のexpiryで回収する。試験の終了で通常QueueのConnectionを解放しない。
+    </li>
+    <li>
+      試験の推論も実効capacityを守る。同じ実行資源の管理permitを迂回して5本目を送らない。専用試験Connectionでもruntimeの資源共有を確認し、容量を確認できなければ枠待ち／実行不可とする。
+    </li>
+    <li>
+      試験結果は設定revisionと認証versionに結び付ける。保存後に古い結果を現在の確認済みへ反映しない。draftテストはモーダル内の結果に限定する。
+    </li>
+    <li>
+      native側の読取・試験facadeを既存の制御境界へ追加する。API側で保存状態ファイルを独自解釈したり、別のConnection管理器・物理backend直結を新設したりしない。
+    </li>
+  </ul>
+  <h2>画面の構成と共通化</h2>
+  <p>
+    新しい<code>settings-workspace.tsx</code>を入口に、用途ごとの小さなcontrollerとcomponentへ分割する。現在の<code>use-settings-controller.tsx</code>の巨大なPropsを各パネルへ展開する構成は引き継がない。<code>settings.page.tsx</code>は新入口のexportだけにできる。
+  </p>
+  <table>
+    <caption>
+      新しい画面部品の責務
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">部品</th>
+        <th scope="col">責務</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>設定shell・URL変換</td>
+        <td>6タブ、取得エラー、他タブの未保存変更。接続タブに全体保存ボタンを出さない。</td>
+      </tr>
+      <tr>
+        <td>ProviderConnectionsTable</td>
+        <td>
+          登録一覧、安定IDによる選択、行のテスト・編集、種類別状態、登録0件。ボタンのイベントと行選択を分離する。
+        </td>
+      </tr>
+      <tr>
+        <td>ProviderConnectionDialog</td>
+        <td>
+          新規・更新の共通フォーム、種類別field
+          schema、認証操作、draftテスト、検証、個別保存。保存成功後に対象行を選択。
+        </td>
+      </tr>
+      <tr>
+        <td>共通Dialog primitive</td>
+        <td>
+          Portal、label／description、focus管理、Esc、閉じた後のfocus復帰、背景操作の抑制。現行ui部品にDialogがないため共通部品を追加する。
+        </td>
+      </tr>
+      <tr>
+        <td>ProviderRuntimeDetails</td>
+        <td>
+          利用状況、処理への割り当て、直近テスト結果。参照専用で、未確認・古い結果・CloudとLARMの違いを表示する。
+        </td>
+      </tr>
+      <tr>
+        <td>独立route editor</td>
+        <td>各routeの型と対応する実行先だけを編集。一括適用は対象と差分を表示する明示操作。</td>
+      </tr>
+      <tr>
+        <td>探索・Pool・その他section editor</td>
+        <td>範囲を限定した差分保存。実際の適用先とreadonly policyを区別する。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    データ再取得でモーダルの入力を初期化しない。取消・失敗では入力と選択を保持し、保存成功時だけ必要なqueryを更新する。秘密値のdraftはモーダル内に限定し、閉じた後に保持し続けない。削除は補助メニューまたは別セクションに置き、参照先を明示する。画面には内部operation
+    IDやleaseの識別情報を通常表示しない。
+  </p>
+  <h2>他タブと既存機能の移行先</h2>
+  <table>
+    <caption>
+      既存機能を失わないための移行表
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">既存機能</th>
+        <th scope="col">新しい移行先</th>
+        <th scope="col">条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Provider Endpoints・Codex Auth</td>
+        <td>接続とモデルの表・モーダル</td>
+        <td>全種類、認証保持・変更・環境変数取得元、共通キー継承を維持。</td>
+      </tr>
+      <tr>
+        <td>LLM Pool</td>
+        <td>並列処理と探索の固定Provider Pool</td>
+        <td>
+          候補・順序・maxConcurrent・aging・stale
+          lease・有効状態・診断を維持。LARM4枠とは別の概念として表示。
+        </td>
+      </tr>
+      <tr>
+        <td>Task Routing</td>
+        <td>処理の割り当て</td>
+        <td>
+          全task routeを保持。Finding source／vibe、Covering
+          sourceSupport／externalEvidence／mcpEvidenceを独立編集。
+        </td>
+      </tr>
+      <tr>
+        <td>Finding・Covering runtime</td>
+        <td>並列処理と探索、必要な互換設定は詳細</td>
+        <td>
+          各項目の実行側利用を一覧化。Agenticで効かない旧項目をAgenticの設定として出さない。現役経路の制約は維持。
+        </td>
+      </tr>
+      <tr>
+        <td>AgentRuntime・DeepStill</td>
+        <td>並列処理と探索</td>
+        <td>
+          enabled・research・専用認証参照を保存。自動委譲と手動Researchのrouteを分離。measurementは編集項目に復活させない。
+        </td>
+      </tr>
+      <tr>
+        <td>Search・Embedding／Local Runtime</td>
+        <td>検索・埋め込み</td>
+        <td>
+          サービス順序・検索予算・認証・Embedding実接続・モデル・dimension・無効化の意味を保持。
+        </td>
+      </tr>
+      <tr>
+        <td>General</td>
+        <td>一般</td>
+        <td>対象優先順など既存項目を移し、無関係な値を保存差分に含めない。</td>
+      </tr>
+      <tr>
+        <td>Advanced・Runtime Cache</td>
+        <td>詳細</td>
+        <td>Queue間隔・lock・診断・ログsync等を維持。API cacheとresident採用の違いを表示。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    工程1で全設定項目の移行manifestを作り、「編集可能」「実装policyの参照値」「互換読取のみ」「未使用で削除」のいずれかに割り当てる。manifestには保存先・利用コード・移行先・削除条件を記録する。現役の項目を旧画面と一緒に削除しない。
+  </p>
+  <h3>トークン・4並列の表示</h3>
+  <p>
+    Finding・Coveringの現在の要求上限はmin(Provider Window,
+    32,768)、出力8,192、安全余裕はmax(Provider余裕,
+    4,096)。現在の例では入力概算許容量20,480。通常探索は目標98,304／hard131,072、LLM最大8回、最終確認予約32,768。DeepStill委譲を含む場合は目標262,144／hard393,216へ切り替える。これらを同じ「トークン上限」入力欄にまとめない。
+  </p>
+  <p>
+    入力の概算はJSONのUTF-8 byte数とmessage
+    framing余裕による推定で、実tokenizer計測ではない。Windowの概算予約、実応答usage、cached
+    input、1件の総使用量を区別する。内部HARD_WINDOW36,864を利用可能な上限として表示しない。nativeの実装値を返し、画面と実行側の別定数を撤去する。
+  </p>
+  <p>
+    同時処理はConsumer上限1〜4、LARM公表上限、実効上限、使用中permitを分ける。容量省略時は1。異なるQueue優先、空き枠でFinding／Covering並列、DeepStillも共有する現在の方針を参照表示する。停止条件はno
+    gain2回、取得失敗3回、予算目標または探索呼び出し6回で最終確認へ移行。設定画面の切替でこの実行方針を変更しない。
+  </p>
+  <h2>レガシー設定画面の削除計画</h2>
+  <p>
+    以下の旧実装は機能移行・テスト完了後に削除する。旧UIを未使用のまま残す、別URLで残す、設定flagでいつでも戻せる状態にすることを完了とはしない。
+  </p>
+  <table>
+    <caption>
+      旧ファイル群と削除の条件
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">旧実装</th>
+        <th scope="col">対応</th>
+        <th scope="col">削除条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>settings/settings-page.tsx</code></td>
+        <td>新settings workspaceへ入口を変更して削除。</td>
+        <td>6タブの新shellとURL移行が完成。旧パネルをrenderしない。</td>
+      </tr>
+      <tr>
+        <td>
+          <code>use-settings-controller.tsx</code>、<code>settings-form.ts</code>
+        </td>
+        <td>個別controller・共通契約・差分保存へ置換して削除。</td>
+        <td>
+          各import元を移行。全設定コピー、旧secret
+          draft、旧prepareSettingsForSaveが新画面へ残らない。
+        </td>
+      </tr>
+      <tr>
+        <td><code>provider-endpoints-panel.tsx</code></td>
+        <td>Provider表・モーダル・参照詳細へ置換して削除。</td>
+        <td>全Provider種類と認証・テスト・削除機能が新画面で動く。</td>
+      </tr>
+      <tr>
+        <td><code>task-routing-settings-panel.tsx</code></td>
+        <td>独立route editorへ置換して削除。</td>
+        <td>全route、対応可能な実行先、一括適用、runtime項目の移行が完了。</td>
+      </tr>
+      <tr>
+        <td><code>local-llm-pools.tsx</code></td>
+        <td>新並列処理タブのPool editorへ置換して削除。</td>
+        <td>Poolの全現役項目と参照・診断を移行。</td>
+      </tr>
+      <tr>
+        <td>
+          <code>general-settings-panel.tsx</code
+          >、<code>search-settings-panel.tsx</code>、<code>embedding-settings-panel.tsx</code>、<code
+            >advanced-settings-panel.tsx</code
+          >
+        </td>
+        <td>移行表に沿うsection editorへ置換して旧パネルを削除。</td>
+        <td>移行manifestの現役項目がすべて編集または参照可能。</td>
+      </tr>
+      <tr>
+        <td>
+          <code>settings-controls.tsx</code
+          >、<code>settings-routing.ts</code>、<code
+            >settings-primitives.ts</code
+          >
+        </td>
+        <td>必要な純粋関数・小部品だけを新構成へ抽出し、旧UI専用の残りを削除。</td>
+        <td>他画面の利用も検索し、旧tab型・providerPoolIdだけのpreview・旧kind変換が残らない。</td>
+      </tr>
+      <tr>
+        <td>フロントの<code>settings-contracts.ts</code>内の重複設定型、旧API client</td>
+        <td>共通契約のexportと新API clientへ置換。</td>
+        <td>手書きDTOの二重定義と、旧全置換・slot／モデル名指定の新UI呼び出しが0件。</td>
+      </tr>
+      <tr>
+        <td><code>web/src/styles.css</code>の旧settings専用class</td>
+        <td>新部品に必要な共通styleへ整理し、未使用selectorを削除。</td>
+        <td>使用箇所を検索し、他画面で使うstyleを誤って削除しない。</td>
+      </tr>
+      <tr>
+        <td>
+          旧UI専用の<code>settings-page.test.tsx</code>、<code
+            >settings-panels.test.tsx</code
+          >
+        </td>
+        <td>必要な動作保証を新画面のテストへ移し、旧マークアップ前提のテストを削除。</td>
+        <td>
+          認証、競合、Pool、route、URL互換の保証は残す。失敗を隠すためにテストだけを削除しない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    ファイル名は<code>web/src/modules/admin/components/settings/</code>を基準にしている。旧APIのhealth
+    serviceやruntime settings
+    repositoryはUIだけのレガシーとはみなさない。参照があるBackend・native処理は維持し、必要な変更だけを共通契約に合わせる。
+  </p>
+  <h3>URLと入口の互換</h3>
+  <p>
+    新しい正規URLを<code>/setting/general</code>、<code>/setting/connections</code>、<code>/setting/assignments</code>、<code>/setting/execution</code>、<code>/setting/retrieval</code>、<code>/setting/advanced</code>とする。既存<code>/setting/llmprovider</code>はconnections、llmpoolはexecutionのPool、taskroutingとdistillation-runtimeはassignments、searchとembeddingはretrievalの該当sectionへ転送する。<code>/settings/*</code>も同じ対応表で転送する。
+  </p>
+  <p>
+    互換URLは新画面へのredirectだけを残す。<code>web/src/App.tsx</code>のsection集合とrouter、設定tab解決、画面内リンク、ナビゲーション、テストを同時に更新する。未知のsectionは新しい既定タブへ転送する。過去のURLを受け付けるために旧画面コードを残さない。
+  </p>
+  <h2>検証計画</h2>
+  <table>
+    <caption>
+      実装に必要な回帰テストと通し検証
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">層</th>
+        <th scope="col">確認する具体的な失敗</th>
+        <th scope="col">主な対象</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>契約・移行</td>
+        <td>
+          agentRuntime欠落、ID再生成、Azure削除時のroute／secretずれ、Pool順序変更、旧JSON再移行で差分が増える。
+        </td>
+        <td>
+          共通契約fixture、settings defaults、repository・runtime cacheテスト、native読取テスト。
+        </td>
+      </tr>
+      <tr>
+        <td>保存・認証</td>
+        <td>
+          別タブ・2クライアントの競合、初回作成の重複、空キー入力の解除、OSストア失敗、DB
+          commit不明、GCによる採用済み参照削除。
+        </td>
+        <td>
+          settings API／service、secret-store、SQLite writer・PostgreSQL
+          repositoryの必要なtransaction検証。
+        </td>
+      </tr>
+      <tr>
+        <td>接続テスト</td>
+        <td>
+          別行／別Deploymentの成功を採用、draftによる保存値変更、401や429を成功に表示、更新中の旧結果適用、タイムアウト後の二重実行。
+        </td>
+        <td>API test runner、Provider factory adapter、結果の保存revision binding。</td>
+      </tr>
+      <tr>
+        <td>LARM・permit</td>
+        <td>
+          catalog公開だけで利用中表示、Provider3件を自動要求、容量省略の4枠扱い、テスト5本目送信、cancelで通常Connection解放、410復旧中の古い表示。
+        </td>
+        <td>native Provider manager、lease／permit、共通HTTP fixture。実機依存なしで基本検証。</td>
+      </tr>
+      <tr>
+        <td>UI</td>
+        <td>
+          再取得で入力消去、行ボタンの対象ずれ、キャンセル時の保存、モーダル外へのfocus、選択削除後の古い詳細、二重保存、独立routeの同時上書き。
+        </td>
+        <td>新しいcomponent・controller tests。旧UI専用テストから重要な保証を移す。</td>
+      </tr>
+      <tr>
+        <td>隔離E2E</td>
+        <td>
+          登録→テスト→更新→再読込、Provider保存後に他タブを保存、各route変更、Pool操作、旧URL転送、Queue稼働中の観測、狭い画面とキーボード操作。
+        </td>
+        <td>
+          既存Playwright隔離サーバーにsettings用specを追加。専用DB・fixture認証・模擬Cloud／LARMを使う。
+        </td>
+      </tr>
+      <tr>
+        <td>削除・build</td>
+        <td>
+          旧import・CSS・routerが残る、重複DTO、新shellが旧controllerを呼ぶ、nativeとAPIのboundaryが崩れる。
+        </td>
+        <td>参照検索、型検査、build、lint、境界・writer ownership検査、Spec検査。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    関連テストから実行し、変更領域の検証後に型検査・build・必要な境界検査を行う。nativeを変更した場合は関連RustテストとClippyも実施する。E2Eは既存の隔離runtimeを使い、稼働中Queueや実登録のAPI
+    Keyをfixtureにしない。計画書作成段階ではこれらのコードテストを実行済みとは扱わない。
+  </p>
+  <p>
+    実LARMの確認が必要な場合はContextStillの公開API操作の範囲で観測と明示的な有限試験を行い、作成した試験Connectionを解放する。サーバー改変・SSH・他リポジトリの作業を検証手順に含めない。Cloud実接続は設定済み接続の明示的なテストとして扱い、E2Eの必須条件にしない。
+  </p>
+  <h2>実装完了の条件</h2>
+  <p>
+    旧UIを説明する文書と置換済みの実装計画は、実装完了時に参照を整理してspec/docs/.archivedへ移す。採用した設計書は実装との差分と確認結果を反映し、現行画面のcontractとして参照できる形に更新する。
+  </p>
+  <ul>
+    <li>
+      採用した一覧・モーダル・各行テスト・下部3領域が実装され、Cloud
+      APIの登録・更新とLARM参照が同じタブから使える。
+    </li>
+    <li>
+      モーダル保存は対象だけを更新し、他タブの後続保存で元に戻らない。追加・更新・取消・競合・認証変更・削除を検証できる。
+    </li>
+    <li>
+      既存機能の移行manifestに未移行の現役項目がない。Finding／Coveringの5経路、全task
+      route、Pool、手動Research、一般、検索、Embedding、詳細を維持している。
+    </li>
+    <li>
+      実効4枠・Provider採用状態・1回のWindow・1件の総予算・DeepStillの状態を正しい情報源から表示する。未確認と実測・概算を混ぜない。
+    </li>
+    <li>
+      新UIが旧全設定置換、旧controller、旧panel、旧フォーム変換に依存しない。削除表の旧UIファイルと未使用style・テストを実際に削除している。
+    </li>
+    <li>
+      旧URLは転送だけで動き、新画面への入口が1つになっている。旧UIの選択flag、旧UIへのfallback、独立した二重実装を残さない。
+    </li>
+    <li>
+      隔離E2E、関連API・component・nativeの検証、型検査・build・必要なboundary検査を通過し、確認結果を記録している。
+    </li>
+  </ul>
+  <p>
+    画面を追加しただけ、モーダル保存が旧全置換のまま、旧画面削除が別途課題のままでは完了としない。各工程の実装・確認は完了した。最終契約と検証範囲は現行の設定画面contractを参照する。
+  </p>
+  <p>
+    <a href="../settings-connections-contract-2026-10-04.html">実装契約と完了記録</a
+    >に最終の保存方式、移行manifest、検証結果を記録した。
+  </p>
+  <h2>対象コードと参照資料</h2>
+  <ul>
+    <li>
+      <code>web/src/App.tsx</code
+      >、<code>web/src/modules/admin/components/settings.page.tsx</code>、<code>web/src/modules/admin/components/settings/</code>：入口、旧画面、置換対象。
+    </li>
+    <li>
+      <code>web/src/modules/admin/repositories/admin/settings-contracts.ts</code
+      >、<code>settings-api.ts</code>、<code>admin.repository.ts</code>：共通DTO・新APIへの移行。
+    </li>
+    <li>
+      <code>api/modules/settings/settings.routes.ts</code
+      >、<code>settings.service.ts</code>、<code>api/modules/queue/larm-status.ts</code>：保存・テスト・観測。
+    </li>
+    <li>
+      <code>src/modules/settings/settings.types.ts</code
+      >、<code>settings.defaults.ts</code>、<code>settings.service.ts</code>、<code>settings.repository.ts</code>、<code>settings.repository.sqlite.ts</code>、<code>settings-secret.service.ts</code>：型、移行、CAS、認証確定。
+    </li>
+    <li>
+      <code>src/modules/llm/providers/</code
+      >：到達性と推論テストのadapter。既存factoryを共通利用する。
+    </li>
+    <li>
+      <code>crates/context-stilld/src/domains/provider_connection/</code
+      >、<code>queue_lifecycle/provider_lease.rs</code>、<code>agent_runtime/</code>、<code>sqlite_writer/</code>、<code>secret_store/</code>：管理器、permit、実装policy、単一writerとOS認証ストア。
+    </li>
+    <li>
+      <code>test/app-settings-routes.test.ts</code
+      >、<code>settings-runtime-cache.test.ts</code>、<code>settings.repository.sqlite.test.ts</code>、<code>settings-secret-store.bun.ts</code>、<code>test/components/admin/</code>、<code>e2e/</code>：既存保証と追加検証。
+    </li>
+    <li><a href="../settings-larm-agentic-design-2026-10-04.html">採用した設定画面設計</a>。</li>
+    <li>
+      <a href="../larm-common-provider-adoption-2026-10-04.html">LARM共通Provider採用契約</a>。
+    </li>
+    <li>
+      <a href="../finding-covering-shared-agent-runtime-plan-2026-10-03.html"
+        >Finding・Covering共通AgentRuntime計画</a
+      >。
+    </li>
+    <li>
+      <a href="../sqlite-single-writer-external-io-isolation-implementation-plan.html"
+        >単一writerと外部I/O分離の契約</a
+      >。
+    </li>
+  </ul>
+</article>

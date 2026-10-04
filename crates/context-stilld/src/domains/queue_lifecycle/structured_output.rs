@@ -102,7 +102,15 @@ pub(super) fn format(name: &str) -> Value {
 
 /// Never extract a valid prefix from a truncated generation. Missing finish_reason is also
 /// incomplete on the OpenAI-compatible HTTP boundary; agent-session has its own terminal event.
-pub(super) fn content(payload: &Value) -> Result<&str, String> {
+pub(crate) fn content(payload: &Value) -> Result<&str, String> {
+    let text = terminal_content(payload)?;
+    serde_json::from_str::<Value>(text).map_err(|_| "structured_output_invalid_json")?;
+    Ok(text)
+}
+
+/// The transport also serves legacy Covering responses whose contract permits labelled text.
+/// JSON validation belongs to the selected policy, while every HTTP completion must be terminal.
+pub(crate) fn terminal_content(payload: &Value) -> Result<&str, String> {
     let choice = payload
         .pointer("/choices/0")
         .ok_or("structured_output_missing_choice")?;
@@ -122,7 +130,6 @@ pub(super) fn content(payload: &Value) -> Result<&str, String> {
         .pointer("/message/content")
         .and_then(Value::as_str)
         .ok_or("structured_output_missing_content")?;
-    serde_json::from_str::<Value>(text).map_err(|_| "structured_output_invalid_json")?;
     Ok(text)
 }
 

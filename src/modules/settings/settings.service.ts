@@ -1,7 +1,6 @@
 import { APP_CONSTANTS } from "../../constants.js";
 import { applyProviderLeaseRouteContext } from "./provider-lease-route-context.js";
 import { SecretStoreError, resolveSecretRows } from "./secret-store.client.js";
-import { saveSecretUpdate } from "./settings-secret.service.js";
 import {
   bootstrap,
   cloneDefaultSettings,
@@ -199,40 +198,34 @@ function normalizeSecretKey(value: string): RuntimeSecretKey | null {
 export async function saveRuntimeSettings(
   input: RuntimeSettingsUpdateRequest,
 ): Promise<{ revision: number; updatedAt: string }> {
-  const parsed = runtimeSettingsEditableSchema.parse(input.settings);
-  const normalized = normalizeRuntimeSettingsEditable(parsed);
-  const existing = await findSettingsRow(SETTINGS_DOCUMENT_NAMESPACE, SETTINGS_DOCUMENT_KEY);
-  const nextRevision = Math.max(1, (existing?.schemaVersion ?? 0) + 1);
-
-  if (input.secrets) {
-    for (const [rawKey, update] of Object.entries(input.secrets)) {
-      const key = normalizeSecretKey(rawKey);
-      if (!key) continue;
-      try {
-        await saveSecretUpdate(key, update, input.updatedBy ?? null);
-      } finally {
-        // Invalidate even after a partially completed update or failed cleanup.
-        invalidateRuntimeSettingsCache();
-        applyRuntimeSettingsToProcess(normalized, {});
+  if (input.expectedRevision === undefined) throw new Error("settings_revision_conflict");
+  const { mutateSettings } = await import("./settings-mutations.service.js");
+  const { randomUUID } = await import("node:crypto");
+  const result = await mutateSettings(
+    input.expectedRevision,
+    randomUUID(),
+    input,
+    (settings, secrets) => {
+      Object.assign(settings, runtimeSettingsEditableSchema.parse(input.settings));
+      for (const [rawKey, update] of Object.entries(input.secrets ?? {})) {
+        const key = normalizeSecretKey(rawKey);
+        if (!key) throw new Error("credential_key_not_allowed");
+        secrets.set(
+          key,
+          update.clear
+            ? { action: "clear" }
+            : update.useEnvironment
+              ? { action: "environment" }
+              : update.value?.trim()
+                ? { action: "set", value: update.value }
+                : { action: "keep" },
+        );
       }
-    }
-  }
-
-  const written = await upsertSettingsRow({
-    namespace: SETTINGS_DOCUMENT_NAMESPACE,
-    key: SETTINGS_DOCUMENT_KEY,
-    value: { settings: normalized },
-    schemaVersion: nextRevision,
-    updatedBy: input.updatedBy ?? null,
-    description: "Runtime settings control-plane document",
-    valueKind: "json",
-  });
-
+      return {};
+    },
+  );
   await reloadRuntimeSettingsCache();
-  return {
-    revision: written.schemaVersion,
-    updatedAt: written.updatedAt.toISOString(),
-  };
+  return { revision: result.revision, updatedAt: new Date().toISOString() };
 }
 
 export function resolveFindCandidateRoute(

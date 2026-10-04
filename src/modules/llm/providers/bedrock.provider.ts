@@ -1,4 +1,8 @@
-import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import {
+  BedrockRuntimeClient,
+  ConverseCommand,
+  type ConverseCommandOutput,
+} from "@aws-sdk/client-bedrock-runtime";
 import { groupedConfig } from "../../../config.js";
 import type {
   LlmChatMessage,
@@ -11,22 +15,9 @@ import { normalizeLlmUsage } from "../usage-normalizer.js";
 
 type BedrockProviderOptions = {
   timeoutMs?: number;
+  modelConfig?: { region: string; profile: string; model: string };
+  probe?: boolean;
 };
-
-function isConfigured(): boolean {
-  return Boolean(groupedConfig.bedrock.region.trim() && groupedConfig.bedrock.model.trim());
-}
-
-function createClient(): BedrockRuntimeClient {
-  const profile = groupedConfig.bedrock.profile.trim();
-  if (profile) {
-    process.env.AWS_PROFILE = profile;
-  }
-
-  return new BedrockRuntimeClient({
-    region: groupedConfig.bedrock.region,
-  });
-}
 
 function asBedrockRole(role: LlmChatMessage["role"]): "user" | "assistant" {
   return role === "assistant" ? "assistant" : "user";
@@ -71,6 +62,8 @@ function isReachableClientError(error: unknown): boolean {
 
 export function createBedrockProvider(options: BedrockProviderOptions = {}): LlmProvider {
   const timeoutMs = Math.max(1000, options.timeoutMs ?? 5000);
+  const config = options.modelConfig ?? groupedConfig.bedrock;
+  const isConfigured = () => Boolean(config.region.trim() && config.model.trim());
 
   return {
     name: "bedrock",
@@ -103,7 +96,7 @@ export function createBedrockProvider(options: BedrockProviderOptions = {}): Llm
         }
 
         const command = new ConverseCommand({
-          modelId: groupedConfig.bedrock.model,
+          modelId: request.model?.trim() || config.model,
           messages,
           ...(system.length > 0 ? { system } : {}),
           inferenceConfig: {
@@ -112,12 +105,25 @@ export function createBedrockProvider(options: BedrockProviderOptions = {}): Llm
           },
         });
 
-        const response = await createClient().send(command, {
-          abortSignal: controller.signal,
+        const client = new BedrockRuntimeClient({
+          region: config.region,
+          profile: config.profile || undefined,
+          maxAttempts: options.probe ? 1 : undefined,
         });
+        let response: ConverseCommandOutput;
+        try {
+          response = await client.send(command, {
+            abortSignal: controller.signal,
+          });
+        } finally {
+          client.destroy();
+        }
 
         const content = extractText(response);
-        if (!content || !content.trim()) {
+        if (
+          (!content || !content.trim()) &&
+          !(options.probe && response.output?.message && response.stopReason)
+        ) {
           throw new Error("Bedrock returned empty response");
         }
 
@@ -128,7 +134,7 @@ export function createBedrockProvider(options: BedrockProviderOptions = {}): Llm
           totalTokens: response.usage?.totalTokens,
         });
         return {
-          content,
+          content: content ?? "",
           finishReason: typeof stopReason === "string" ? stopReason : undefined,
           usage,
         };
@@ -141,8 +147,8 @@ export function createBedrockProvider(options: BedrockProviderOptions = {}): Llm
         provider: "bedrock",
         configured: isConfigured(),
         reachable: false,
-        model: groupedConfig.bedrock.model,
-        endpoint: `bedrock://${groupedConfig.bedrock.region}`,
+        model: config.model,
+        endpoint: `bedrock://${config.region}`,
       };
 
       if (!result.configured) {

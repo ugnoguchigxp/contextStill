@@ -13,14 +13,14 @@ use super::positive_response::{
 };
 use super::provider::request_covering_completion;
 use super::source::source_reference;
-use super::types::{NegativeCoveringExecution, NegativeCoveringResult};
+use super::types::{CoveringExecution, CoveringResult};
 
 pub(super) fn run_positive_external_evidence(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     candidate: &Value,
     source_content: &str,
     timeout_seconds: u64,
-) -> NegativeCoveringResult {
+) -> CoveringResult {
     run_positive_external_evidence_impl(execution, candidate, source_content, timeout_seconds)
 }
 
@@ -46,11 +46,11 @@ pub(super) struct GuardedExternalEvidence {
 }
 
 pub(super) fn run_positive_external_evidence_impl(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     candidate: &Value,
     source_content: &str,
     timeout_seconds: u64,
-) -> NegativeCoveringResult {
+) -> CoveringResult {
     let query_prompt = match render_catalog_prompt("coverEvidence.externalSearchQuery", &json!({}))
     {
         Ok(prompt) => prompt,

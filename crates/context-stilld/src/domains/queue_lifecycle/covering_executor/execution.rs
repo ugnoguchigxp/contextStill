@@ -24,11 +24,9 @@ use super::source::{
     base_positive_candidate, evaluate_positive_source_support, normalized_character_count,
     positive_source_content, requires_external_evidence, source_reference,
 };
-use super::types::{
-    CoveringExternalSearchConfig, NegativeCoveringExecution, NegativeCoveringResult,
-};
+use super::types::{CoveringExecution, CoveringExternalSearchConfig, CoveringResult};
 
-pub(crate) fn load_claimed_negative_execution(
+pub(crate) fn load_claimed_covering_execution(
     connection: &Connection,
     claimed: ClaimedProviderLeaseJob,
     target: LocalLlmTargetConfig,
@@ -36,7 +34,7 @@ pub(crate) fn load_claimed_negative_execution(
     low_importance_reject_threshold: i64,
     source_read_root: PathBuf,
     external_search: CoveringExternalSearchConfig,
-) -> Result<NegativeCoveringExecution, CliError> {
+) -> Result<CoveringExecution, CliError> {
     let claimed_id = claimed.id.clone();
     let provider_lease = claimed.provider_lease;
     // Older databases can be read by the resident during a rolling migration.  Do not
@@ -67,10 +65,50 @@ pub(crate) fn load_claimed_negative_execution(
     } else {
         "1"
     };
+    let has_source_metadata: bool = connection.query_row(
+        "select exists(select 1 from pragma_table_info('finding_candidate_queue') where name='metadata')",
+        [], |r|r.get(0)).map_err(|e|CliError::io(e.to_string()))?;
+    let source_metadata_column = if has_source_metadata {
+        "metadata"
+    } else {
+        "'{}' as metadata"
+    };
+    let has_legacy: bool = connection.query_row(
+        "select count(*)=2 from sqlite_master where type='table' and name in ('find_candidate_results','distillation_target_states')",
+        [], |r|r.get(0)).map_err(|e|CliError::io(e.to_string()))?;
+    let has_vibe_metadata: bool = connection
+        .query_row(
+            "select exists(select 1 from pragma_table_info('vibe_memories') where name='metadata')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| CliError::io(e.to_string()))?;
+    let vibe_metadata_column = if has_vibe_metadata {
+        "vm.metadata"
+    } else {
+        "'{}'"
+    };
+    let legacy_candidates = if has_legacy {
+        "union all select r.id,'legacy-preview-'||r.id,r.title,r.content,coalesce(json_extract(r.origin,'$.type'),'rule'),r.origin,t.metadata from find_candidate_results r join distillation_target_states t on t.id=r.target_state_id where not exists(select 1 from found_candidates n where n.id=r.id) and exists(select 1 from covering_evidence_queue q where q.id=?1 and q.found_candidate_id=r.id and q.protocol_version=3 and json_extract(q.payload,'$.agentPreview')=1)"
+    } else {
+        ""
+    };
+    let legacy_sources = if has_legacy {
+        "union all select 'legacy-preview-'||r.id,t.target_key,t.source_uri,t.target_kind,t.metadata from find_candidate_results r join distillation_target_states t on t.id=r.target_state_id where exists(select 1 from covering_evidence_queue q where q.id=?1 and q.found_candidate_id=r.id and q.protocol_version=3 and json_extract(q.payload,'$.agentPreview')=1)"
+    } else {
+        ""
+    };
     let mut execution = connection
         .query_row(
             &format!(
                 "
+            with fc as (
+                select id,finding_job_id,title,content,type,origin,metadata from found_candidates
+                {legacy_candidates}
+            ), fq as (
+                select id,source_key,source_uri,source_kind,{source_metadata_column} from finding_candidate_queue
+                {legacy_sources}
+            )
             select
               cq.id,
               cq.found_candidate_id,
@@ -94,12 +132,12 @@ pub(crate) fn load_claimed_negative_execution(
                 else ''
               end,
               case
-                when fq.source_kind = 'vibe_memory' then coalesce((select metadata from vibe_memories where id = fq.source_key limit 1), '{{}}')
-                else '{{}}'
+                when fq.source_kind = 'vibe_memory' then coalesce((select {vibe_metadata_column} from vibe_memories vm where vm.id = fq.source_key limit 1), '{{}}')
+                else coalesce(fq.metadata, '{{}}')
               end
             from covering_evidence_queue cq
-            join found_candidates fc on fc.id = cq.found_candidate_id
-            join finding_candidate_queue fq on fq.id = fc.finding_job_id
+            join fc on fc.id = cq.found_candidate_id
+            join fq on fq.id = fc.finding_job_id
             where cq.id = ?1
               and cq.status = 'running'
             limit 1
@@ -107,7 +145,7 @@ pub(crate) fn load_claimed_negative_execution(
             ),
             [&claimed_id],
             |row| {
-                Ok(NegativeCoveringExecution {
+                Ok(CoveringExecution {
                     job_id: row.get(0)?,
                     found_candidate_id: row.get(1)?,
                     distillation_version: row.get(2)?,
@@ -184,9 +222,9 @@ pub(crate) fn load_claimed_negative_execution(
 }
 
 pub(crate) fn execute_negative_covering(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     timeout_seconds: u64,
-) -> NegativeCoveringResult {
+) -> CoveringResult {
     if execution.provider_policy != "default" {
         return failure_result(
             "provider_failed",
@@ -213,9 +251,9 @@ pub(crate) fn execute_negative_covering(
 }
 
 pub(crate) fn execute_covering(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     timeout_seconds: u64,
-) -> NegativeCoveringResult {
+) -> CoveringResult {
     if execution.is_negative() {
         execute_negative_covering(execution, timeout_seconds)
     } else {
@@ -223,10 +261,195 @@ pub(crate) fn execute_covering(
     }
 }
 
+pub(crate) fn capture_agent_input(
+    connection: &Connection,
+    execution: &CoveringExecution,
+) -> Result<crate::domains::agent_runtime::ledger::Input, String> {
+    use super::applicability::trusted_source_project_identity;
+    use crate::domains::agent_runtime::{
+        ledger::Input,
+        policy::State,
+        source::{hash, Snapshot},
+    };
+    let identity =
+        trusted_source_project_identity(&execution.source_metadata).unwrap_or_else(|| json!({}));
+    let candidate = json!({"type":execution.candidate_type,"polarity":if execution.is_negative(){"negative"}else{"positive"},
+        "title":execution.candidate_title,"content":execution.candidate_content});
+    let bundle_id = execution
+        .candidate_origin
+        .pointer("/agentRuntime/bundleId")
+        .and_then(Value::as_str);
+    let mut bundle = None;
+    let mut state = if let Some(bundle_id) = bundle_id {
+        // The bundle is authoritative only through the persisted Finding lineage of this candidate.
+        // Matching content alone cannot establish project scope or input-generation provenance.
+        let (candidate_hash,bundle_hash,raw,parent_identity,parent_run,parent_generation)=connection.query_row(
+            "select b.candidate_hash,b.bundle_hash,b.bundle_json,r.identity_json,r.id,r.input_generation
+             from agent_evidence_bundles b join agent_runs r on r.id=b.run_id
+             join found_candidates fc on fc.finding_job_id=r.job_id
+             where b.id=?1 and fc.id=?2 and r.queue_name='findingCandidate'
+               and r.protocol_version=3 and r.status='completed' and b.root_lineage=r.root_lineage",
+            rusqlite::params![bundle_id,execution.found_candidate_id],
+            |r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?)))
+            .map_err(|_|"evidence_bundle_provenance_mismatch")?;
+        if execution
+            .candidate_origin
+            .pointer("/agentRuntime/runId")
+            .and_then(Value::as_str)
+            != Some(parent_run.as_str())
+            || execution
+                .candidate_origin
+                .pointer("/agentRuntime/generation")
+                .and_then(Value::as_i64)
+                != Some(parent_generation)
+        {
+            return Err("evidence_bundle_provenance_mismatch".into());
+        }
+        if candidate_hash != hash(&candidate.to_string())
+            || bundle_hash != hash(&raw)
+            || execution
+                .candidate_origin
+                .pointer("/agentRuntime/bundleHash")
+                .and_then(Value::as_str)
+                != Some(bundle_hash.as_str())
+        {
+            return Err("evidence_bundle_binding_mismatch".into());
+        }
+        let b: Value = serde_json::from_str(&raw).map_err(|_| "evidence_bundle_invalid")?;
+        let snapshot_ids = b["snapshotIds"]
+            .as_array()
+            .ok_or("evidence_bundle_invalid")?;
+        let mut sources = Vec::new();
+        let bound_identity = b
+            .get("identity")
+            .cloned()
+            .ok_or("evidence_bundle_identity_missing")?;
+        if serde_json::from_str::<Value>(&parent_identity)
+            .map_err(|_| "evidence_bundle_identity_invalid")?
+            != bound_identity
+        {
+            return Err("evidence_bundle_scope_mismatch".into());
+        }
+        if !identity.as_object().is_some_and(|o| o.is_empty()) && identity != bound_identity {
+            return Err("evidence_bundle_scope_mismatch".into());
+        }
+        for id in snapshot_ids {
+            let id = id.as_str().ok_or("evidence_bundle_invalid")?;
+            let (h,scope,uri,kind,text)=connection.query_row("select source_hash,identity_hash,uri,kind,content from agent_snapshots where id=?1",[id],
+                |r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?))).map_err(|_|"evidence_snapshot_missing")?;
+            if hash(&text) != h || scope != hash(&bound_identity.to_string()) {
+                return Err("evidence_snapshot_binding_mismatch".into());
+            }
+            sources.push(Snapshot {
+                hash: h,
+                uri,
+                kind,
+                text,
+            });
+        }
+        let primary = sources
+            .first()
+            .cloned()
+            .ok_or("evidence_snapshot_missing")?;
+        let mut state = State::new(primary, Some(candidate.clone()));
+        state.sources = sources;
+        state.evidence =
+            serde_json::from_value(b["evidence"].clone()).map_err(|_| "evidence_bundle_invalid")?;
+        state.read_ranges = serde_json::from_value(b["readRanges"].clone())
+            .map_err(|_| "evidence_bundle_invalid")?;
+        state.history =
+            serde_json::from_value(b["history"].clone()).map_err(|_| "evidence_bundle_invalid")?;
+        for q in &state.evidence {
+            state
+                .sources
+                .iter()
+                .find(|s| s.hash == q.snapshot_hash)
+                .ok_or("evidence_snapshot_missing")?
+                .validate(q)?;
+        }
+        bundle = Some(b);
+        state
+    } else {
+        let text = crate::domains::queue_lifecycle::finding_executor::filter_source_text(
+            &execution.source_content,
+        );
+        State::new(
+            Snapshot::new(
+                execution.source_uri.clone(),
+                if text.is_empty() {
+                    "pending_primary"
+                } else if execution.source_kind == "knowledge_candidate" {
+                    "provided_candidate"
+                } else {
+                    "primary"
+                }
+                .into(),
+                text,
+            )?,
+            Some(candidate),
+        )
+    };
+    // A supplied candidate is not independent evidence. Capture its linked source separately.
+    if state
+        .sources
+        .first()
+        .is_some_and(|s| s.kind == "provided_candidate")
+        && execution.source_kind != "knowledge_candidate"
+    {
+        let text = crate::domains::queue_lifecycle::finding_executor::filter_source_text(
+            &execution.source_content,
+        );
+        state.sources.insert(
+            0,
+            Snapshot::new(
+                execution.source_uri.clone(),
+                if text.is_empty() {
+                    "pending_primary"
+                } else {
+                    "primary"
+                }
+                .into(),
+                text,
+            )?,
+        );
+    }
+    // Quote location reuse is separate from this run's semantic support judgment and usage.
+    state.assessment = None;
+    state.questions.clear();
+    state.next = None;
+    state.progress = Default::default();
+    state.budget = Default::default();
+    let identity = bundle
+        .as_ref()
+        .and_then(|b| b.get("identity"))
+        .cloned()
+        .unwrap_or(identity);
+    let deferred_source = state
+        .sources
+        .first()
+        .is_some_and(|s| s.kind == "pending_primary");
+    Ok(Input {
+        preview: connection.query_row("select coalesce(json_extract(payload,'$.agentPreview'),0) from covering_evidence_queue where id=?1",[&execution.job_id],|r|r.get::<_,bool>(0)).map_err(|e|e.to_string())?,
+        generation: execution.input_generation,
+        identity,
+        source_key: execution.source_key.clone(),
+        source_kind: execution.source_kind.clone(),
+        source_uri: execution.source_uri.clone(),
+        source_metadata: execution.source_metadata.clone(),
+        distillation_version: execution.distillation_version.clone(),
+        priority: 50,
+        bundle,
+        deferred_source,
+        provided: false,
+        provided_attributes: json!({"intentTags":execution.candidate_origin.get("intentTags"),"appliesTo":execution.candidate_origin.get("appliesTo")}),
+        initial_state: state,
+    })
+}
+
 pub(super) fn execute_positive_covering(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     timeout_seconds: u64,
-) -> NegativeCoveringResult {
+) -> CoveringResult {
     if execution.provider_policy != "default" {
         return positive_failure_result(
             "provider_failed",
@@ -275,7 +498,7 @@ pub(super) fn execute_positive_covering(
                 "evidenceRole": "dedupe_match"
             }))
         }));
-        return NegativeCoveringResult {
+        return CoveringResult {
             status: status.to_string(),
             stage: "dedupe",
             candidate: None,
@@ -340,11 +563,11 @@ pub(super) fn execute_positive_covering(
 }
 
 pub(super) fn run_positive_value_assessment(
-    execution: &NegativeCoveringExecution,
+    execution: &CoveringExecution,
     candidate: &Value,
     source_content: &str,
     timeout_seconds: u64,
-) -> NegativeCoveringResult {
+) -> CoveringResult {
     let system_prompt = match render_catalog_prompt(
         "coverEvidence.valueAssessment",
         &json!({
@@ -394,11 +617,11 @@ pub(super) fn run_positive_value_assessment(
 }
 
 pub(super) fn finalize_positive_result(
-    execution: &NegativeCoveringExecution,
-    mut result: NegativeCoveringResult,
+    execution: &CoveringExecution,
+    mut result: CoveringResult,
     source_content: &str,
     timeout_seconds: u64,
-) -> NegativeCoveringResult {
+) -> CoveringResult {
     result.references = merge_json_references(source_reference(execution), result.references);
     if result.status != "knowledge_ready" {
         return result;
@@ -441,7 +664,7 @@ pub(super) fn finalize_positive_result(
             "ok": false,
             "metadata": {"reason": "applies_to_categories_required"}
         }));
-        return NegativeCoveringResult {
+        return CoveringResult {
             status: "insufficient".to_string(),
             stage: result.stage,
             candidate: None,
@@ -461,7 +684,7 @@ pub(super) fn finalize_positive_result(
                 "boundary": "finalize_distille"
             }
         }));
-        return NegativeCoveringResult {
+        return CoveringResult {
             status: "insufficient".to_string(),
             stage: result.stage,
             candidate: None,
@@ -541,4 +764,75 @@ pub(super) fn finalize_positive_result(
     result.candidate = Some(candidate);
     result.reason = None;
     result
+}
+
+/// Protocol-3 adapter: parsing may normalize legacy output, but scope and business gates are host owned.
+pub(crate) fn agent_result(
+    execution: &CoveringExecution,
+    raw: &Value,
+    identity: &Value,
+) -> Result<CoveringResult, String> {
+    let mut result = if execution.is_negative() {
+        parse_negative_response(execution, &raw.to_string())
+    } else {
+        if !raw.is_object()
+            || !matches!(
+                raw["status"].as_str(),
+                Some("knowledge_ready" | "insufficient" | "duplicate")
+            )
+        {
+            return Err("invalid_covering_result".into());
+        }
+        parse_positive_response(
+            &raw.to_string(),
+            &base_positive_candidate(execution, 70),
+            "final",
+        )
+    }
+    .map_err(|e| e.to_string())?;
+    if let Some(candidate) = result.candidate.as_mut() {
+        let applies = candidate
+            .get_mut("appliesTo")
+            .and_then(Value::as_object_mut)
+            .ok_or("applicability_required")?;
+        // Identity is never accepted from model output or candidate text.
+        for key in ["projectRef", "repoKey", "repoPath"] {
+            applies.remove(key);
+            if let Some(value) = identity
+                .get(key)
+                .filter(|v| v.as_str().is_some_and(|v| !v.is_empty()))
+            {
+                applies.insert(key.into(), value.clone());
+            }
+        }
+        if !candidate_has_project_identity(candidate)
+            || !candidate_has_required_applicability(candidate)
+        {
+            return Err("applicability_required".into());
+        }
+        if candidate["importance"]
+            .as_i64()
+            .is_none_or(|v| v <= execution.low_importance_reject_threshold || v > 100)
+            || candidate["confidence"]
+                .as_i64()
+                .is_none_or(|v| !(0..=100).contains(&v))
+        {
+            return Err("candidate_value_invalid".into());
+        }
+        let kind = candidate["type"].as_str().ok_or("candidate_type_invalid")?;
+        let body = candidate["body"].as_str().ok_or("candidate_body_invalid")?;
+        if execution.is_negative() && kind != "rule"
+            || !matches!(kind, "rule" | "procedure")
+            || kind == "procedure" && !has_skill_like_procedure_body(body)
+            || !execution.is_negative()
+                && kind == "rule"
+                && !positive_rule_body_actionable(
+                    candidate["title"].as_str().unwrap_or_default(),
+                    body,
+                )
+        {
+            return Err("candidate_body_invalid".into());
+        }
+    }
+    Ok(result)
 }

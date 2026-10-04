@@ -640,3 +640,156 @@ fn discovery_rejects_empty_or_overflowing_context_window_budgets() {
             .is_err());
     }
 }
+
+#[test]
+fn provider_deployment_states_are_pending_without_extending_connection_statuses() {
+    for readiness in ["waiting", "deploying"] {
+        let provider: PublicLarmConnectionProvider = serde_json::from_value(serde_json::json!({
+            "name":"llm","capability":"llm.coding","route":"route","protocol":"openai.chat-completions.v1", "endpoint":"http://127.0.0.1:8080/v1", "model":"ornith-contextstill", "readiness":readiness,"claimable":false
+        })).unwrap();
+        assert_eq!(provider.readiness, LarmConnectionStatus::Pending);
+        assert!(
+            serde_json::from_value::<LarmConnectionStatus>(Value::String(readiness.into()))
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn expired_claimability_hint_must_still_pass_the_authoritative_claim() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = read_request(&mut stream);
+        stream
+            .write_all(
+                json_response(
+                    503,
+                    serde_json::json!({"error":{"code":"provider_semantic_not_ready"}}),
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+    });
+    let client = LarmControlClient::new(config(&origin)).unwrap();
+    let mut raw = connection_json();
+    raw["providers"][0]["claimable"] = Value::Bool(false);
+    let connection: PublicLarmConnection = serde_json::from_value(raw).unwrap();
+    client.validate_connection(&connection).unwrap();
+    let error = client.claim(&connection).unwrap_err();
+    assert!(error.retryable);
+    server.join().unwrap();
+}
+
+#[test]
+fn ready_status_waits_for_claimable_provider_and_respects_expiry_and_retry_after() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        assert!(read_request(&mut stream).starts_with("GET /v1/agent-connections/aconn_epoch_1 "));
+        stream
+            .write_all(json_response(200, connection_json()).as_bytes())
+            .unwrap();
+    });
+    let client = LarmControlClient::new(config(&origin)).unwrap();
+    let mut raw = connection_json();
+    raw["providers"][0]["claimable"] = Value::Bool(false);
+    raw["providers"][0]["readiness"] = Value::String("probing".into());
+    let current: PublicLarmConnection = serde_json::from_value(raw.clone()).unwrap();
+    client.validate_connection(&current).unwrap();
+    let ready = client.wait_until_ready(current).unwrap();
+    assert!(ready.providers[0].claimable);
+    server.join().unwrap();
+    raw["expiresAt"] = serde_json::json!("2000-01-01T00:00:00Z");
+    assert_eq!(
+        client
+            .wait_until_ready(serde_json::from_value(raw.clone()).unwrap())
+            .unwrap_err()
+            .kind,
+        "ready_timeout"
+    );
+    raw["expiresAt"] = serde_json::json!("2099-01-01T00:00:00Z");
+    *client.ready_retry_after.lock().unwrap() = Duration::from_secs(600);
+    let start = Instant::now();
+    assert_eq!(
+        client
+            .wait_until_ready(serde_json::from_value(raw).unwrap())
+            .unwrap_err()
+            .kind,
+        "ready_timeout"
+    );
+    assert!(start.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+#[ignore = "requires a reachable LARM control origin and an authorized control credential"]
+fn live_common_connection_provider_round_trip() {
+    let origin = std::env::var("CONTEXT_STILL_LARM_CONTROL_ORIGIN").expect("LARM origin");
+    let mut cfg = config(&origin);
+    cfg.audience = "saaa-desktop".into();
+    cfg.control_bearer_token = control_bearer_token_from_environment(|name| std::env::var(name));
+    cfg.ttl_seconds = 900;
+    cfg.request_timeout_ms = 120000;
+    cfg.control_timeout_ms = 10000;
+    cfg.max_concurrent_requests = 4;
+    let mut manager = super::super::manager::LarmConnectionManager::new(cfg).unwrap();
+    let result =
+        (|| {
+            assert!(manager.reconcile(true)?.ready);
+            let capacity = manager.request_capacity()?;
+            let claimed = manager.target().expect("claimed provider");
+            let target = crate::domains::queue_lifecycle::episode_executor::LocalLlmTargetConfig {
+                codex: false,
+                quota_db: None,
+                target_id: "larm-common-canary".into(),
+                api_base_url: claimed.api_base_url.clone(),
+                api_path: "/v1/chat/completions".into(),
+                model: claimed.model.clone(),
+            };
+            let response = crate::domains::agent_runtime::transport::send(
+            crate::domains::agent_runtime::transport::CompletionRequest {
+                target: &target, api_key: Some(&claimed.bearer_token),
+                messages: &serde_json::json!([{"role":"user","content":"Reply with exactly OK."}]),
+                max_output: 32, response_format: None, timeout_seconds: 120
+            }).map_err(|_| LarmControlError::protocol("claimed Provider inference failed"))?;
+            assert!(response.terminal_error.is_none());
+            assert!(!response.content.trim().is_empty());
+            assert!(response.usage.is_some());
+            println!(
+                "profile=contextStill connection={} model={} capacity={} usage={:?}",
+                claimed.connection_id, claimed.model, capacity, response.usage
+            );
+            Ok::<(), LarmControlError>(())
+        })();
+    let released = manager.release();
+    result.unwrap();
+    released.unwrap();
+}
+
+#[test]
+fn release_accepts_a_gone_connection_after_larm_restart() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        assert!(
+            read_request(&mut stream).starts_with("DELETE /v1/agent-connections/old-connection ")
+        );
+        stream
+            .write_all(
+                json_response(
+                    410,
+                    serde_json::json!({"error":{"code":"connection_expired"}}),
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+    });
+    LarmControlClient::new(config(&origin))
+        .unwrap()
+        .release("old-connection")
+        .unwrap();
+    server.join().unwrap();
+}

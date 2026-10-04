@@ -8,7 +8,7 @@ use crate::domains::vector_index;
 // additive schema revision, so keeping this at v1 allows a v1 binary to open a database after a
 // rollback. Additive revisions are tracked independently in `schema_migrations`.
 pub const CURRENT_SCHEMA_VERSION: i64 = 1;
-pub const CURRENT_SCHEMA_REVISION: i64 = 10;
+pub const CURRENT_SCHEMA_REVISION: i64 = 13;
 
 const TYPESCRIPT_SCHEMA_SOURCE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -21,6 +21,10 @@ const CURATION_V2_SCHEMA_SOURCE: &str = include_str!(concat!(
 const CURATION_QUEUE_SCHEMA_SOURCE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../src/db/sqlite/curation-queue-schema.ts"
+));
+const MANUAL_RESEARCH_SCHEMA_SOURCE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../src/db/sqlite/manual-research-schema.ts"
 ));
 
 pub fn configure_writer_connection(connection: &Connection) -> Result<(), String> {
@@ -87,7 +91,13 @@ pub fn migrate(connection: &mut Connection, vector_dimension: usize) -> Result<i
             INSERT OR IGNORE INTO schema_migrations(version, name)
             VALUES (9, 'manual_research_runs_v1');
             INSERT OR IGNORE INTO schema_migrations(version, name)
-            VALUES ({CURRENT_SCHEMA_REVISION}, 'larm_shared_request_capacity_v1');
+            VALUES (10, 'larm_shared_request_capacity_v1');
+            INSERT OR IGNORE INTO schema_migrations(version, name)
+            VALUES (11, 'finding_covering_agent_runtime_v1');
+            INSERT OR IGNORE INTO schema_migrations(version, name)
+            VALUES (12, 'agent_research_gateway_v1');
+            INSERT OR IGNORE INTO schema_migrations(version, name)
+            VALUES ({CURRENT_SCHEMA_REVISION}, 'codex_manual_research_v1');
             PRAGMA user_version = {CURRENT_SCHEMA_VERSION};
             "#
         ))
@@ -160,13 +170,31 @@ fn rendered_core_schema(vector_dimension: usize) -> Result<String, String> {
         .and_then(|source| source.strip_suffix('`').map(str::trim_end))
         .ok_or_else(|| "failed to locate Curation queue SQLite schema template".to_string())?
         .replace("${curationV2SchemaSql}", curation);
+    let manual = MANUAL_RESEARCH_SCHEMA_SOURCE
+        .trim()
+        .strip_prefix("export const manualResearchSchemaSql = `")
+        .and_then(|source| source.strip_suffix(';'))
+        .and_then(|source| source.strip_suffix('`').map(str::trim_end))
+        .ok_or_else(|| "failed to locate manual research SQLite schema template".to_string())?;
     Ok(TYPESCRIPT_SCHEMA_SOURCE[start..end]
         .replace("${dimension}", &vector_dimension.to_string())
+        .replace("${manualResearchSchemaSql}", manual)
         .replace("${curationQueueSchemaSql}", &queue))
 }
 
 fn apply_legacy_migrations(connection: &Connection) -> Result<(), String> {
     apply_repository_identity_contract(connection)?;
+    for (column, definition) in [
+        ("input_generation", "INTEGER NOT NULL DEFAULT 0"),
+        ("protocol_version", "INTEGER NOT NULL DEFAULT 1"),
+    ] {
+        add_column_if_missing(
+            connection,
+            "finding_candidate_queue",
+            column,
+            &format!("ALTER TABLE finding_candidate_queue ADD COLUMN {column} {definition}"),
+        )?;
+    }
 
     if table_exists(connection, "episode_cards")? {
         connection

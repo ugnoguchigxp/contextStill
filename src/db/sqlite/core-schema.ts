@@ -1,3 +1,4 @@
+import { manualResearchSchemaSql } from "./manual-research-schema.js";
 import { curationQueueSchemaSql } from "./curation-queue-schema.js";
 
 export function createSqliteCoreSchemaSql(input: { vectorDimension: number }): string {
@@ -733,9 +734,166 @@ CREATE TABLE IF NOT EXISTS cover_evidence_results (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) STRICT;
 
+-- Shared Finding/Covering execution ledger (protocol 3). Business revisions remain separate.
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id TEXT PRIMARY KEY,
+  queue_name TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  input_generation INTEGER NOT NULL,
+  input_hash TEXT NOT NULL,
+  protocol_version INTEGER NOT NULL DEFAULT 3,
+  policy_version TEXT NOT NULL,
+  root_lineage TEXT NOT NULL,
+  claim_epoch TEXT NOT NULL,
+  identity_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  stop_reason TEXT,
+  state_json TEXT NOT NULL,
+  deadline_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(queue_name, job_id, input_generation, protocol_version),
+  CHECK(json_valid(identity_json) AND json_valid(state_json))
+) STRICT;
+CREATE INDEX IF NOT EXISTS agent_runs_job_idx ON agent_runs(queue_name, job_id);
+
+CREATE TABLE IF NOT EXISTS agent_steps (
+  run_id TEXT NOT NULL REFERENCES agent_runs(id),
+  step_no INTEGER NOT NULL,
+  operation_key TEXT NOT NULL,
+  status TEXT NOT NULL,
+  request_hash TEXT,
+  request_id TEXT,
+  measured_input INTEGER,
+  window_tokens INTEGER,
+  output_reserve INTEGER NOT NULL DEFAULT 0,
+  reserved_tokens INTEGER NOT NULL DEFAULT 0,
+  usage_json TEXT,
+  finish_reason TEXT,
+  result_json TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(run_id, step_no),
+  UNIQUE(run_id, operation_key)
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS agent_steps_success_immutable
+BEFORE UPDATE ON agent_steps WHEN OLD.status = 'succeeded'
+BEGIN SELECT RAISE(ABORT, 'successful agent step is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS agent_steps_success_no_delete
+BEFORE DELETE ON agent_steps WHEN OLD.status = 'succeeded'
+BEGIN SELECT RAISE(ABORT, 'successful agent step is immutable'); END;
+
+CREATE TABLE IF NOT EXISTS agent_snapshots (
+  id TEXT PRIMARY KEY,
+  source_hash TEXT NOT NULL,
+  identity_hash TEXT NOT NULL,
+  uri TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  locator_unit TEXT NOT NULL DEFAULT 'utf8_bytes',
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(source_hash, identity_hash, uri, kind)
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS agent_snapshots_immutable
+BEFORE UPDATE ON agent_snapshots
+BEGIN SELECT RAISE(ABORT, 'agent snapshot is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS agent_snapshots_no_delete
+BEFORE DELETE ON agent_snapshots
+BEGIN SELECT RAISE(ABORT, 'agent snapshot is immutable'); END;
+
+CREATE TABLE IF NOT EXISTS agent_evidence_bundles (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES agent_runs(id),
+  root_lineage TEXT NOT NULL,
+  candidate_hash TEXT NOT NULL,
+  bundle_hash TEXT NOT NULL,
+  bundle_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(run_id, candidate_hash),
+  CHECK(json_valid(bundle_json))
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS agent_bundles_immutable
+BEFORE UPDATE ON agent_evidence_bundles
+BEGIN SELECT RAISE(ABORT, 'agent evidence bundle is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS agent_bundles_no_delete
+BEFORE DELETE ON agent_evidence_bundles
+BEGIN SELECT RAISE(ABORT, 'agent evidence bundle is immutable'); END;
+
+CREATE TABLE IF NOT EXISTS agent_lineages (
+  id TEXT PRIMARY KEY,
+  external_used INTEGER NOT NULL DEFAULT 0,
+  external_reserved INTEGER NOT NULL DEFAULT 0,
+  finding_delegations INTEGER NOT NULL DEFAULT 0,
+  covering_delegations INTEGER NOT NULL DEFAULT 0,
+  search_count INTEGER NOT NULL DEFAULT 0,
+  document_count INTEGER NOT NULL DEFAULT 0,
+  url_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_acquisitions (
+  root_lineage TEXT NOT NULL REFERENCES agent_lineages(id),
+  operation_key TEXT NOT NULL,
+  owner_run TEXT NOT NULL REFERENCES agent_runs(id),
+  status TEXT NOT NULL,
+  scope_hash TEXT NOT NULL,
+  result_json TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(root_lineage, operation_key)
+) STRICT;
+
+CREATE TRIGGER IF NOT EXISTS agent_acquisitions_success_immutable
+BEFORE UPDATE ON agent_acquisitions WHEN OLD.status = 'succeeded'
+BEGIN SELECT RAISE(ABORT, 'successful acquisition is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS agent_acquisitions_success_no_delete
+BEFORE DELETE ON agent_acquisitions WHEN OLD.status = 'succeeded'
+BEGIN SELECT RAISE(ABORT, 'successful acquisition is immutable'); END;
+
+CREATE TABLE IF NOT EXISTS agent_delegations (
+  id TEXT PRIMARY KEY,
+  root_lineage TEXT NOT NULL REFERENCES agent_lineages(id),
+  run_id TEXT NOT NULL REFERENCES agent_runs(id),
+  idempotency_key TEXT NOT NULL UNIQUE,
+  remote_job_id TEXT,
+  status TEXT NOT NULL,
+  reserved_tokens INTEGER NOT NULL,
+  request_json TEXT NOT NULL,
+  result_json TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK(json_valid(request_json))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS agent_research_requests (
+  delegation_id TEXT NOT NULL REFERENCES agent_delegations(id),
+  operation_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  status TEXT NOT NULL,
+  reserved_tokens INTEGER NOT NULL,
+  measured_input INTEGER NOT NULL,
+  measurement_json TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  output_limit INTEGER NOT NULL,
+  lease_id TEXT NOT NULL,
+  usage_tokens INTEGER,
+  result_json TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(delegation_id,operation_key)
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS agent_research_request_success_immutable
+BEFORE UPDATE ON agent_research_requests WHEN OLD.status='succeeded'
+BEGIN SELECT RAISE(ABORT,'successful research request is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS agent_research_request_success_no_delete
+BEFORE DELETE ON agent_research_requests WHEN OLD.status='succeeded'
+BEGIN SELECT RAISE(ABORT,'successful research request is immutable'); END;
+
 CREATE TABLE IF NOT EXISTS finding_candidate_queue (
   id TEXT PRIMARY KEY,
   input_kind TEXT NOT NULL DEFAULT 'source_target',
+  input_generation INTEGER NOT NULL DEFAULT 0,
+  protocol_version INTEGER NOT NULL DEFAULT 1,
   source_kind TEXT NOT NULL DEFAULT 'knowledge_candidate',
   source_key TEXT NOT NULL DEFAULT '',
   source_uri TEXT NOT NULL DEFAULT '',
@@ -824,6 +982,30 @@ CREATE TABLE IF NOT EXISTS found_candidates (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) STRICT;
+
+CREATE TRIGGER IF NOT EXISTS agent_found_candidates_immutable
+BEFORE UPDATE ON found_candidates WHEN json_valid(OLD.origin) AND json_type(OLD.origin, '$.agentRuntime') = 'object'
+BEGIN SELECT RAISE(ABORT, 'agent candidate is immutable; use a new input generation'); END;
+CREATE TRIGGER IF NOT EXISTS agent_found_candidates_no_delete
+BEFORE DELETE ON found_candidates WHEN json_valid(OLD.origin) AND json_type(OLD.origin, '$.agentRuntime') = 'object'
+BEGIN SELECT RAISE(ABORT, 'agent candidate is immutable'); END;
+
+-- Enqueue policy is applied on the authoritative writer even when a legacy API inserts a job.
+-- Pinned jobs never become available to a legacy worker during the activation race.
+CREATE TRIGGER IF NOT EXISTS agent_finding_enqueue_protocol
+AFTER INSERT ON finding_candidate_queue
+WHEN NEW.protocol_version < 3 AND EXISTS (
+  SELECT 1 FROM settings WHERE namespace='runtime' AND key='settings.v1'
+    AND json_valid(value) AND json_extract(value, '$.advanced.agentRuntime.enabled') = 1
+)
+BEGIN UPDATE finding_candidate_queue SET protocol_version=3 WHERE id=NEW.id; END;
+CREATE TRIGGER IF NOT EXISTS agent_covering_enqueue_protocol
+AFTER INSERT ON covering_evidence_queue
+WHEN NEW.protocol_version < 3 AND EXISTS (
+  SELECT 1 FROM settings WHERE namespace='runtime' AND key='settings.v1'
+    AND json_valid(value) AND json_extract(value, '$.advanced.agentRuntime.enabled') = 1
+)
+BEGIN UPDATE covering_evidence_queue SET protocol_version=3 WHERE id=NEW.id; END;
 
 CREATE TABLE IF NOT EXISTS finding_candidate_escalations (
   id TEXT PRIMARY KEY,
@@ -923,26 +1105,32 @@ CREATE INDEX IF NOT EXISTS evidence_coverage_results_found_candidate_producer_id
 CREATE INDEX IF NOT EXISTS evidence_coverage_results_status_idx
   ON evidence_coverage_results(status);
 
-CREATE TRIGGER IF NOT EXISTS covering_evidence_queue_found_candidate_no_duplicate_insert
+DROP TRIGGER IF EXISTS covering_evidence_queue_found_candidate_no_duplicate_insert;
+CREATE TRIGGER covering_evidence_queue_found_candidate_no_duplicate_insert
 BEFORE INSERT ON covering_evidence_queue
 WHEN NEW.found_candidate_id IS NOT NULL
+  AND coalesce(json_extract(NEW.payload, '$.agentPreview'),0)=0
   AND EXISTS (
     SELECT 1
     FROM covering_evidence_queue
     WHERE found_candidate_id = NEW.found_candidate_id
+      AND coalesce(json_extract(payload, '$.agentPreview'),0)=0
     LIMIT 1
   )
 BEGIN
   SELECT RAISE(ABORT, 'duplicate covering_evidence_queue found_candidate_id');
 END;
 
-CREATE TRIGGER IF NOT EXISTS covering_evidence_queue_found_candidate_no_duplicate_update
+DROP TRIGGER IF EXISTS covering_evidence_queue_found_candidate_no_duplicate_update;
+CREATE TRIGGER covering_evidence_queue_found_candidate_no_duplicate_update
 BEFORE UPDATE OF found_candidate_id ON covering_evidence_queue
 WHEN NEW.found_candidate_id IS NOT NULL
+  AND coalesce(json_extract(NEW.payload, '$.agentPreview'),0)=0
   AND EXISTS (
     SELECT 1
     FROM covering_evidence_queue
     WHERE found_candidate_id = NEW.found_candidate_id
+      AND coalesce(json_extract(payload, '$.agentPreview'),0)=0
       AND id <> NEW.id
     LIMIT 1
   )
@@ -1213,23 +1401,6 @@ CREATE TABLE IF NOT EXISTS landscape_snapshots (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS manual_research_runs (
-  id TEXT PRIMARY KEY,
-  client_request_key TEXT NOT NULL UNIQUE,
-  topic TEXT NOT NULL,
-  request_hash TEXT NOT NULL,
-  plugin_job_id TEXT,
-  status TEXT NOT NULL DEFAULT 'created',
-  sync_error TEXT,
-  cancel_requested INTEGER NOT NULL DEFAULT 0,
-  result_hash TEXT,
-  result_json TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  last_synced_at TEXT
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS manual_research_runs_status_idx
-  ON manual_research_runs(status, updated_at);
+${manualResearchSchemaSql}
 `;
 }

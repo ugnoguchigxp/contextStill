@@ -36,6 +36,7 @@ type LocalLlmHealthResponse = {
 
 type LocalLlmProviderOptions = {
   timeoutMs?: number;
+  probe?: boolean;
   modelConfig?: {
     apiBaseUrl: string;
     apiPath?: string;
@@ -76,11 +77,15 @@ function healthUrl(providerOptions: LocalLlmProviderOptions, model?: string): st
   return `${resolveProviderConfig(providerOptions, model).apiBaseUrl}/health`;
 }
 
-async function parseResponse(response: Response): Promise<LlmChatResponse> {
+async function parseResponse(response: Response, probe = false): Promise<LlmChatResponse> {
   const payload = (await response.json()) as LocalLlmResponse;
   const choice = payload.choices?.[0];
   const rawContent = choice?.message?.content;
-  if (typeof rawContent !== "string" || !rawContent.trim()) {
+  if (
+    typeof rawContent !== "string" ||
+    (!probe && !rawContent.trim()) ||
+    (probe && !["stop", "length"].includes(String(choice?.finish_reason ?? "")))
+  ) {
     throw new Error("local-llm response did not include assistant content");
   }
   const usage = payload.usage
@@ -120,6 +125,7 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
           buildLocalLlmChatCompletionsUrl(config.apiBaseUrl, config.apiPath),
           {
             method: "POST",
+            redirect: "error",
             headers: headers(config.apiKey),
             body: JSON.stringify({
               model: config.model,
@@ -146,7 +152,7 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
           });
         }
 
-        return parseResponse(response);
+        return parseResponse(response, options.probe);
       } finally {
         clearTimeout(timer);
       }

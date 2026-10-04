@@ -9,14 +9,9 @@ use super::super::types::ProviderLeaseAssignment;
 pub(super) const NEGATIVE_SYSTEM_PROMPT: &str =
     include_str!("../../../../../../shared/prompts/cover-negative-evidence-rust-v1.txt");
 
-pub(super) const SYSTEM_CONTEXT_CATALOG: &str =
-    include_str!("../../../../../../.s11tnext/catalog.json");
-
 pub(super) const EXTERNAL_FETCH_BYTE_LIMIT: usize = 4 * 1024 * 1024;
 
 pub(super) const LOCAL_SOURCE_BYTE_LIMIT: usize = 16 * 1024 * 1024;
-
-pub(super) const LLM_RESPONSE_BYTE_LIMIT: usize = 2 * 1024 * 1024;
 
 pub(super) const INTENT_TAGS: &[&str] = &[
     "guidance",
@@ -38,7 +33,7 @@ pub(super) const INTENT_TAGS: &[&str] = &[
 ];
 
 #[derive(Debug, Clone)]
-pub(crate) struct NegativeCoveringExecution {
+pub(crate) struct CoveringExecution {
     pub(crate) job_id: String,
     pub(crate) found_candidate_id: String,
     pub(crate) distillation_version: String,
@@ -89,7 +84,7 @@ impl Default for CoveringExternalSearchConfig {
     }
 }
 
-impl NegativeCoveringExecution {
+impl CoveringExecution {
     pub(crate) fn is_negative(&self) -> bool {
         self.candidate_origin
             .get("polarity")
@@ -107,7 +102,7 @@ impl NegativeCoveringExecution {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum NegativeCoveringPersistStatus {
+pub(crate) enum CoveringPersistStatus {
     Completed,
     Failed,
     Retrying,
@@ -115,7 +110,7 @@ pub(crate) enum NegativeCoveringPersistStatus {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct NegativeCoveringResult {
+pub(crate) struct CoveringResult {
     pub(crate) status: String,
     pub(crate) stage: &'static str,
     pub(crate) candidate: Option<Value>,

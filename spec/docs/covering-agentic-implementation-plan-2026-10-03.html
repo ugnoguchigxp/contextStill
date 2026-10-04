@@ -1,0 +1,535 @@
+<article lang="ja">
+  <h1>CoveringのAgentic実装計画：根拠の再利用・独立検証・採否確定</h1>
+  <p>
+    2026年10月4日の接続修正は<a href="larm-common-provider-adoption-2026-10-04.html"
+      >LARM共通手順へのProvider接続修正</a
+    >を現行仕様とする。以下にある計測APIや固定runtimeを必須とする当時の記述は撤回済み。実tokenizer計測の未達は、公開Providerの受入れと分けて記録する。
+  </p>
+  <p>
+    2026年10月3日作成、10月4日更新。状態は実装中。承認済みの<a
+      href="finding-covering-shared-agent-runtime-plan-2026-10-03.html"
+      >共通実行層の設計</a
+    >をCoveringへ適用する。共通基盤S0〜S5、台帳、token設定、DeepStill契約、共通テストは<a
+      href="finding-agentic-implementation-plan-2026-10-03.html#shared"
+      >Finding実装計画</a
+    >で一度だけ定義する。本書はCovering固有のpolicy・保存・移行を定義し、別のAgentループやProvider送信を実装しない。共通実行層との接続、Finding
+    bundleの引継ぎ、最終本文の独立検証、版を固定した保存を実装した。自動Researchとmanaged
+    SQLiteのnative
+    CLI/API移行を実装した。稼働設定を更新し、daemonと自動調査用DeepStillを起動した。サーバー設定変更の依頼は撤回済み。Finding/Coveringの実キュー検証は提示されたLARM共通接続手順へのConsumer適合と実接続の確認を要する。<a
+      href="finding-covering-agent-runtime-review-2026-10-04.html"
+      >実装レビュー記録</a
+    >で確認状況を管理する。
+  </p>
+  <h2 id="goal">1. 完了時の動作と変更の境界</h2>
+  <p>
+    CoveringはFindingの候補とevidence
+    bundleを読み、信頼済みidentityと原資料を固定したうえで、候補の主張・反証・適用条件を独立に判定する。Findingが取得した資料・引用・探索履歴を再利用し、不足が採否を変える場合だけ追加読解・Knowledge照合・DeepStill調査を行う。最終本文の支持と価値・procedure品質を分けて確認し、不変Evidence
+    revisionを既存Finalizeへ渡す。
+  </p>
+  <p>
+    対象はmanaged SQLiteのRust
+    residentと、そのCLI/API入口。既存のcovering_evidence_inputs、covering_evidence_revisions、requested_revision_idによるFinalize契約を維持する。正負両方の候補が同じ原資料検証とbudget制約を通る。採用閾値の全面変更、Finalizeの統合、Knowledgeへの直接登録は行わない。原資料からの抽出、外部一般化、既存Knowledgeを出典種別で区別する。
+  </p>
+  <p>
+    基準commitはfee405c。現行Coveringはsource取得・重複確認・source支持・価値判定または外部検索・適用条件補完・procedure
+    repairを持つが、独自HTTPと文字truncateを使う。source.rsのtoken
+    rangeは非空白区間であり、モデルtokenでもUTF-8
+    byteでもない。負の候補経路はvibeを前提とし原資料提示が不足している。inputsのsnapshot情報は実行後に保存される箇所があるため、新protocolでは実行前固定へ移す。
+  </p>
+  <h2 id="files">2. 変更箇所と残す業務contract</h2>
+  <table>
+    <caption>
+      Coveringの既存モジュールごとの変更。Rustパスはcrates/context-stilld/src/domains/queue_lifecycle配下
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">実装内容</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row"><code>covering_executor/{mod,execution,types}.rs</code></th>
+        <td>
+          CoveringPolicyと共通runtimeの接続、正負の明示、stageと停止理由の型。NegativeCoveringExecution/Result等を実態に合うCovering名へ移行する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>covering_executor/{source,provider,heartbeat}.rs</code></th>
+        <td>
+          SourceReader、LLM sender、run/step fenceへ委譲。LLM request
+          leaseを業務runから切り離し、独自token range/HTTPを互換adapterへ隔離する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>covering_executor/{positive_response,negative_response,applicability,deduplication}.rs</code></th>
+        <td>
+          共通の原資料支持・反証検証を正負へ適用。語句重なりと意味近似だけの重複拒否を採否の根拠にしない。適用条件・repair後の本文を再検証する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>covering_executor/{external_evidence,external_fetch}.rs</code></th>
+        <td>
+          新protocolの直接検索分岐をEvidence取得/Brokerへ接続。旧検索は互換経路として隔離し、call
+          site移行後に削除する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>covering_executor/persistence.rs</code>、<code>finalize_executor.rs</code>
+        </th>
+        <td>
+          実行前input固定とrun参照、採否の不変revision、Finalize要求の同時保存。Finalizeは指定revisionだけを読み、他jobの新しい結果へ切り替えない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>src/db/sqlite/core-schema.ts</code></th>
+        <td>
+          既存Covering input/revisionを拡張してrun・candidate世代・bundle
+          hash・最終本文hash・検証版を結ぶ。共通台帳のmigrationはFindingのS2と同じ変更にまとめる。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>contexts/coverEvidence/*.context.toml</code></th>
+        <td>
+          支持/反証・価値・適用条件・repairの指示を分離維持。次の行動を型付きにし、receipt・scope・残予算はruntimeデータとして渡す。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>src/modules/coverEvidence/{domain,llm-runner,provider-policy}.ts</code
+          >、<code>src/cli/cover-evidence.ts</code>、<code
+            >src/modules/queue/core/worker.ts</code
+          >
+        </th>
+        <td>
+          managed SQLiteをnative clientへ揃える。PGと明示的な旧route
+          policyは分離維持し、勝手なcloud/fallbackへ切り替えない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="handoff">3. Findingから受け取るcontract</h2>
+  <p>
+    Covering enqueue時にcandidate ID/generation/fingerprint、Finding input hash、bundle
+    ID/hash、root lineageを固定する。bundleはsource snapshot/version/hash、UTF-8 byte
+    locator、原文quote、出典種別、question/gap、scope・鮮度、取得receipt、未解決事項・Finding停止理由を参照する。不変参照の正本を読み、Queue
+    payloadの自由文字列やLLMが提案したidentityを正本にしない。
+  </p>
+  <p>
+    Findingのquote検証は位置と原文一致の証明であり、候補内容の支持済みという判断ではない。Coveringは原文を読み、候補の各重要主張に支持・反証・不明と適用条件を付ける。Findingの自己評価は参考情報としてのみ受け取る。継承した引用の原文一致検証結果はhashと検証版が一致すれば再利用できるが、主張との意味的な支持判断はCoveringが所有する。
+  </p>
+  <p>
+    旧候補や単独Coveringにはbundleがない。能力に応じて原資料をsnapshot化し、新しいCovering run/root
+    lineageを作る。旧非空白token range・手動ResearchのUTF-16
+    locatorはunitを明示し、正確な原資料があれば共通UTF-8
+    byteへ変換する。単位不明、加工前のhash不一致、原文欠落はlegacy_unverifiedとして追加取得か保留にし、推測して支持済みへ昇格しない。
+  </p>
+  <p>
+    取得の再利用はquestionの解消条件、scope、source
+    hash、鮮度、出典種別が一致する場合に限る。同じFindingから複数Coveringが動いても、共有取得keyのownerだけが外部IOを実行する。consumerは結果を待って検証し、自分の判定usageのみ計上する。Findingで未取得の重要な反証や、異なる適用条件は別gapとして認める。既存distillation_evidence_cacheは互換projectionに留め、excerpt
+    cacheだけで原文確認済みとしない。
+  </p>
+  <h2 id="tasks">4. Covering固有の実装順序</h2>
+  <table>
+    <caption>
+      作業ID、共通基盤との依存、完了gate
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID・依存</th>
+        <th scope="col">成果物</th>
+        <th scope="col">完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr id="c1">
+        <th scope="row">C1：S0〜S2、共通bundle型</th>
+        <td>
+          input resolverと実行前の不変Covering
+          input。candidate/source/identity/protocol/runを固定し、bundleの有無とlocator
+          unitを判別する。実行後だけのsnapshot保存を置き換える。
+        </td>
+        <td>
+          C-T01〜03。原資料更新やcandidate再処理でも同じinput世代で判定し、越境やstale
+          inputを書込まない。Finding F3とのcontract試験を通す。
+        </td>
+      </tr>
+      <tr id="c2">
+        <th scope="row">C2：C1・S3</th>
+        <td>
+          支持/反証/適用条件の共通policyと型付きread/Knowledge/finish。正負両方にsourceを渡す。既存の価値判定・重複診断を独立stageとして接続する。
+        </td>
+        <td>
+          C-T04〜07。負の候補も原資料を確認し、外部情報でローカル観測を偽装しない。十分なbundleでは外部取得0件。語句重なりのみの支持・意味近似のみの拒否0件。
+        </td>
+      </tr>
+      <tr id="c3">
+        <th scope="row">C3：C2・S4。事前にmock contractで実装可</th>
+        <td>
+          重要gapだけの追加Research。候補群のlineage予約と取得共有。Findingが解消済みの問いや失敗済みの同じ経路を避ける。keywordによる外部検索必須分岐を廃止する。
+        </td>
+        <td>
+          C-T08〜10。Covering群の追加委託最大1件、残予算・期限内。並列Coveringが同じ外部取得を二重実行せず、親wait中lease
+          0。
+        </td>
+      </tr>
+      <tr id="c4">
+        <th scope="row">C4：C2。Research利用時はC3も必要</th>
+        <td>
+          適用条件補完、procedure
+          repair、最終本文の再検証、採否revisionとFinalize要求の原子保存。input/run/step/最終本文hashを結び、結果を不変にする。
+        </td>
+        <td>
+          C-T11〜14。repairで生じた新主張は未検証のまま採用しない。stale結果・二重revision・異なるrevisionのFinalize利用0件。
+        </td>
+      </tr>
+      <tr id="c5">
+        <th scope="row">C5：C4・S5。自動Research公開にはC3</th>
+        <td>CLI/APIのnative入口、採否/gap/停止理由/usage診断、互換比較、canary、レガシー削除。</td>
+        <td>
+          C-T15、全C-T、品質比較、既存Finalize回帰を通す。PGは能力を明示した旧経路として残し、新protocolを実行しない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Finding
+    Agent化の全公開完了を待たず、C1/C2/C4は旧候補fixtureでも検証できる。bundle生成F3とconsumer
+    C1は共同contractを先に固定する。S1の共通transportはFindingとCoveringへ同時に接続し、C3の外部ResearchはS4の両サービス対応が確認できるまでoffにする。
+  </p>
+  <h2 id="policy">5. 判定・探索・本文更新の流れ</h2>
+  <ol>
+    <li>
+      claim後にtrusted identity、candidate世代、source
+      snapshot、bundle、既存Knowledge参照を固定する。明示polarityを保持し、負の候補を正へ変更しない。未対応の組合せは能力不足としてpauseし、LLM枠を取らない。
+    </li>
+    <li>
+      原資料から主張の支持・反証・適用条件を確認する。原資料で観測されたことと外部資料による一般化を分ける。既存Knowledgeとの関係は重複、更新、補完、矛盾として診断し、semantic
+      near-duplicateだけで拒否しない。
+    </li>
+    <li>
+      採否を変えうるmaterial
+      gapがある場合、何が分かれば判断できるかを記録する。原資料の追加読解、scope付きKnowledge、DeepStill委託、保留/終了から次の行動を最大1つ選ぶ。候補の価値が低い・根拠が十分なら外部検索を始めない。
+    </li>
+    <li>
+      取得receiptと原文を検証し、支持・反証・gapを更新する。Findingの探索履歴も参照し、同じ条件で成果がなかった経路を再試行しない。新しい反証は価値がある情報増分とし、採用を有利にする資料だけを探索しない。
+    </li>
+    <li>
+      既存の価値評価・適用条件補完・procedure品質確認を行う。本文を変えるときは変更前後hashと新しい主張を記録する。procedure
+      repairは業務修正であり、JSON形式repairの最大1回とは別だが、host最大8
+      callsと予算の内数にする。本文repairは最大1回とし、再修正が必要なら保留する。
+    </li>
+    <li>
+      最終本文について独立に支持・反証・適用条件を再検証する。hash不変で同じ証拠集合なら既存判定を再利用できる。新主張に根拠がなければ採用せず、説明とgapを残す。
+    </li>
+    <li>
+      採用、拒否、判定保留の業務結果とruntime停止理由を別々に保存する。採用結果のみ既存契約に従ってFinalizeへ渡し、Evidence
+      revisionの指定を固定する。
+    </li>
+  </ol>
+  <p>
+    promptは支持判断、価値判断、行動選択、本文repairを一つの万能promptへまとめない。出力には主張ID、支持/反証evidence
+    ID、適用条件、未解決gap、本文hashを要求し、参照の実在・scope・原文一致をruntimeが検証する。出典中の指示や「検証済み」という自己申告は権限を持たない。
+  </p>
+  <h2 id="budgets">6. 予算・諦め・並列実行</h2>
+  <p>
+    tokenの計測・admission・予約・精算は<a
+      href="finding-agentic-implementation-plan-2026-10-03.html#budgets"
+      >共通予算</a
+    >をそのまま利用する。1 callのsoft 32,768・hard
+    36,864、行動output予約1,536・最終判定4,096、source中心runのtarget 98,304・hard
+    131,072・host最大8 callsをCoveringにも適用する。最終確定用1
+    call分32,768を先に確保する。広告context上限が32Kなら32K以内に制約する。
+  </p>
+  <p>
+    DeepStill利用runの親子合計target 262,144・hard
+    393,216と、Findingから続くlineage外部取得capを両方検査する。lineage外部capはtoken
+    393,216・search 6・document 8・URL 16・delegation
+    2。Finding最大1件、Covering群は追加最大1件。子はsearch 4・document 6・URL 12・depth 2・LLM
+    12回・5分を上限とし、親10分と残枠に合わせて縮める。委託前に最終予約を除いたbudgetを確保する。
+  </p>
+  <p>
+    継承したFindingの物理usageはCoveringの判定usageに足さない。診断では「このCovering
+    runのLLM使用量」「参照した取得のowner」「lineage外部取得の消費」を区別する。各runについてrequestごとの最大計測windowとinput/output・cached
+    input・予約・実usageを記録する。1 job合計と1 callのContextWindowを混同しない。
+  </p>
+  <p>
+    2回連続noGainで探索を止める。新しい証拠・反証・適用条件・gap解消がなく、文章だけ変わった場合はnoGain。独立未試行経路への再検討は1回まで、実取得失敗3回連続で停止、一時IO
+    retryは1回まで。Knowledgeは最大2回で必須工程にしない。Findingで閉じた取得receiptとfailure
+    historyを参照し、候補ごとの新しいrunを探索予算のリセットに使わない。
+  </p>
+  <p>
+    十分な根拠がある候補は外部調査なしで確定する。未解決の必須支持条件、採用を阻む重要な反証、最終判定の結果未確認は採用に進めない。usage欠落時は予約上限を保持して予算を検査し、0として予約を外さない。子取消し未確認時は新しい取得を開始せず、照合待ちにする。予算/時間/取得失敗で止まったこと自体を候補の低価値による拒否へ写像しない。支持・価値を判断できた場合だけ終端採否を保存し、それ以外はgap付き保留として既存状態へ明示的に写像する。
+  </p>
+  <p>
+    Provider枠は共通S2だけを使う。4
+    sessionの枠を別Queue優先で公平に配分し、runnableな別Queueがなければ複数Covering/Findingへ渡す。同じcandidate世代に複数run
+    ownerを作らず、異なる候補は並列可。同じ資料の取得は共有ownerを待ち、LLM枠を占有しない。
+  </p>
+  <h2 id="persistence">7. Evidence input・revision・Finalizeの保存</h2>
+  <p>
+    新input generationはclaim直後の実行前に固定する。candidate hash/generation、trusted
+    identity、source hash、read範囲の単位、bundle hash、policy/protocol、共通run
+    IDを持たせる。LLMが選んだ追加read/evidenceはrun/stepへ増分保存し、最終revisionから使用証拠集合を参照する。実行後に取得情報だけを追記して入力の正本を作る処理は新protocolでは使わない。
+  </p>
+  <p>
+    結果保存はjob claim epoch・run ownership・input generation・candidate hashを検査し、同じWriter
+    transactionで不変covering_evidence_revision、互換evidence_coverage_results
+    projection、Queue結果、必要なFinalize要求を保存する。revisionに最終本文hash、採否・根拠・反証・条件・gap、検証版、run/usage参照を結ぶ。共通step履歴をrevisionの代用品にしない。
+  </p>
+  <p>
+    成功step/revisionは上書きしない。候補や原資料が更新されたら新input
+    generationとして処理し、既存下流は元revisionを参照し続ける。Finalizeはrequested_revision_idとcandidate/input世代を検証し、指定revisionが不明・不採用・不整合なら停止する。最新revisionへ黙ってfallbackしない。取消し、preempt、未知result、再起動時の所有権とbudget復帰は共通S2/S4に委譲する。
+  </p>
+  <table>
+    <caption>
+      Coveringの業務結果と既存Queue状態・Finalizeを分離する写像
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">条件</th>
+        <th scope="col">Queue・revision・下流処理</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">採用判定と最終本文支持が確定</th>
+        <td>
+          completed。不変採用revisionと、そのrevisionを指定したFinalize要求を原子的に保存する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">拒否判定が確定</th>
+        <td>
+          completed。低価値・反証・支持されない主張等の業務理由を持つ不変revisionを保存し、Finalize要求なし。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">根拠不足・探索上限で保留</th>
+        <td>
+          paused、next_run_atなし。gapとstop
+          reasonを持つ非採用revisionを保存し、Finalize要求なし。自動再探索しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Research待機・取消し照合</th>
+        <td>
+          paused、bounded
+          pollのnext_run_atあり。同じrun/delegationを照合し、判定revision/Finalizeは未確定。待機中LLM
+          leaseなし。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">確定したpreemption・一時障害</th>
+        <td>
+          pending、backoff付き。同じrunと予算で許可済みretryのみ。途中結果を採用revisionにしない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">能力不足・request結果未確認</th>
+        <td>
+          paused。worker_capability_missingまたは照合待ち理由を保存し、旧実装へfallbackしない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">入力契約違反・repair後も不正出力</th>
+        <td>failed。診断と非採用の結果を保存し、Finalize要求なし。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    C4で既存result_statusとlast_outcome_kindの互換projectionを定義し、C-T10/C-T12〜14で写像を検証する。現在の「retryable以外ならすべてcompleted」という保存分岐を新protocolへ流用しない。業務保留revisionはFinalizeが採用として読めない型にし、待機と業務保留を別run状態で記録する。
+  </p>
+  <h2 id="tests">8. Covering固有の検証</h2>
+  <table>
+    <caption>
+      新しいpolicy・handoff・保存の合格条件。共通S-T01〜13も適用する
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">fixtureと期待結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">C-T01</th>
+        <td>
+          Finding
+          bundle付き候補。source/evidence/receiptを参照し、既取得資料の再fetch・再searchは0件。quote一致だけで意味的支持を受理しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T02</th>
+        <td>
+          bundleなし旧候補、非空白/UTF-16/不明locator、加工後source。単位とhashを検証し、原文なしcacheは未検証扱い。正確な原資料がある場合だけ変換。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T03</th>
+        <td>
+          実行中のsource更新、candidate hash変更、repo
+          identity差替え。input世代を固定し、stale/越境結果を保存しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T04</th>
+        <td>
+          正候補・負候補で同じ反例資料を渡す。両方が原資料を読み、polarityを維持し、重要反証を保存する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T05</th>
+        <td>
+          語句重なりが高いが支持しない資料、検索snippetのみ、引用の範囲外。支持不足として保留/拒否理由を分け、採用に進めない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T06</th>
+        <td>
+          意味近似でも条件/修正が異なるKnowledge。近似だけで拒否せず、補完・更新・矛盾を診断。同scopeのみ参照する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T07</th>
+        <td>
+          価値低・根拠十分・原資料でgap解消の3ケース。不要DeepStillは0件。実行していない検証を外部資料から実体験として追加しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T08</th>
+        <td>
+          同じFindingの複数Coveringが同gapを要求。取得ownerは1件、群全体追加delegation最大1件、物理usageは一度だけ計上する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T09</th>
+        <td>
+          Findingで解消/失敗済みの問いと、異なる重要な反証gap。前者は再調査しない。後者だけscope・鮮度・残予算に従って新取得可。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T10</th>
+        <td>
+          2
+          noGain、3取得失敗、hard/時間到達、子cancel未確認。追加探索を止め、不足を低価値と混同せず保留。再開でcounterをリセットしない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T11</th>
+        <td>
+          procedure
+          repairで新手順・新条件が追加されるケース。最終本文hashで再検証し、根拠なしの新主張は採用しない。本文repairは最大1回。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T12</th>
+        <td>
+          支持十分/価値不足/重要反証/支持不明。採用・拒否・保留の業務理由とruntime
+          stopを分け、取得失敗を拒否へ写像しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T13</th>
+        <td>
+          保存前crash、claim奪取、同input
+          replay。二重revision/Finalize要求なし、stale書込みなし、成功revisionは不変。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T14</th>
+        <td>
+          指定revisionの後に別revision生成、指定が欠落/不採用。Finalizeは固定revisionだけを読み、最新へのfallbackなし。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">C-T15</th>
+        <td>
+          native
+          CLI/API、preview、旧PG、未対応新protocol。出力・取消し・診断互換、previewで外部IO/保存0件、PGへの新protocol実行0件。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    品質評価はS0で固定した採否/支持/反証/条件/最終本文の観点で旧版と比較する。必須反証の見逃し、証拠なし採用、scope越境、repair後の未検証採用は0件。十分な原資料があるケースの不要探索0件。既存採否閾値と新しい根拠検証による差を分けてレビューし、意図した安全な保留を単純な採用率低下と混同しない。採否差はすべて理由・引用・最終本文から説明できることをgateとする。
+  </p>
+  <p>
+    Rustの<code>covering_executor/tests.rs</code>、<code>provider_lease_tests.rs</code>、<code>finalize_executor_tests.rs</code>と新設Agent
+    runtimeテストへfixtureを置く。TS入口とschemaには該当unit/SQLiteテストを追加する。最終回帰・prompt・Writer・Specの実行コマンドは<a
+      href="finding-agentic-implementation-plan-2026-10-03.html#tests"
+      >共通検証計画</a
+    >に従う。live外部LLMを単体試験へ混ぜず、稼働契約試験と分ける。
+  </p>
+  <h2 id="migration">9. レガシー整理と公開順序</h2>
+  <p>
+    <a href="covering-v2-implementation-plan.html">Covering v2計画</a>のpolarity、trusted
+    identity、正負の原資料検証、最終本文の再確認、不変revision/Finalize固定は継承する。本書は共通runtime、Agent行動、bundle再利用、非同期Researchと予算制御を具体化し、専用HTTP/探索実装を置き換える。未完の既存contractを含むため旧計画全体は一括archiveしない。
+  </p>
+  <table>
+    <caption>
+      Coveringの旧実装を削除する条件
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">移行・削除条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">NegativeCoveringExecution/Result名</th>
+        <td>
+          C2でCoveringExecution/Resultと明示polarityへ移す。全caller・serialization互換を確認し、一時aliasへの参照0件で削除。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">独自provider/source/heartbeat</th>
+        <td>
+          S1/S2とC1で共通sender/reader/run
+          fenceへ委譲。旧protocol以外の参照0件、S/C-T通過で重複処理を削除。legacy locator
+          decoderは必要な読取り互換だけ残す。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">keyword外部検索必須・直接検索</th>
+        <td>
+          C3でmaterial
+          gap/receipt/Brokerへ移す。既存検索を含むfixtureの採否比較とguard確認後、新protocolの直接外部IOを削除。S4未完の間は自動Researchをoffにする。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">実行後だけのinput固定</th>
+        <td>
+          C1/C4で実行前inputと不変revisionへ移行。旧revision参照を保持したまま、新protocolの旧保存経路callerが0件で削除。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">TS managed SQLiteのtool loop/repair</th>
+        <td>
+          C5でnative入口へ移す。CLI/API出力、preview、取消し、診断の契約を確認後に重複実装を削除。PG
+          callerと既存route policyは明示分離して残す。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">distillation_evidence_cache</th>
+        <td>
+          新runtimeからはbundle/receiptを正本にする。他callerが残る間は互換projection。cacheを検証証拠と扱う旧分岐の参照0件を確認し、その分岐だけを削除する。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    公開は共通transport互換 → input固定とbundle受取 → source中心Agentic判定 → DeepStill付きgap解消 →
+    native入口と削除の順。初期canaryは入力kindとcandidate/jobを限定し、正負両方の固定fixtureを通した経路から始める。比較は保存済み根拠/resultのreplayで行い、shadowとして外部LLMやResearchを二重実行しない。
+  </p>
+  <p>
+    旧running
+    protocolをdrainしてから新規jobにだけ新protocolを付ける。rollbackでは新規Agentic開始を止め、進行run/revision/子jobを保持し、新protocolを旧workerへ流さない。追加schemaを旧世代へ戻さない。fence違反、予算超過開始、二重Research、支持未検証の採用が出たら新規開始を停止し、run履歴から原因を確認する。
+  </p>
+  <p>
+    公開gateはC1〜C5、関連S作業、全C-T、既存Finalize回帰、品質比較、移行backup/復元試験。36K/4並列のlive確認はLARMの公開context・token計測・capacity対応後、Research
+    live確認は両サービスcontract対応後に行う。これらはローカル実装・mock検証と区別して報告する。実Queueは本計画書作成のために再開せず、実装と検証が完了した後の運用切替で再開する。
+  </p>
+</article>

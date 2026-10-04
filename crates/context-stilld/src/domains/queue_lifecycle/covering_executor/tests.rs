@@ -9,14 +9,14 @@ use super::external_fetch::{
 };
 use super::helpers::{chat_url, failure_result};
 use super::negative_response::parse_negative_response;
-use super::persistence::persist_negative_covering_result;
+use super::persistence::persist_covering_result;
 use super::positive_response::{
     parse_positive_response, positive_source_context, positive_terminal_result,
     render_catalog_prompt,
 };
 use super::source::{positive_source_content, source_reference};
 use super::types::{
-    CoveringExternalSearchConfig, NegativeCoveringExecution, NegativeCoveringPersistStatus,
+    CoveringExecution, CoveringExternalSearchConfig, CoveringPersistStatus,
     EXTERNAL_FETCH_BYTE_LIMIT,
 };
 
@@ -41,7 +41,7 @@ fn serve_chat_content(content: Value) -> (String, std::thread::JoinHandle<()>) {
         let mut request = [0_u8; 16_384];
         let _ = stream.read(&mut request).unwrap();
         let body = json!({
-            "choices": [{"message": {"content": content.to_string()}}]
+            "choices": [{"message": {"content": content.to_string()}, "finish_reason": "stop"}]
         })
         .to_string();
         write!(
@@ -178,8 +178,8 @@ fn create_persistence_schema(connection: &Connection) {
         .unwrap();
 }
 
-fn execution() -> NegativeCoveringExecution {
-    NegativeCoveringExecution {
+fn execution() -> CoveringExecution {
+    CoveringExecution {
             job_id: "cover-1".to_string(),
             found_candidate_id: "candidate-1".to_string(),
             distillation_version: "v-test".to_string(),
@@ -288,8 +288,8 @@ fn positive_source_only_execution_persists_atomically() {
     );
     let mut connection = Connection::open_in_memory().unwrap();
     create_persistence_schema(&connection);
-    let status = persist_negative_covering_result(&mut connection, &execution, &result).unwrap();
-    assert_eq!(status, NegativeCoveringPersistStatus::Completed);
+    let status = persist_covering_result(&mut connection, &execution, &result).unwrap();
+    assert_eq!(status, CoveringPersistStatus::Completed);
     let persisted = connection
             .query_row(
                 "select status, json_extract(metadata, '$.coveringMode'), (select count(*) from finalize_distille_queue) from evidence_coverage_results",
@@ -323,8 +323,8 @@ fn positive_execution_without_project_identity_is_quarantined_before_finalize() 
 
     let mut connection = Connection::open_in_memory().unwrap();
     create_persistence_schema(&connection);
-    let status = persist_negative_covering_result(&mut connection, &execution, &result).unwrap();
-    assert_eq!(status, NegativeCoveringPersistStatus::Completed);
+    let status = persist_covering_result(&mut connection, &execution, &result).unwrap();
+    assert_eq!(status, CoveringPersistStatus::Completed);
     let persisted = connection
             .query_row(
                 "select status, reason, (select count(*) from finalize_distille_queue) from evidence_coverage_results",
@@ -713,9 +713,9 @@ fn persist_negative_knowledge_ready_completes_and_enqueues_finalize_once() {
     let execution = execution();
     let result = parse_negative_response(&execution, &response.to_string()).unwrap();
 
-    let status = persist_negative_covering_result(&mut connection, &execution, &result).unwrap();
+    let status = persist_covering_result(&mut connection, &execution, &result).unwrap();
 
-    assert_eq!(status, NegativeCoveringPersistStatus::Completed);
+    assert_eq!(status, CoveringPersistStatus::Completed);
     let queue = connection
             .query_row(
                 "select status, attempt_count, last_outcome_kind, locked_by from covering_evidence_queue where id = 'cover-1'",
@@ -797,9 +797,9 @@ fn persist_negative_parse_failure_returns_job_with_backoff() {
     let execution = execution();
     let result = failure_result("parse_failed", "invalid JSON");
 
-    let status = persist_negative_covering_result(&mut connection, &execution, &result).unwrap();
+    let status = persist_covering_result(&mut connection, &execution, &result).unwrap();
 
-    assert_eq!(status, NegativeCoveringPersistStatus::Retrying);
+    assert_eq!(status, CoveringPersistStatus::Retrying);
     let queue = connection
             .query_row(
                 "select status, attempt_count, next_run_at is not null, completed_at, last_outcome_kind from covering_evidence_queue where id = 'cover-1'",
@@ -839,7 +839,7 @@ fn persist_negative_retry_updates_existing_result_under_duplicate_trigger() {
     create_persistence_schema(&connection);
     let first_execution = execution();
     let first_result = failure_result("provider_failed", "HTTP 503");
-    persist_negative_covering_result(&mut connection, &first_execution, &first_result).unwrap();
+    persist_covering_result(&mut connection, &first_execution, &first_result).unwrap();
     connection
         .execute_batch(
             "
@@ -881,10 +881,9 @@ fn persist_negative_retry_updates_existing_result_under_duplicate_trigger() {
     });
     let retry_result = parse_negative_response(&retry_execution, &response.to_string()).unwrap();
 
-    let status =
-        persist_negative_covering_result(&mut connection, &retry_execution, &retry_result).unwrap();
+    let status = persist_covering_result(&mut connection, &retry_execution, &retry_result).unwrap();
 
-    assert_eq!(status, NegativeCoveringPersistStatus::Completed);
+    assert_eq!(status, CoveringPersistStatus::Completed);
     let evidence = connection
         .query_row(
             "select count(*), max(status) from evidence_coverage_results",
@@ -906,7 +905,7 @@ fn persist_reprocessed_attempt_uses_lease_scoped_terminal_event_id() {
         "project_identity_required",
         Vec::new(),
     );
-    persist_negative_covering_result(&mut connection, &first_execution, &result).unwrap();
+    persist_covering_result(&mut connection, &first_execution, &result).unwrap();
     connection
         .execute_batch(
             "
@@ -930,10 +929,9 @@ fn persist_reprocessed_attempt_uses_lease_scoped_terminal_event_id() {
     reprocessed_execution.provider_lease.id = "lease-2".to_string();
     reprocessed_execution.provider_lease.worker_id = "worker-2".to_string();
 
-    let status =
-        persist_negative_covering_result(&mut connection, &reprocessed_execution, &result).unwrap();
+    let status = persist_covering_result(&mut connection, &reprocessed_execution, &result).unwrap();
 
-    assert_eq!(status, NegativeCoveringPersistStatus::Completed);
+    assert_eq!(status, CoveringPersistStatus::Completed);
     let event_count: i64 = connection
             .query_row(
                 "select count(*) from distillation_queue_events where queue_job_id = 'cover-1' and event_type = 'completed'",
@@ -977,13 +975,12 @@ fn stale_covering_result_cannot_overwrite_reclaimed_job() {
         Vec::new(),
     );
 
-    let status =
-        persist_negative_covering_result(&mut connection, &stale_execution, &result).unwrap();
+    let status = persist_covering_result(&mut connection, &stale_execution, &result).unwrap();
     let repeated_status =
-        persist_negative_covering_result(&mut connection, &stale_execution, &result).unwrap();
+        persist_covering_result(&mut connection, &stale_execution, &result).unwrap();
 
-    assert_eq!(status, NegativeCoveringPersistStatus::Superseded);
-    assert_eq!(repeated_status, NegativeCoveringPersistStatus::Superseded);
+    assert_eq!(status, CoveringPersistStatus::Superseded);
+    assert_eq!(repeated_status, CoveringPersistStatus::Superseded);
     let evidence_count: i64 = connection
         .query_row(
             "select count(*) from evidence_coverage_results",

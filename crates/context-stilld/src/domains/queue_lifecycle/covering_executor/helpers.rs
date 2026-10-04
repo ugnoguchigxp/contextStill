@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use super::types::{NegativeCoveringResult, NegativeDistilled};
+use super::types::{CoveringResult, NegativeDistilled};
 
 pub(super) fn build_negative_body(distilled: &NegativeDistilled) -> String {
     [
@@ -29,8 +29,8 @@ pub(super) fn non_empty(value: Option<&str>) -> bool {
     value.is_some_and(|value| !value.trim().is_empty())
 }
 
-pub(super) fn failure_result(status: &str, reason: &str) -> NegativeCoveringResult {
-    NegativeCoveringResult {
+pub(super) fn failure_result(status: &str, reason: &str) -> CoveringResult {
+    CoveringResult {
         status: status.to_string(),
         stage: "final",
         candidate: None,
@@ -59,24 +59,8 @@ pub(super) fn priority_for_source_kind(source_kind: &str) -> i64 {
     }
 }
 
-pub(super) fn chat_url(api_base_url: &str, api_path: &str) -> String {
-    let base = api_base_url.trim_end_matches('/');
-    let path = if api_path.trim().is_empty() {
-        "/v1/chat/completions"
-    } else {
-        api_path.trim()
-    };
-    let normalized_path = if path.starts_with('/') {
-        path.to_string()
-    } else {
-        format!("/{path}")
-    };
-    if base.ends_with("/v1") && normalized_path.starts_with("/v1/") {
-        format!("{}{}", base, &normalized_path[3..])
-    } else {
-        format!("{base}{normalized_path}")
-    }
-}
+#[cfg(test)]
+pub(super) use crate::domains::agent_runtime::transport::chat_url;
 
 pub(super) fn stable_id(namespace: &str, value: &str) -> String {
     let digest = Sha256::digest(format!("{namespace}:{value}").as_bytes());

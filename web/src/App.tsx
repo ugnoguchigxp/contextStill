@@ -132,14 +132,28 @@ const auditRoute = createRoute({
 
 export const settingsSections = new Set([
   "general",
-  "llmprovider",
-  "llmpool",
-  "taskrouting",
-  "search",
-  "embedding",
-  "distillation-runtime",
+  "connections",
+  "assignments",
+  "execution",
+  "retrieval",
   "advanced",
 ]);
+export const legacySettingsSections: Record<string, string> = {
+  llmprovider: "connections",
+  llmpool: "execution",
+  taskrouting: "assignments",
+  "distillation-runtime": "assignments",
+  search: "retrieval",
+  embedding: "retrieval",
+};
+export const legacySettingsAnchors: Record<string, string> = {
+  llmpool: "providerPools",
+  search: "search",
+  embedding: "embedding",
+};
+export function canonicalSettingsSection(section: string): string {
+  return settingsSections.has(section) ? section : (legacySettingsSections[section] ?? "general");
+}
 
 const settingsRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -171,7 +185,8 @@ const legacySettingsSectionRedirectRoute = createRoute({
   beforeLoad: ({ params }) => {
     throw redirect({
       to: "/setting/$section",
-      params: { section: settingsSections.has(params.section) ? params.section : "general" },
+      params: { section: canonicalSettingsSection(params.section) },
+      hash: legacySettingsAnchors[params.section],
       replace: true,
     });
   },
@@ -184,7 +199,8 @@ const settingsRoute = createRoute({
     if (!settingsSections.has(params.section)) {
       throw redirect({
         to: "/setting/$section",
-        params: { section: "llmprovider" },
+        params: { section: canonicalSettingsSection(params.section) },
+        hash: legacySettingsAnchors[params.section],
         replace: true,
       });
     }

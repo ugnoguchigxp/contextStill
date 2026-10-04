@@ -676,7 +676,7 @@ describe("settings runtime cache", () => {
     }
   });
 
-  test("normalizes Cover Evidence routing to one queue processing route", () => {
+  test("preserves independent Cover Evidence processing routes", () => {
     const row = {
       id: "settings-row-1",
       namespace: "runtime",
@@ -708,12 +708,16 @@ describe("settings runtime cache", () => {
 
     const parsed = parseDocumentValue(row);
 
-    expect(parsed.taskRouting.coverEvidence.sourceSupport).toEqual(
-      parsed.taskRouting.coverEvidence.externalEvidence,
-    );
-    expect(parsed.taskRouting.coverEvidence.mcpEvidence).toEqual(
-      parsed.taskRouting.coverEvidence.externalEvidence,
-    );
+    expect(parsed.taskRouting.coverEvidence.sourceSupport).toMatchObject({
+      provider: "openai",
+      model: "gpt-source",
+      fallback: [],
+    });
+    expect(parsed.taskRouting.coverEvidence.mcpEvidence).toMatchObject({
+      provider: "bedrock",
+      model: "bedrock-mcp",
+      fallback: [],
+    });
     expect(parsed.taskRouting.coverEvidence.externalEvidence).toMatchObject({
       provider: "local-llm",
       model: settings.providers["local-llm"].model,
@@ -818,12 +822,12 @@ describe("settings runtime cache", () => {
 
     expect(parsed.taskRouting.findCandidate.source).toMatchObject({
       provider: "azure-openai",
-      model: "gpt-5-4-mini",
+      model: "gpt-source",
       fallback: ["local-llm"],
     });
     expect(parsed.taskRouting.findCandidate.vibe).toMatchObject({
       provider: "bedrock",
-      model: undefined,
+      model: "bedrock-vibe",
       fallback: [],
     });
   });
@@ -835,6 +839,7 @@ describe("settings runtime cache", () => {
       key: "runtime_settings",
       value: {
         ...settings,
+        providerPools: undefined,
         providers: {
           ...settings.providers,
           "local-llm": {
@@ -1156,7 +1161,7 @@ describe("settings runtime cache", () => {
     expect(normalized.providerPools[0]).toMatchObject({
       id: "local-llm-default",
       label: "Persisted Local LLM Pool",
-      maxConcurrent: 2,
+      maxConcurrent: 10,
       targets: [
         { provider: "local-llm", localLlmModelId: "local-primary" },
         { provider: "local-llm", localLlmModelId: "local-qwen" },
