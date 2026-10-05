@@ -27,14 +27,19 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = std::env::temp_dir().join(format!(
-            "contextstill-agent-review-{}-{}",
+            "contextstill-agent-review-{}-{}-{}",
             std::process::id(),
+            {
+                static SEQUENCE: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir(&dir).unwrap();
         let path = dir.join("test.sqlite");
         crate::domains::vector_index::service::register_sqlite_vec();
         let mut c = Connection::open(&path).unwrap();
@@ -234,7 +239,10 @@ fn truncated_response_is_accounted_and_never_applied_after_restart() {
         .unwrap();
     assert_eq!(
         (status.as_str(), reason.as_str()),
-        ("paused", "provider_context_contract_violation")
+        (
+            "paused",
+            "structured_output_incomplete finish_reason=\"length\""
+        )
     );
     assert_eq!(
         c.query_row("select count(*) from agent_steps", [], |r| r

@@ -1,0 +1,17 @@
+{
+  "contextLimit": {
+    "runId": "ar-1e5b512860c4eb5d969402807d96ba24d72e2b66e3cbc2edbafdb8d3e6687da5",
+    "systemUtf8Bytes": 2406,
+    "historyJsonUtf8Bytes": 17808,
+    "minimalRequestByteEstimate": 21913,
+    "inputBudget": 20480,
+    "exceedsWithoutAnySourceOrContracts": true,
+    "method": "current literal prompt and stored repair history; all other user fields omitted; JSON UTF-8 bytes plus 256 framing per message"
+  },
+  "curation401": {
+    "method": "compile original enum and classifier plus original embedding predicate extracted unchanged from repository; standalone harness invokes actual function",
+    "sourceSha256": "9d8f3dfee75e407c11ef7f5c81c92efddf5a1012f5f319de662c82266b93f161",
+    "result": "401 classified=MODEL_CONTRACT_INVALID retryable=false"
+  },
+  "observedAtUtc": "2026-10-04T14:53:19.828929+00:00"
+}

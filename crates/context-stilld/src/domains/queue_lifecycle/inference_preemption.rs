@@ -21,19 +21,21 @@ const MAX_RETRY_AFTER_MS: u64 = 30_000;
 pub(super) enum InferencePauseKind {
     ForegroundPreempted,
     ProviderUnreachable,
+    CredentialRejected,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct InferencePreemption {
     pub(super) kind: InferencePauseKind,
-    pub(super) retry_after_floor_ms: u64,
+    pub(crate) retry_after_floor_ms: u64,
     pub(super) message: Option<String>,
 }
 
 impl InferencePreemption {
-    pub(super) fn outcome(&self) -> &'static str {
+    pub(crate) fn outcome(&self) -> &'static str {
         match self.kind {
             InferencePauseKind::ForegroundPreempted => PREEMPTION_OUTCOME,
+            InferencePauseKind::CredentialRejected => "provider_credential_rejected",
             InferencePauseKind::ProviderUnreachable => PROVIDER_UNREACHABLE_OUTCOME,
         }
     }
@@ -41,6 +43,7 @@ impl InferencePreemption {
     pub(super) fn event(&self) -> &'static str {
         match self.kind {
             InferencePauseKind::ForegroundPreempted => PREEMPTION_EVENT,
+            InferencePauseKind::CredentialRejected => "contextstill_provider_credential_rejected",
             InferencePauseKind::ProviderUnreachable => PROVIDER_UNREACHABLE_EVENT,
         }
     }
@@ -48,6 +51,7 @@ impl InferencePreemption {
     pub(super) fn reason(&self) -> &'static str {
         match self.kind {
             InferencePauseKind::ForegroundPreempted => PREEMPTION_REASON,
+            InferencePauseKind::CredentialRejected => "provider_credential_rejected",
             InferencePauseKind::ProviderUnreachable => PROVIDER_UNREACHABLE_REASON,
         }
     }
@@ -55,6 +59,7 @@ impl InferencePreemption {
     pub(super) fn release_reason(&self) -> &'static str {
         match self.kind {
             InferencePauseKind::ForegroundPreempted => "foreground_preempted",
+            InferencePauseKind::CredentialRejected => "provider_credential_rejected",
             InferencePauseKind::ProviderUnreachable => PROVIDER_UNREACHABLE_REASON,
         }
     }
@@ -62,6 +67,9 @@ impl InferencePreemption {
     pub(super) fn ui_message(&self) -> &'static str {
         match self.kind {
             InferencePauseKind::ForegroundPreempted => PREEMPTION_UI_MESSAGE,
+            InferencePauseKind::CredentialRejected => {
+                "認証情報を更新するため一時停止しました。接続確認後に自動再開します。"
+            }
             InferencePauseKind::ProviderUnreachable => PROVIDER_UNREACHABLE_UI_MESSAGE,
         }
     }
@@ -76,7 +84,7 @@ pub(crate) enum InferenceRequestError {
 impl fmt::Display for InferenceRequestError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Preempted(_) => formatter.write_str("LARM foreground inference preempted"),
+            Self::Preempted(pause) => formatter.write_str(pause.outcome()),
             Self::Other(message) => formatter.write_str(message),
         }
     }
@@ -94,13 +102,23 @@ impl From<&str> for InferenceRequestError {
     }
 }
 
-pub(crate) fn classify_larm_foreground_preemption(
+pub(crate) fn classify_larm_provider_pause(
     target_id: &str,
     status: u16,
     headers: &HeaderMap,
     body: &str,
 ) -> Option<InferencePreemption> {
-    if !target_id.starts_with("larm-agent-connection:") || status != 409 {
+    if !target_id.starts_with("larm-agent-connection:") {
+        return None;
+    }
+    if status == 401 {
+        return Some(InferencePreemption {
+            kind: InferencePauseKind::CredentialRejected,
+            retry_after_floor_ms: 1000,
+            message: None,
+        });
+    }
+    if status != 409 {
         return None;
     }
     let payload: Value = serde_json::from_str(body).ok()?;
@@ -238,25 +256,21 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(RETRY_AFTER, HeaderValue::from_static("7"));
         let body = r#"{"error":{"code":"foreground_preempted","message":"foreground won"}}"#;
-        let classified = classify_larm_foreground_preemption(
-            "larm-agent-connection:background",
-            409,
-            &headers,
-            body,
-        )
-        .unwrap();
+        let classified =
+            classify_larm_provider_pause("larm-agent-connection:background", 409, &headers, body)
+                .unwrap();
         assert_eq!(classified.retry_after_floor_ms, 7_000);
         assert_eq!(classified.kind, InferencePauseKind::ForegroundPreempted);
         assert_eq!(classified.message.as_deref(), Some("foreground won"));
-        assert!(classify_larm_foreground_preemption("local-a", 409, &headers, body).is_none());
-        assert!(classify_larm_foreground_preemption(
+        assert!(classify_larm_provider_pause("local-a", 409, &headers, body).is_none());
+        assert!(classify_larm_provider_pause(
             "larm-agent-connection:background",
             409,
             &headers,
             r#"{"error":{"code":"allocation_inactive"}}"#
         )
         .is_none());
-        assert!(classify_larm_foreground_preemption(
+        assert!(classify_larm_provider_pause(
             "larm-agent-connection:background",
             409,
             &headers,
@@ -291,5 +305,36 @@ mod tests {
         assert!((1_000..=2_000).contains(&preemption_retry_delay_ms(1, 1_000, 500)));
         assert!((1_000..=30_000).contains(&preemption_retry_delay_ms(20, 1_000, 99_999)));
         assert_eq!(preemption_retry_delay_ms(20, 90_000, 0), 30_000);
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+    #[test]
+    fn rejected_credential_is_infrastructure_even_without_an_error_body() {
+        for body in [
+            "",
+            "not json",
+            r#"{"error":{"code":"unauthorized","message":"invalid"}}"#,
+        ] {
+            let pause = classify_larm_provider_pause(
+                "larm-agent-connection:test",
+                401,
+                &HeaderMap::new(),
+                body,
+            )
+            .unwrap();
+            assert_eq!(pause.kind, InferencePauseKind::CredentialRejected);
+            assert_eq!(pause.outcome(), "provider_credential_rejected");
+        }
+        assert!(classify_larm_provider_pause("static", 401, &HeaderMap::new(), "").is_none());
+        assert!(classify_larm_provider_pause(
+            "larm-agent-connection:test",
+            403,
+            &HeaderMap::new(),
+            ""
+        )
+        .is_none());
     }
 }

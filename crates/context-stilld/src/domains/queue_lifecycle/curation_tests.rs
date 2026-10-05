@@ -795,6 +795,8 @@ fn curation_retry_classifier_separates_infrastructure_from_model_contracts() {
     for error in [
         "curation provider request failed: connection refused",
         "curation provider HTTP 503",
+        "curation provider HTTP 401: unauthorized",
+        "curation provider HTTP 401: bearer token has expired",
         r#"agent session HTTP 409: {"retryable":true,"retry_after_seconds":42}"#,
         "local-llm agent session stopped at turn.failed",
         "embedding daemon request failed: timed out",

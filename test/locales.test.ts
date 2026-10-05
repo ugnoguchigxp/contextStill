@@ -40,8 +40,8 @@ describe("locale helpers", () => {
     }
 
     expect(ja).toContain("## 主要MCPツール");
-    expect(ja).toContain("Planでも実装判断でもない単純な単タスクでは `context_compile` を省略");
-    expect(ja).toContain("Planまたは実装判断を伴うタスクでは");
+    expect(ja).toContain("簡単な依頼では `context_compile` を省略");
+    expect(ja).toContain("ある程度まとまったタスクで `context_compile` を使う");
     expect(ja).toContain("関連する設計書を先に読み");
     expect(ja).toContain("対象がどのような実装かを確認してから `context_compile`");
     expect(ja).toContain("## SAAA・エージェントからの検索");
@@ -54,9 +54,9 @@ describe("locale helpers", () => {
     expect(ja).not.toContain("title / body / avoid / prefer の自然文は日本語");
     expect(ja).not.toContain("SKILL.md 相当");
     expect(en).toContain("## Primary MCP Tools");
-    expect(en).toContain("neither planning nor implementation decisions");
-    expect(en).toContain("For planning or tasks that require implementation decisions");
-    expect(en).toContain("first read the relevant design documents");
+    expect(en).toContain("Skip `context_compile` for simple requests");
+    expect(en).toContain("Use `context_compile` for substantial tasks");
+    expect(en).toContain("First read the relevant design documents");
     expect(en).toContain("confirm how the target is implemented, then call `context_compile`");
     expect(en).toContain("## Search from SAAA or Other Agents");
     expect(en).toContain("`search_knowledge`: Use it to directly find a specific constraint");

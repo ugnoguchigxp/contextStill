@@ -22,6 +22,34 @@
     </li>
   </ol>
 
+  <h2>追加ダブルチェック：ContextStill側にも問題がある</h2>
+  <p>
+    「このプロジェクト側では問題が起きていない」という認識は成立しない。LARM側の応答・接続契約を調べる必要はあるが、以下の2点はContextStill側のソースと実データから確認できる。
+  </p>
+  <ol>
+    <li>
+      Curationの401分類が誤っている。既存のCurationFailureKind、classify_curation_error、Embedding判定関数を変更せず抽出してコンパイルし、実際に記録された期限切れtokenの401文面を渡したところ、MODEL_CONTRACT_INVALID、retryable=falseになった。保存処理はこの結果でattemptを消費する。認証の復旧が必要な障害を出力契約違反として扱っている。
+    </li>
+    <li>
+      Findingの形式修復履歴が入力予算を使い切る。context_limitとなったrunの保存履歴から、原資料・出力契約・候補等をすべて省き、現行system
+      promptとhistoryだけでリクエストを再構成しても、Consumerの推定入力は21,913。32,768のwindowから出力8,192と余裕4,096を引いた入力予算20,480を超える。engine.rsは資料chunkだけを縮小し、修復応答の全文履歴を縮小しないため、このケースは原資料を削っても修復要求を送れない。これは実tokenizerの入力超過を証明するものではなく、Consumer自身の送信前判定で必ず拒否されることを示す。
+    </li>
+  </ol>
+  <p>
+    ほかに、Findingの実応答にはcandidateContractが要求するcandidate/evidence/unresolvedQuestionsの入れ子ではなく、type/polarity/title/contentを直接candidates配列へ置く形式が複数あった。これを拒否する検証自体は正常である。一方、修復指示は具体的な型・根拠の検証エラーをinvalid_agent_outputへまとめており、修復後にも同じ構造違反が残っている。出力契約の伝達と修復手順はConsumer側でも改善対象となる。
+  </p>
+  <p>
+    接続更新のclaimable判定はConsumer側の候補原因だが、renew応答を採取していないためLARMとConsumerのどちらの契約違反かは未確定。LARM側だけが原因という前提で調査依頼を行わず、公開契約との照合として扱う。
+  </p>
+  <p>
+    既存テストはprovider_connectionが49件成功・1件ignored、agent_runtimeの直列実行が42件成功、curationが22件成功・3件ignored。agent_runtimeの2並列実行では41件成功、1件がfixture作成時のfinding_candidate_queue.id重複で失敗し、直列再実行で成功した。並列失敗の原因は未確定で、本番Queue障害と同じ原因とは判断していない。既存テストの成功だけで上記2件を問題なしと扱うことはできない。
+  </p>
+  <p>
+    追加の根拠は<a href="assets/queue-failure-2026-10-04/consumer-double-check.json"
+      >401分類の実行結果と、修復履歴による入力予算超過の下限計算</a
+    >に保存した。実装・設定・Queue状態の変更は行っていない。
+  </p>
+
   <h2>Queue別の状況</h2>
   <table>
     <caption>
@@ -201,4 +229,127 @@
       調査中もdaemonは稼働し、接続待ちの解消とEpisodeの追加完了を観測した。採取前後で件数は変わる。途中本文やrenewの生応答、別サービスの内部ログは未採取。
     </li>
   </ul>
+  <h2>2026年10月5日のConsumer改修</h2>
+  <p>
+    LARM側調査で、claimableは10秒間の成功probeキャッシュを表し、readyでも期限切れ後にfalseとなることが確認された。GETの反復はprobeを実行しない。Consumerの待機は接続とproviderのreadinessを確認して直接claimへ進む。claimの409/503は待機として扱う。19分停止の全時系列と過去2件の401の個別原因は引き続き未確定であり、当時の因果関係を確定したとは扱わない。
+  </p>
+  <ul>
+    <li>
+      Finding/Coveringのversion=1
+      envelopeを非空json_schemaで送信する。CandidateDraftのcandidate/evidence/unresolvedQuestionsを明示し、文章長を制限する。型付きaction、引用位置、trusted
+      identity、独立した最終検証は従来のhost判定を維持する。
+    </li>
+    <li>
+      LARMへの有限な判断処理は公開リクエストのchat_template_kwargs.enable_thinking=falseを明示する。最大出力token数は増やさない。lengthと空本文は成功にせず、usageとrequest
+      IDを保存する。
+    </li>
+    <li>
+      形式修復は一度のみ。生の失敗応答を再投入せず、診断・元応答のhash・byte数を渡す。旧履歴に残った全文も入力構築時に縮約する。成功したreceiptや原資料snapshotは変更しない。
+    </li>
+    <li>
+      LARM HTTP
+      401をprovider_credential_rejectedへ分類する。受理されなかった要求はrejectedとして記録し、予算予約と呼出回数を戻して再開待ちへ移す。認証情報のキャッシュを無効にし、旧情報の全リクエストが終了してから再claimする。失効の個別理由はHTTP
+      401から推測しない。
+    </li>
+    <li>
+      CurationのHTTP
+      401は接続障害として扱い、モデル契約の試行回数を消費しない。通信結果が未確定の要求は引き続きresult_unknownとして隔離し、再送や世代更新で消さない。
+    </li>
+    <li>
+      renewの再試行は保存済みの同じIdempotency-Keyを使い、再起動をまたいでも重複更新を避ける。新しい論理更新には新しいkeyを使う。更新は全リクエストのdrain後にのみ実行する。
+    </li>
+    <li>
+      形式修復や接続待機などのQueue待機時間を10分の実行期限から除く。Research自身の期限と呼出回数・token上限は維持する。全体の経過時間を最大24時間に制限し、期限切れはagent_deadline_exceededとして停止する。
+    </li>
+    <li>
+      Queueの再開待ち・停止理由をrun IDとclaim
+      epoch付きイベントへ保存する。再起動後にもlength等の保存済みエラーを維持し、包括的な契約違反へ置き換えない。
+    </li>
+    <li>
+      smokeとSettings接続テストは非空JSON schemaと厳密なstop・本文検査を使う。live
+      smokeはrenew、旧認証情報の401、新認証情報での継続も検証する。並列テストの一時ディレクトリ名にプロセス内連番を加え、衝突を防ぐ。
+    </li>
+  </ul>
+  <p>
+    LARM側サービス・モデル・配備は変更しない。Consumerのテストと隔離接続で検証する。既存の不明要求の復旧には、providerで実行されなかったことの確認が必要である。
+  </p>
+  <h3>実推論で追加確認した契約の問題</h3>
+  <p>
+    隔離した小入力でも、非空json_schemaだけでは候補の入れ子、必須questions、assessmentの階層、引用の余分なtoByteを防げなかった。backendが全schema条件を保証するとは扱わない。runtimeの出力構造例と選択中のpolarityを明示し、入力の引用を出力用の4項目に揃えた。assessmentの型違反も一度だけ形式修復できるようにした。
+  </p>
+  <p>
+    最終検証で固定本文の再出力が書き換わる事例を再現した。最終検証のresultはnullを出力する契約へ変更し、hostが固定artifactを結び付ける。旧方式の完全一致echoは受け入れるが、変更されたechoは拒否する。検証者は原資料に基づく支持・反証と重要主張のquoteだけを返し、本文を生成し直さない。
+  </p>
+  <p>
+    実LARMを使う隔離DBの回帰試験はFinding完了、Covering完了、独立最終検証後のFinalize投入まで成功した。単純probeの成功だけで業務処理の合格としない。別のlive
+    smokeでは構造化stop、renew、旧tokenの401、新tokenの推論継続を確認した。一般入力の品質やbackend全keyword対応を保証する結果ではない。
+  </p>
+  <p>
+    renewは要求・公開HTTP応答・再claim完了を時刻、接続ID、operation hash、公開request
+    ID、期限で記録する。tokenとIdempotency-Keyの生値は記録しない。推論結果が不明な場合も、安全なHTTP
+    status・公開error code・request IDをreceiptに残し、予約は維持する。再処理は新しいinput
+    generationで行い、旧receiptを保存したまま監査イベントをtransaction内に残す。
+  </p>
+  <h3>常駐処理への反映と限定した再処理</h3>
+  <p>
+    最終のRust回帰試験は601件中590件成功、live環境を要する11件は通常実行では除外した。型検査、Clippy、managed
+    promptの整合・境界検査、文書検査を通過した。別実行のlive試験でrenew・旧認証の401・新認証の構造化stopと、隔離DBでのFinding→Covering→Finalize投入を確認した。
+  </p>
+  <p>
+    全7Queueの新規受付だけを一時停止して既存の実行をdrainし、active
+    leaseが0であることを確認した。常駐処理停止中にSQLiteのバックアップを作成し、更新版を起動した。受付設定は変更前の状態に戻した。再投入は既知のlength・形式・context制限・待機を含むtimeoutに限り、Finding
+    34件とEpisode 6件に適用した。Findingはinput
+    generationを1つ進めて旧receiptを保存した。result_unknownの5件と原因未確定の過去大量失敗は再送しない。
+  </p>
+  <p>
+    最終ビルド中に空き容量が不足し、常駐処理の起動時にも書込失敗が発生した。このプロジェクトの再生成できるincremental
+    build
+    cacheを削除してビルド・writer起動を復旧した。バックアップは保持した。また開発用実行ファイルの更新でOS秘密ストアの既存参照を読めなくなり、許可済みのLARM認証を新実行ファイルから保存・読戻しした。plistには新しい参照のみを置き、生値をファイルに保存していない。
+  </p>
+  <p>
+    <a href="assets/queue-failure-2026-10-04/consumer-recovery-2026-10-05.json">再処理の監査一覧</a
+    >と<a href="assets/queue-failure-2026-10-04/consumer-runtime-after-fix-2026-10-05.json"
+      >更新後の実Queueスナップショット</a
+    >に投入件数と状態を保存する。常駐処理の接続・実ジョブ進行を確認中であり、再投入済みであることだけを復旧完了の根拠にしない。
+  </p>
+  <h3>常駐接続の残る阻害要因</h3>
+  <p>
+    2026-10-05 01:09 JST時点で、更新版の常駐処理によるLARM
+    activity要求はtimeout=false、connect=true、macOSのos_error=65（No route to
+    host）で失敗している。同じMac上の操作環境からの隔離live接続と推論は成功しているため、backend全体の停止とは判定しない。起動環境ごとのネットワーク許可の差を疑っているが、macOSの設定画面での確認前であり原因確定ではない。
+  </p>
+  <p>
+    GUI確認を試みたがMacがロック中であり、操作用toolからロック解除不能と返された。利用者へ解除を依頼した。Queue受付設定は元の状態、再投入40件はpending、active
+    leaseは0。不明な5要求の予約・旧receiptは保持している。実Queueの完了と継続稼働を確認するまでは復旧完了とは扱わない。LARM側のサービス・モデル・配備は変更していない。
+  </p>
+  <h3>2026年10月5日07:40 JSTの最終確認</h3>
+  <p>
+    Macのロック解除とGUIアクセスを確認した。システム設定のローカルネットワークにはcontext-stilldの複数の項目があり、表示された全項目がonだった。設定は変更していない。常駐処理は約6時間継続し、renewはHTTP
+    200と再claimを反復している。直近の07:35
+    JSTにも成功した。前回の接続エラーは現在のブロッカーではないが、当時のos_error=65の原因を確定したとは扱わない。
+  </p>
+  <p>
+    再投入したEpisode 6件は全件completed / episodes_distilled。Finding
+    34件は3件skipped（抽出対象なし）、31件pausedで、停止理由は引用不一致15件、形式・必須項目・questionの契約違反9件、結果不明7件である。Finding→Covering→Finalizeの実資料による本番完了は確認できていない。隔離した短い入力の成功を一般入力への合格とした前提は成立しない。
+  </p>
+  <p>
+    引用不一致の保存応答を調べると、原文に完全一致する引用でもfromByteを誤ったものと、引用文を原文から書き換えたものがあった。既読範囲の外にある正しい引用だけが原因という説明ではない。出力schemaを送信しても余分なtoByte、必須evidence/unresolvedQuestionsの欠落、action/questionの形式違反が残る。Consumerとモデルの出力契約・引用位置の受渡しには追加対応が必要であり、検証を弱めて成功にしてはいけない。
+  </p>
+  <p>
+    結果不明は全体で14要求（旧5件、新9件）。新9件の保存receiptにはLARM公開HTTP 500とrequest
+    IDがあり、うち7件は再投入34件に含まれる。公開応答だけではbackendでの推論完了・usage・失敗原因を確定できず、旧予約を保持している。request
+    IDを用いたLARM側照合が必要である。
+  </p>
+  <p>
+    現在のCovering
+    2件はclaim_requires_primary_supportで停止している。保存されたsourceはprovided_candidateだけであり、モデルは候補本文をsupportsとして引用していた。候補自身を一次資料の証明に使わないgateが停止させている。一次資料を取得・接続する必要がある。Finalizeに新しい合格成果物は流れていない。Curationはkeep_separate/needs_evidence/stale_subjectで処理を継続しており、通信停止ではない。Merge系Queueには新規処理対象がなく、継続完了を確認したとは扱わない。
+  </p>
+  <p>
+    ディスク空きは約650
+    MiBで、現在のwriterは動作しているが再度の容量不足は稼働上のリスクとして残る。再生成可能なこのプロジェクトのincremental
+    cacheを整理した。DBバックアップと利用者資料は保持した。<a
+      href="assets/queue-failure-2026-10-04/consumer-final-check-2026-10-05.json"
+      >最終確認の分類、引用診断、HTTP 500のrequest IDを含む根拠</a
+    >を保存した。Consumerの追加対応とLARM照合が必要なため、全体の復旧は未完了である。
+  </p>
 </article>

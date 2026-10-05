@@ -6,7 +6,7 @@ use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
 use super::super::inference_preemption::{
-    classify_larm_foreground_preemption, classify_larm_provider_unreachable,
+    classify_larm_provider_pause, classify_larm_provider_unreachable,
     classify_larm_provider_unreachable_message, InferenceRequestError,
 };
 use crate::shared::agent_session::{is_agent_session_api_path, AgentSessionRequest};
@@ -288,14 +288,19 @@ pub(super) fn review_near_duplicate_episode(
             .map_err(|error| InferenceRequestError::Other(error.to_string()));
     }
     let url = build_local_llm_chat_completions_url(&target.api_base_url, &target.api_path);
-    let mut request = client.post(url).json(&json!({
-        "model": target.model,
-        "messages": messages,
-        "max_tokens": 1536,
-        "temperature": 0,
-        "stream":false,
-        "response_format":super::super::structured_output::format("episode_duplicate")
-    }));
+    let mut request = client
+        .post(url)
+        .json(&super::super::structured_output::decision_options(
+            json!({
+                "model": target.model,
+                "messages": messages,
+                "max_tokens": 1536,
+                "temperature": 0,
+                "stream":false,
+                "response_format":super::super::structured_output::format("episode_duplicate")
+            }),
+            &target.target_id,
+        ));
     if let Some(api_key) = api_key.map(str::trim).filter(|value| !value.is_empty()) {
         request = request.header(
             "authorization",
@@ -326,7 +331,7 @@ pub(super) fn review_near_duplicate_episode(
     })?;
     if !status.is_success() {
         if let Some(preemption) =
-            classify_larm_foreground_preemption(&target.target_id, status.as_u16(), &headers, &body)
+            classify_larm_provider_pause(&target.target_id, status.as_u16(), &headers, &body)
         {
             return Err(InferenceRequestError::Preempted(preemption));
         }

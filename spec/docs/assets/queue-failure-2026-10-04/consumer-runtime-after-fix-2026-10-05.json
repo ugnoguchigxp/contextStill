@@ -1,0 +1,622 @@
+{
+  "capturedAt": "2026-10-04T22:36:06.243852+00:00",
+  "queues": {
+    "findingCandidate": {
+      "statusCounts": [
+        {
+          "status": "completed",
+          "count": 7847
+        },
+        {
+          "status": "failed",
+          "count": 4487
+        },
+        {
+          "status": "paused",
+          "count": 183
+        },
+        {
+          "status": "running",
+          "count": 1
+        },
+        {
+          "status": "skipped",
+          "count": 7833
+        }
+      ],
+      "newOutcomes": [
+        {
+          "id": "00000000-0000-0000-18db-608ecd51643d",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "provided_candidate_registered",
+          "updated_at": "unix-ms:1791131443256"
+        },
+        {
+          "id": "00000000-0000-0000-18db-608eccaedebc",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "provided_candidate_registered",
+          "updated_at": "unix-ms:1791131443245"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791133655567-40",
+          "status": "running",
+          "last_error": "format_repair",
+          "last_outcome_kind": "format_repair",
+          "updated_at": "2026-10-04 22:35:54"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791133655520-30",
+          "status": "paused",
+          "last_error": "agent_request_result_unknown",
+          "last_outcome_kind": "agent_request_result_unknown",
+          "updated_at": "2026-10-04 22:35:50"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791133655393-12",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges",
+          "updated_at": "2026-10-04 22:34:03"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791133655477-24",
+          "status": "paused",
+          "last_error": "invalid_agent_output: missing field `evidence` at line 89 column 5",
+          "last_outcome_kind": "invalid_agent_output: missing field `evidence` at line 89 column 5",
+          "updated_at": "2026-10-04 22:33:46"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791133655436-18",
+          "status": "paused",
+          "last_error": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 1582",
+          "last_outcome_kind": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 1582",
+          "updated_at": "2026-10-04 22:33:11"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791133655349-4",
+          "status": "paused",
+          "last_error": "invalid_quote",
+          "last_outcome_kind": "invalid_quote",
+          "updated_at": "2026-10-04 22:30:05"
+        }
+      ]
+    },
+    "coveringEvidence": {
+      "statusCounts": [
+        {
+          "status": "completed",
+          "count": 15282
+        },
+        {
+          "status": "failed",
+          "count": 6033
+        },
+        {
+          "status": "paused",
+          "count": 2
+        }
+      ],
+      "newOutcomes": [
+        {
+          "id": "00000000-0000-0000-18db-608ecd516c0f",
+          "status": "paused",
+          "last_error": "claim_requires_primary_support",
+          "last_outcome_kind": "claim_requires_primary_support",
+          "updated_at": "2026-10-04 21:36:49"
+        },
+        {
+          "id": "00000000-0000-0000-18db-608eccaeee5e",
+          "status": "paused",
+          "last_error": "claim_requires_primary_support",
+          "last_outcome_kind": "claim_requires_primary_support",
+          "updated_at": "2026-10-04 21:34:51"
+        }
+      ]
+    },
+    "episodeDistiller": {
+      "statusCounts": [
+        {
+          "status": "completed",
+          "count": 9865
+        },
+        {
+          "status": "failed",
+          "count": 2267
+        },
+        {
+          "status": "paused",
+          "count": 2550
+        },
+        {
+          "status": "skipped",
+          "count": 2834
+        }
+      ],
+      "newOutcomes": [
+        {
+          "id": "rust-episode-job-unix-ms:1791133655526-38",
+          "status": "skipped",
+          "last_error": null,
+          "last_outcome_kind": "no_episode",
+          "updated_at": "2026-10-04 22:04:36"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791133655525-34",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "episodes_distilled",
+          "updated_at": "2026-10-04 22:03:25"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791133655479-28",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "episodes_distilled",
+          "updated_at": "2026-10-04 22:01:38"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791133655436-22",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "episodes_distilled",
+          "updated_at": "2026-10-04 21:59:52"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791133655394-16",
+          "status": "skipped",
+          "last_error": null,
+          "last_outcome_kind": "low_value_skipped",
+          "updated_at": "2026-10-04 21:58:33"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791133655352-10",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "episodes_distilled",
+          "updated_at": "2026-10-04 21:57:28"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791133655308-2",
+          "status": "skipped",
+          "last_error": null,
+          "last_outcome_kind": "low_value_skipped",
+          "updated_at": "2026-10-04 21:55:10"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791125894447-132",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "episodes_distilled",
+          "updated_at": "2026-10-04 21:53:10"
+        }
+      ]
+    },
+    "landscapeCuration": {
+      "statusCounts": [
+        {
+          "status": "completed",
+          "count": 1006
+        },
+        {
+          "status": "failed",
+          "count": 19
+        },
+        {
+          "status": "pending",
+          "count": 282
+        },
+        {
+          "status": "skipped",
+          "count": 16544
+        }
+      ],
+      "newOutcomes": [
+        {
+          "id": "landscape-v2:finalize-bce8f3a786044b334d1a8f9a:0b1a022d605f9b8d971ddd785151d6970fc4a372c8022ef5cadc1cb98cb44b06",
+          "status": "skipped",
+          "last_error": null,
+          "last_outcome_kind": "needs_evidence",
+          "updated_at": "2026-10-04 22:34:49"
+        },
+        {
+          "id": "landscape-v2:finalize-bc356c2d9bad5df95ef7497a:cbab78bda12589d07e44140db04f3e76aba6f048b397fedb3427892b9d5a96c3",
+          "status": "skipped",
+          "last_error": null,
+          "last_outcome_kind": "stale_subject",
+          "updated_at": "2026-10-04 22:32:43"
+        },
+        {
+          "id": "landscape-v2:finalize-bc7584a7c36846c40434bfd3:f92e3b6229f7e0aeb4ded5c96f4dcfe5233db5e2c8ef3eff4faea95251a50ba8",
+          "status": "skipped",
+          "last_error": null,
+          "last_outcome_kind": "needs_evidence",
+          "updated_at": "2026-10-04 22:31:00"
+        },
+        {
+          "id": "landscape-v2:finalize-bc51b69dc5306f4fd99ed656:da2f96f8ef63d4d5db5ca1aaeb542c6cfbbd11538549afd6a03a2517e9f5599e",
+          "status": "skipped",
+          "last_error": null,
+          "last_outcome_kind": "needs_evidence",
+          "updated_at": "2026-10-04 22:29:14"
+        },
+        {
+          "id": "landscape-v2:finalize-bba1454360d9e8072b4b86bf:5965b9c763bb82f609c81d0317f5596e1f56dd477443fc988f715812f0be98c9",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "keep_separate",
+          "updated_at": "2026-10-04 22:26:29"
+        },
+        {
+          "id": "landscape-v2:finalize-ba46858201da0f946b76156e:8470ce7a8e5b146df9e93834e4cf881f51e6e3f1776077056589d5ee1328129e",
+          "status": "skipped",
+          "last_error": null,
+          "last_outcome_kind": "stale_subject",
+          "updated_at": "2026-10-04 22:24:37"
+        },
+        {
+          "id": "landscape-v2:finalize-ba9a71728c8f9e8232298c73:7541d9a65a63c1a0d7316014cb75b6d169ea648a6193570fc54a44ecc6cdc3bc",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "keep_separate",
+          "updated_at": "2026-10-04 22:23:18"
+        },
+        {
+          "id": "landscape-v2:finalize-ba5a6a1e28d41b4ab0a59ab2:10f52004d249243fd87ae6f3939d6461830e1fc2a822a77160343ea5d120f15a",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "keep_separate",
+          "updated_at": "2026-10-04 22:20:36"
+        }
+      ]
+    },
+    "finalizeDistille": {
+      "statusCounts": [
+        {
+          "status": "completed",
+          "count": 8647
+        },
+        {
+          "status": "skipped",
+          "count": 23
+        }
+      ],
+      "newOutcomes": []
+    },
+    "deadZoneMergeReview": {
+      "statusCounts": [
+        {
+          "status": "completed",
+          "count": 4
+        }
+      ],
+      "newOutcomes": []
+    },
+    "mergeActivationFinalize": {
+      "statusCounts": [
+        {
+          "status": "completed",
+          "count": 4
+        }
+      ],
+      "newOutcomes": []
+    }
+  },
+  "recovered": {
+    "finding": {
+      "counts": {
+        "skipped": 3,
+        "paused": 31
+      },
+      "jobs": [
+        {
+          "id": "rust-finding-job-unix-ms:1791038666033-4",
+          "status": "skipped",
+          "last_error": null,
+          "last_outcome_kind": "primary snapshot\u306brule/procedure\u3068\u3057\u3066\u518d\u5229\u7528\u53ef\u80fd\u306a\u4fe1\u53f7\uff08\u7d99\u7d9a\u7684\u306a\u597d\u307f\u30fb\u5883\u754c\u3001\u539f\u56e0\u3068\u4fee\u6b63\u3068\u691c\u8a3c\u3001\u4e0d\u5909\u6761\u4ef6\u3001\u5931\u6557\u56de\u907f\uff09\u304c\u542b\u307e\u308c\u3066\u304a\u3089\u305a\u3001\u62bd\u51fa\u53ef\u80fd\u306a\u77e5\u8b58\u304c\u3042\u308a\u307e\u305b\u3093\u3002"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791038666072-10",
+          "status": "skipped",
+          "last_error": null,
+          "last_outcome_kind": "\u5341\u5206\u306a\u6839\u62e0\u3067\u7d42\u4e86\u3059\u308b\u3002\u539f\u8cc7\u6599\u306f\u4f1a\u8a71\u8a18\u9332\u3067\u3042\u308a\u3001\u518d\u5229\u7528\u53ef\u80fd\u306arule/procedure\u3092\u6301\u305f\u306a\u3044\u3002"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791038666108-16",
+          "status": "paused",
+          "last_error": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 2528",
+          "last_outcome_kind": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 2528"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791038666144-22",
+          "status": "paused",
+          "last_error": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 8086",
+          "last_outcome_kind": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 8086"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791038666180-28",
+          "status": "paused",
+          "last_error": "agent_request_result_unknown",
+          "last_outcome_kind": "agent_request_result_unknown"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791038666215-34",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791038666252-40",
+          "status": "paused",
+          "last_error": "invalid_agent_output: missing field `unresolvedQuestions` at line 1 column 626",
+          "last_outcome_kind": "invalid_agent_output: missing field `unresolvedQuestions` at line 1 column 626"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791038666287-46",
+          "status": "paused",
+          "last_error": "agent_request_result_unknown",
+          "last_outcome_kind": "agent_request_result_unknown"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791038666323-52",
+          "status": "skipped",
+          "last_error": null,
+          "last_outcome_kind": "\u5341\u5206\u306a\u6839\u62e0\u306a\u3057\u3002primary snapshot\u306f\u624b\u9806\u66f8\u4f5c\u6210\u306e\u5bfe\u8a71\u8a18\u9332\u3067\u3042\u308a\u3001\u518d\u5229\u7528\u53ef\u80fd\u306arule/procedure\u3092\u542b\u307e\u306a\u3044\u3002"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791038666359-58",
+          "status": "paused",
+          "last_error": "agent_request_result_unknown",
+          "last_outcome_kind": "agent_request_result_unknown"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791038667188-64",
+          "status": "paused",
+          "last_error": "invalid_question",
+          "last_outcome_kind": "invalid_question"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791038667268-70",
+          "status": "paused",
+          "last_error": "invalid_agent_output: unknown field `uri`, expected one of `snapshot_hash`, `from_byte`, `to_byte`, `question_id`, `expected_gain` at line 1 column 1179",
+          "last_outcome_kind": "invalid_agent_output: unknown field `uri`, expected one of `snapshot_hash`, `from_byte`, `to_byte`, `question_id`, `expected_gain` at line 1 column 1179"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791067498995-76",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791067499064-88",
+          "status": "paused",
+          "last_error": "invalid_agent_output: missing field `evidence` at line 72 column 5",
+          "last_outcome_kind": "invalid_agent_output: missing field `evidence` at line 72 column 5"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791067499100-94",
+          "status": "paused",
+          "last_error": "agent_request_result_unknown",
+          "last_outcome_kind": "agent_request_result_unknown"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791067499134-100",
+          "status": "paused",
+          "last_error": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 6715",
+          "last_outcome_kind": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 6715"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791067499170-106",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791067499205-112",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791071101305-118",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791071101341-124",
+          "status": "paused",
+          "last_error": "agent_request_result_unknown",
+          "last_outcome_kind": "agent_request_result_unknown"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791071101376-130",
+          "status": "paused",
+          "last_error": "agent_request_result_unknown",
+          "last_outcome_kind": "agent_request_result_unknown"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791071101411-136",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791110166324-4",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791110166360-10",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791110166396-16",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791110166435-22",
+          "status": "paused",
+          "last_error": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 15 column 18",
+          "last_outcome_kind": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 15 column 18"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791110166471-28",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791113946625-34",
+          "status": "paused",
+          "last_error": "invalid_question",
+          "last_outcome_kind": "invalid_question"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791113946703-40",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791122091962-48",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791122092035-54",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791122092082-60",
+          "status": "paused",
+          "last_error": "agent_request_result_unknown",
+          "last_outcome_kind": "agent_request_result_unknown"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791125894168-80",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        },
+        {
+          "id": "rust-finding-job-unix-ms:1791125894208-86",
+          "status": "paused",
+          "last_error": "quote_outside_read_ranges",
+          "last_outcome_kind": "quote_outside_read_ranges"
+        }
+      ]
+    },
+    "episode": {
+      "counts": {
+        "completed": 6
+      },
+      "jobs": [
+        {
+          "id": "rust-episode-job-unix-ms:1791038666035-8",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "episodes_distilled"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791038666145-26",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "episodes_distilled"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791038666180-32",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "episodes_distilled"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791038666217-38",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "episodes_distilled"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791038666324-56",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "episodes_distilled"
+        },
+        {
+          "id": "rust-episode-job-unix-ms:1791071101341-128",
+          "status": "completed",
+          "last_error": null,
+          "last_outcome_kind": "episodes_distilled"
+        }
+      ]
+    }
+  },
+  "activeLeases": 1,
+  "unknownRequests": [
+    {
+      "job_id": "rust-finding-job-unix-ms:1791038666180-28",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791038666287-46",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791038666359-58",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791067499030-82",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791067499100-94",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791071101341-124",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791071101376-130",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791122092082-60",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791125894068-68",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791125894129-74",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791125894250-98",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791125894292-104",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791125894409-122",
+      "status": "result_unknown"
+    },
+    {
+      "job_id": "rust-finding-job-unix-ms:1791133655520-30",
+      "status": "result_unknown"
+    }
+  ]
+}

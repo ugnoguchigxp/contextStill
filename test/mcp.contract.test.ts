@@ -120,8 +120,8 @@ describeDb("mcp contract", () => {
     expect(text).toContain("## 主要MCPツール");
     expect(text).toContain("initial_instructions");
     expect(text).toContain("context_compile");
-    expect(text).toContain("Planでも実装判断でもない単純な単タスクでは `context_compile` を省略");
-    expect(text).toContain("Planまたは実装判断を伴うタスクでは");
+    expect(text).toContain("簡単な依頼では `context_compile` を省略");
+    expect(text).toContain("ある程度まとまったタスクで `context_compile` を使う");
     expect(text).toContain("関連する設計書を先に読み");
     expect(text).toContain("対象がどのような実装かを確認してから `context_compile`");
     expect(text).toContain("## SAAA・エージェントからの検索");

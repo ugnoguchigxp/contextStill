@@ -18,3 +18,5 @@ pub(crate) mod ingress;
 pub(crate) mod gateway;
 
 pub(crate) mod research;
+
+mod output;

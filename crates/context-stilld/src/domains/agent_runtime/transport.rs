@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use crate::domains::queue_lifecycle::episode_executor::LocalLlmTargetConfig;
 use crate::domains::queue_lifecycle::inference_preemption::{
-    classify_larm_foreground_preemption, classify_larm_provider_unreachable,
+    classify_larm_provider_pause, classify_larm_provider_unreachable,
     classify_larm_provider_unreachable_message, InferenceRequestError,
 };
 use crate::shared::agent_session::{is_agent_session_api_path, AgentSessionRequest};
@@ -28,6 +28,18 @@ pub(crate) struct Completion {
     pub usage: Option<Usage>,
     pub finish_reason: Option<String>,
     pub request_id: Option<String>,
+}
+
+impl Completion {
+    pub(crate) fn validate_probe(&self) -> Result<(), String> {
+        if self.terminal_error.is_some()
+            || self.finish_reason.as_deref() != Some("stop")
+            || serde_json::from_str::<Value>(&self.content).ok() != Some(json!({"ok":true}))
+        {
+            return Err("provider_response_invalid".into());
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct CompletionRequest<'a> {
@@ -59,6 +71,10 @@ pub(crate) fn request_body(request: &CompletionRequest<'_>) -> Value {
     });
     if let Some(format) = &request.response_format {
         body["response_format"] = format.clone();
+        return crate::domains::queue_lifecycle::structured_output::decision_options(
+            body,
+            &request.target.target_id,
+        );
     }
     body
 }
@@ -130,12 +146,30 @@ pub(crate) fn send(request: CompletionRequest<'_>) -> Result<Completion, Inferen
         .map_err(|_| InferenceRequestError::Other("LLM response invalid_utf8".into()))?;
     if !(200..300).contains(&status) {
         if let Some(preempted) =
-            classify_larm_foreground_preemption(&target.target_id, status, &headers, &text)
+            classify_larm_provider_pause(&target.target_id, status, &headers, &text)
         {
             return Err(InferenceRequestError::Preempted(preempted));
         }
         // Provider bodies can echo credentials or source data. Keep the persisted error bounded and private.
-        return Err(InferenceRequestError::Other(format!("LLM HTTP {status}")));
+        let safe = |value: &str| {
+            value
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+                .take(128)
+                .collect::<String>()
+        };
+        let request_id = headers
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok())
+            .map(safe)
+            .unwrap_or_default();
+        let code = serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| v.pointer("/error/code").and_then(Value::as_str).map(safe))
+            .unwrap_or_default();
+        return Err(InferenceRequestError::Other(format!(
+            "LLM HTTP {status} code={code} request_id={request_id}"
+        )));
     }
     let payload: Value = serde_json::from_str(&text)
         .map_err(|_| InferenceRequestError::Other("LLM response invalid_json".into()))?;
@@ -235,5 +269,40 @@ mod tests {
             chat_url("http://localhost:9000/v1/", "/v1/chat/completions"),
             "http://localhost:9000/v1/chat/completions"
         );
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+    #[test]
+    fn probe_rejects_length_empty_fences_prose_and_wrong_json() {
+        for (reason, content) in [
+            ("length", r#"{"ok":true}"#),
+            ("stop", ""),
+            ("stop", "OK"),
+            ("stop", r#"{"ok":true} trailing"#),
+            ("stop", r#"{"ok":false}"#),
+            ("stop", r#"{"ok":true,"extra":1}"#),
+        ] {
+            assert!(Completion {
+                content: content.into(),
+                terminal_error: None,
+                usage: None,
+                finish_reason: Some(reason.into()),
+                request_id: None
+            }
+            .validate_probe()
+            .is_err());
+        }
+        assert!(Completion {
+            content: r#"{"ok":true}"#.into(),
+            terminal_error: None,
+            usage: None,
+            finish_reason: Some("stop".into()),
+            request_id: None
+        }
+        .validate_probe()
+        .is_ok());
     }
 }

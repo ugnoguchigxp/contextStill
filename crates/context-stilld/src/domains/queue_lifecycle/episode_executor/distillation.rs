@@ -9,7 +9,7 @@ use crate::shared::agent_session::{is_agent_session_api_path, AgentSessionReques
 use crate::shared::errors::CliError;
 
 use super::super::inference_preemption::{
-    classify_larm_foreground_preemption, classify_larm_provider_unreachable,
+    classify_larm_provider_pause, classify_larm_provider_unreachable,
     classify_larm_provider_unreachable_message, InferenceRequestError,
 };
 use super::helpers::{
@@ -118,7 +118,12 @@ pub(super) fn distill_segment(
     if target.target_id.starts_with("larm-agent-connection:") {
         request_body["stream"] = Value::Bool(false);
     }
-    let mut request = client.post(url).json(&request_body);
+    let mut request = client
+        .post(url)
+        .json(&super::super::structured_output::decision_options(
+            request_body,
+            &target.target_id,
+        ));
     if let Some(api_key) = api_key.map(str::trim).filter(|value| !value.is_empty()) {
         request = request.header(
             "authorization",
@@ -145,7 +150,7 @@ pub(super) fn distill_segment(
     })?;
     if !status.is_success() {
         if let Some(preemption) =
-            classify_larm_foreground_preemption(&target.target_id, status.as_u16(), &headers, &body)
+            classify_larm_provider_pause(&target.target_id, status.as_u16(), &headers, &body)
         {
             return Err(InferenceRequestError::Preempted(preemption));
         }

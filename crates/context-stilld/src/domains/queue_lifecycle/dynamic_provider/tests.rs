@@ -480,3 +480,30 @@ fn static_rust_executor_does_not_claim_a_dynamic_vibe_row_from_a_static_source_p
         executor_priority_queues_for_pool(&settings, "static-source", &HashSet::new()).is_empty()
     );
 }
+
+#[test]
+fn refresh_cannot_renew_until_all_four_old_credential_requests_have_drained() {
+    let config = larm_connection_config("renew-drain-test");
+    let path = std::env::temp_dir().join(format!("renew-drain-{}.sqlite", unique_suffix()));
+    let initial = LarmManagerCheckout::take(&path, &config).unwrap().unwrap();
+    let entry = initial.entry.clone();
+    drop(initial);
+    entry.lock().unwrap().active_requests = 4;
+    for remaining in (1..=4).rev() {
+        entry.lock().unwrap().active_requests = remaining;
+        assert!(
+            LarmManagerCheckout::take_for_reconcile(&path, &config, true)
+                .unwrap()
+                .is_none()
+        );
+        assert!(entry.lock().unwrap().manager.is_some());
+    }
+    entry.lock().unwrap().active_requests = 0;
+    assert!(
+        LarmManagerCheckout::take_for_reconcile(&path, &config, true)
+            .unwrap()
+            .unwrap()
+            .manager
+            .is_some()
+    );
+}

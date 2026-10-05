@@ -1,0 +1,276 @@
+{
+  "startedAt": "2026-10-04T16:01:17.154Z",
+  "finding": [
+    {
+      "id": "rust-finding-job-unix-ms:1791038666033-4",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666072-10",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666108-16",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666144-22",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666180-28",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "context_limit",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666215-34",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666252-40",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666287-46",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666323-52",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "invalid_agent_output",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666359-58",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "invalid_agent_output",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038667188-64",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038667268-70",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067498995-76",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067499064-88",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067499100-94",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067499134-100",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067499170-106",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067499205-112",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791071101305-118",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791071101341-124",
+      "requeued": true,
+      "priorStatus": "skipped",
+      "priorReason": "timeout",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791071101376-130",
+      "requeued": true,
+      "priorStatus": "skipped",
+      "priorReason": "timeout",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791071101411-136",
+      "requeued": true,
+      "priorStatus": "skipped",
+      "priorReason": "timeout",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791110166324-4",
+      "requeued": true,
+      "priorStatus": "skipped",
+      "priorReason": "timeout",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791110166360-10",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791110166396-16",
+      "requeued": true,
+      "priorStatus": "skipped",
+      "priorReason": "timeout",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791110166435-22",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791110166471-28",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791113946625-34",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791113946703-40",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791122091962-48",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791122092035-54",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791122092082-60",
+      "requeued": true,
+      "priorStatus": "skipped",
+      "priorReason": "timeout",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791125894168-80",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791125894208-86",
+      "requeued": true,
+      "priorStatus": "paused",
+      "priorReason": "structured_output_incomplete finish_reason=\"length\"",
+      "inputGeneration": 1
+    }
+  ],
+  "episode": [
+    {
+      "id": "rust-episode-job-unix-ms:1791038666035-8",
+      "requeued": true,
+      "priorReason": "episode distiller failed all segments (1/1): segment 0: structured_output_incomplete finish_reason=\"length\""
+    },
+    {
+      "id": "rust-episode-job-unix-ms:1791038666145-26",
+      "requeued": true,
+      "priorReason": "episode distiller failed all segments (1/1): segment 0: structured_output_incomplete finish_reason=\"length\""
+    },
+    {
+      "id": "rust-episode-job-unix-ms:1791038666180-32",
+      "requeued": true,
+      "priorReason": "episode distiller failed all segments (1/1): segment 0: structured_output_incomplete finish_reason=\"length\""
+    },
+    {
+      "id": "rust-episode-job-unix-ms:1791038666217-38",
+      "requeued": true,
+      "priorReason": "episode distiller failed all segments (1/1): segment 0: structured_output_incomplete finish_reason=\"length\""
+    },
+    {
+      "id": "rust-episode-job-unix-ms:1791038666324-56",
+      "requeued": true,
+      "priorReason": "episode distiller failed all segments (1/1): segment 0: structured_output_incomplete finish_reason=\"length\""
+    },
+    {
+      "id": "rust-episode-job-unix-ms:1791071101341-128",
+      "requeued": true,
+      "priorReason": "episode distiller failed all segments (1/1): segment 0: structured_output_incomplete finish_reason=\"length\""
+    }
+  ],
+  "finishedAt": "2026-10-04T16:01:25.068Z"
+}

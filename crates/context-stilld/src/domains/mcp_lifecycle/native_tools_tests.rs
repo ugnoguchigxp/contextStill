@@ -82,16 +82,16 @@ fn test_handle_native_dispatch_initial_instructions_returns_text() {
     assert!(text.contains("context_compile"));
     assert!(text.contains("compile_eval"));
     assert!(
-        text.contains("Planでも実装判断でもない単純な単タスクでは `context_compile` を省略")
-            || text.contains("neither planning nor implementation decisions")
+        text.contains("簡単な依頼では `context_compile` を省略")
+            || text.contains("Skip `context_compile` for simple requests")
     );
     assert!(
-        text.contains("Planまたは実装判断を伴うタスクでは")
-            || text.contains("For planning or tasks that require implementation decisions")
+        text.contains("ある程度まとまったタスクで `context_compile` を使う")
+            || text.contains("Use `context_compile` for substantial tasks")
     );
     assert!(
         text.contains("関連する設計書を先に読み")
-            || text.contains("first read the relevant design documents")
+            || text.contains("First read the relevant design documents")
     );
     assert!(
         text.contains("対象がどのような実装かを確認してから `context_compile`")

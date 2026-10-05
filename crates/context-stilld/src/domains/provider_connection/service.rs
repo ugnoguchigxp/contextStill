@@ -544,6 +544,24 @@ impl LarmControlError {
         }
     }
 
+    fn request_transport(operation: &str, error: &reqwest::Error) -> Self {
+        use std::error::Error;
+        let mut source = error.source();
+        let mut os_error = None;
+        for _ in 0..8 {
+            let Some(cause) = source else { break };
+            if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+                os_error = io.raw_os_error();
+            }
+            source = cause.source();
+        }
+        Self::transport(format!(
+            "{operation} failed: timeout={} connect={} os_error={os_error:?}",
+            error.is_timeout(),
+            error.is_connect()
+        ))
+    }
+
     fn ready_timeout() -> Self {
         Self {
             kind: "ready_timeout",
@@ -699,7 +717,7 @@ impl LarmControlClient {
             .header(CACHE_CONTROL, "no-cache")
             .timeout(Duration::from_millis(self.config.availability_timeout_ms))
             .send()
-            .map_err(|error| LarmControlError::transport(format!("activity failed: {error}")))?;
+            .map_err(|error| LarmControlError::request_transport("activity", &error))?;
         let activity: LarmServiceActivity = parse_json_response(response, StatusCode::OK)?;
         self.validate_service_activity(&activity)?;
         Ok(activity)
@@ -925,7 +943,7 @@ impl LarmControlClient {
                     if current
                         .providers
                         .iter()
-                        .all(|p| p.readiness == LarmConnectionStatus::Ready && p.claimable) =>
+                        .all(|p| p.readiness == LarmConnectionStatus::Ready) =>
                 {
                     return Ok(current)
                 }
@@ -1022,6 +1040,21 @@ impl LarmControlClient {
             })
             .send()
             .map_err(|error| LarmControlError::transport(format!("renew failed: {error}")))?;
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| {
+                s.chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+                    .take(128)
+                    .collect::<String>()
+            });
+        use sha2::Digest;
+        eprintln!(
+            "{}",
+            serde_json::json!({"event":"larm_connection_renew","phase":"control_response","connectionId":connection_id,"httpStatus":response.status().as_u16(),"requestId":request_id,"operationHash":format!("{:x}",sha2::Sha256::digest(idempotency_key.as_bytes()))})
+        );
         let connection: PublicLarmConnection = parse_json_response(response, StatusCode::OK)?;
         self.validate_connection(&connection)?;
         if connection.id != connection_id {

@@ -4,7 +4,7 @@ use super::finalize_executor::{
     embed_one, is_retryable_embedding_error, refresh_fts, upsert_embedding, FinalizeEmbeddingConfig,
 };
 use super::inference_preemption::{
-    classify_larm_foreground_preemption, classify_larm_provider_unreachable,
+    classify_larm_provider_pause, classify_larm_provider_unreachable,
     classify_larm_provider_unreachable_message, log_preemption, preemption_retry_delay_ms,
     random_jitter_sample, InferenceRequestError,
 };
@@ -261,7 +261,7 @@ fn request_decision(
         } else {
             format!("{base}{path}")
         };
-        let mut request = client.post(url).json(&json!({"model":target.model,"messages":messages,"max_tokens":12000,"temperature":0,"stream":false,"response_format":super::structured_output::format("curation")}));
+        let mut request = client.post(url).json(&super::structured_output::decision_options(json!({"model":target.model,"messages":messages,"max_tokens":12000,"temperature":0,"stream":false,"response_format":super::structured_output::format("curation")}), &target.target_id));
         if let Some(key) = api_key.filter(|s| !s.is_empty()) {
             request = request.bearer_auth(key);
         }
@@ -283,12 +283,9 @@ fn request_decision(
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.parse::<i64>().ok());
             let body = response.text().unwrap_or_default();
-            if let Some(preemption) = classify_larm_foreground_preemption(
-                &target.target_id,
-                status.as_u16(),
-                &headers,
-                &body,
-            ) {
+            if let Some(preemption) =
+                classify_larm_provider_pause(&target.target_id, status.as_u16(), &headers, &body)
+            {
                 return Err(InferenceRequestError::Preempted(preemption));
             }
             return Err(InferenceRequestError::Other(format!(
@@ -353,7 +350,7 @@ fn request_verification(
         } else {
             format!("{base}{path}")
         };
-        let mut request = client.post(url).json(&json!({"model":target.model,"messages":messages,"max_tokens":12000,"temperature":0,"stream":false,"response_format":super::structured_output::format("curation_verify")}));
+        let mut request = client.post(url).json(&super::structured_output::decision_options(json!({"model":target.model,"messages":messages,"max_tokens":12000,"temperature":0,"stream":false,"response_format":super::structured_output::format("curation_verify")}), &target.target_id));
         if let Some(key) = api_key.filter(|s| !s.is_empty()) {
             request = request.bearer_auth(key);
         }
@@ -375,12 +372,9 @@ fn request_verification(
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.parse::<i64>().ok());
             let body = response.text().unwrap_or_default();
-            if let Some(preemption) = classify_larm_foreground_preemption(
-                &target.target_id,
-                status.as_u16(),
-                &headers,
-                &body,
-            ) {
+            if let Some(preemption) =
+                classify_larm_provider_pause(&target.target_id, status.as_u16(), &headers, &body)
+            {
                 return Err(InferenceRequestError::Preempted(preemption));
             }
             return Err(InferenceRequestError::Other(format!(
@@ -1114,7 +1108,8 @@ fn classify_curation_error(error: &str) -> CurationFailureKind {
         || lower.contains("agent session stopped at turn.failed")
         || lower.contains("\"retryable\":true")
         || [
-            "http 408", "http 425", "http 429", "http 500", "http 502", "http 503", "http 504",
+            "http 401", "http 408", "http 425", "http 429", "http 500", "http 502", "http 503",
+            "http 504",
         ]
         .iter()
         .any(|status| lower.contains(status))

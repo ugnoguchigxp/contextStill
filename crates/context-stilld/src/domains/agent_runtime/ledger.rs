@@ -105,8 +105,8 @@ pub(crate) fn prepare(
             if !owns {
                 return Err("agent_run_fence_changed".into());
             }
-            let existing=tx.query_row("select state_json, identity_json, root_lineage, deadline_at, status from agent_runs where id=?1",
-            [&id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,i64>(3)?,r.get::<_,String>(4)?)))
+            let existing=tx.query_row("select state_json, identity_json, root_lineage, deadline_at, status,cast(strftime('%s',created_at) as integer),cast(strftime('%s',updated_at) as integer),unixepoch(),stop_reason from agent_runs where id=?1",
+            [&id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,i64>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?,r.get::<_,i64>(6)?,r.get::<_,i64>(7)?,r.get::<_,Option<String>>(8)?)))
             .optional().map_err(|e|e.to_string())?;
             let (input, state, lineage, deadline) = if let Some((
                 saved,
@@ -114,6 +114,10 @@ pub(crate) fn prepare(
                 lineage,
                 deadline,
                 status,
+                created,
+                updated,
+                now,
+                reason,
             )) = existing
             {
                 if matches!(status.as_str(), "completed" | "failed") {
@@ -130,6 +134,14 @@ pub(crate) fn prepare(
                 {
                     return Err("agent_identity_corrupt".into());
                 }
+                let deadline = deadline_after_wait(
+                    deadline,
+                    created,
+                    updated,
+                    now,
+                    &status,
+                    reason.as_deref(),
+                );
                 (input, state, lineage, deadline)
             } else {
                 let state = captured.initial_state.clone();
@@ -166,7 +178,7 @@ pub(crate) fn prepare(
                 }
                 (captured, state, lineage, deadline)
             };
-            tx.execute("update agent_runs set claim_epoch=?2,status='running',updated_at=CURRENT_TIMESTAMP where id=?1",params![id,a.id]).map_err(|e|e.to_string())?;
+            tx.execute("update agent_runs set claim_epoch=?2,status='running',deadline_at=?3,updated_at=CURRENT_TIMESTAMP where id=?1",params![id,a.id,deadline]).map_err(|e|e.to_string())?;
             tx.execute(
                 &format!("update {table} set protocol_version=3 where id=?1 and locked_by=?2"),
                 params![a.queue_job_id, a.worker_id],
@@ -271,6 +283,32 @@ impl Run {
             output,
         })
     }
+    pub fn reject_llm(&mut self, step: Step, reason: &str) -> Result<(), String> {
+        let mut budget = self.state.budget.clone();
+        budget.reserved = budget
+            .reserved
+            .checked_sub(step.reserved)
+            .ok_or("reservation_missing")?;
+        budget.calls = budget.calls.checked_sub(1).ok_or("reservation_missing")?;
+        let mut state = self.state.clone();
+        state.budget = budget.clone();
+        let data = json!({"input":self.input,"state":state}).to_string();
+        let a = self.assignment.clone();
+        let id = self.id.clone();
+        let reason = reason.to_owned();
+        sqlite_writer::execute_for_path(&self.path, "agent.llm_rejected", move |connection| {
+            let tx = connection.transaction().map_err(|e| e.to_string())?;
+            require_owner(&tx, &a)?;
+            let changed = tx.execute("update agent_steps set status='rejected',result_json=json_patch(result_json,?3),updated_at=CURRENT_TIMESTAMP where run_id=?1 and step_no=?2 and status='inflight'",params![id,step.no,json!({"rejection":reason,"generationStarted":false}).to_string()]).map_err(|e|e.to_string())?;
+            if changed != 1 {
+                return Err("agent_step_fence_changed".into());
+            }
+            tx.execute("update agent_runs set state_json=?3,updated_at=CURRENT_TIMESTAMP where id=?1 and claim_epoch=?2",params![id,a.id,data]).map_err(|e|e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())
+        })?;
+        self.state.budget = budget;
+        Ok(())
+    }
     pub fn finish_llm(&mut self, step: Step, result: &Completion) -> Result<(), String> {
         // Even a provider contract violation must leave a durable response/usage receipt.
         // Overflow retains the conservative reservation and pauses further requests.
@@ -354,6 +392,10 @@ impl Run {
                 params![a.queue_job_id,a.worker_id,status,resume_after,reason]).map_err(|e|e.to_string())?;
             tx.execute("update agent_runs set status=?3,stop_reason=?4,state_json=?5,updated_at=CURRENT_TIMESTAMP where id=?1 and claim_epoch=?2",
                 params![id,a.id,if failed {"failed"} else if resume_after.is_some() {"waiting"} else {"paused"},reason,data]).map_err(|e|e.to_string())?;
+            crate::domains::queue_lifecycle::events::append_queue_event_for_connection(&tx,
+                &format!("agent-yield:{id}:{}:{}",a.id,tx.query_row("select lower(hex(randomblob(16)))",[],|r|r.get::<_,String>(0)).map_err(|e|e.to_string())?),&a.queue_name,&a.queue_job_id,
+                if status == "pending" {"retried"} else {status},Some(&reason),
+                Some(&json!({"runId":id,"claimEpoch":a.id,"reason":reason,"resumeAfterSeconds":resume_after,"attemptConsumed":false}).to_string())).map_err(|e|e.to_string())?;
             release_request(&tx, &a, &reason)?;
             tx.commit().map_err(|e| e.to_string())?;
             Ok(())
@@ -418,4 +460,71 @@ pub(crate) fn saved_input(
             })
     })
     .transpose()
+}
+
+// Queue/provider admission wait does not spend the active execution deadline.
+// Research keeps its own fixed deadline. A day-wide wall clock guard bounds retries.
+fn deadline_after_wait(
+    deadline: i64,
+    created: i64,
+    updated: i64,
+    now: i64,
+    status: &str,
+    reason: Option<&str>,
+) -> i64 {
+    if status == "waiting"
+        && matches!(
+            reason,
+            Some(
+                "format_repair"
+                    | "agent_decision_saved"
+                    | "source_read_planned"
+                    | "knowledge_acquired"
+                    | "primary_source_acquired"
+                    | "source_fetch_retry"
+                    | "research_acquired"
+                    | "independent_final_verification"
+                    | "body_repair"
+                    | "provider_credential_rejected"
+                    | "provider_unreachable"
+                    | "inference_preempted"
+            )
+        )
+    {
+        deadline
+            .saturating_add(now.saturating_sub(updated).max(0))
+            .min(created.saturating_add(86400))
+    } else {
+        deadline
+    }
+}
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+    #[test]
+    fn excludes_admission_wait_but_keeps_execution_research_and_wall_limits() {
+        assert_eq!(
+            deadline_after_wait(1600, 1000, 1100, 2240, "waiting", Some("format_repair")),
+            2740
+        );
+        assert_eq!(
+            deadline_after_wait(1600, 1000, 1100, 2240, "running", None),
+            1600
+        );
+        assert_eq!(
+            deadline_after_wait(1600, 1000, 1100, 2240, "waiting", Some("research_wait")),
+            1600
+        );
+        assert_eq!(
+            deadline_after_wait(
+                1600,
+                1000,
+                1100,
+                100000,
+                "waiting",
+                Some("provider_credential_rejected")
+            ),
+            87400
+        );
+    }
 }

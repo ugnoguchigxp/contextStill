@@ -1,0 +1,1523 @@
+{
+  "capturedAt": "2026-10-04T22:39:32.900949+00:00",
+  "guiVerified": {
+    "macUnlocked": true,
+    "allVisibleContextStillLocalNetworkToggles": "on",
+    "settingsChanged": false
+  },
+  "recoveredFindingCounts": {
+    "no_signal": 3,
+    "output_contract": 9,
+    "request_result_unknown": 7,
+    "quote_mismatch": 15
+  },
+  "recoveredFindingJobs": [
+    {
+      "id": "rust-finding-job-unix-ms:1791038666033-4",
+      "status": "skipped",
+      "last_error": null,
+      "last_outcome_kind": "primary snapshotにrule/procedureとして再利用可能な信号（継続的な好み・境界、原因と修正と検証、不変条件、失敗回避）が含まれておらず、抽出可能な知識がありません。"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666072-10",
+      "status": "skipped",
+      "last_error": null,
+      "last_outcome_kind": "十分な根拠で終了する。原資料は会話記録であり、再利用可能なrule/procedureを持たない。"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666108-16",
+      "status": "paused",
+      "last_error": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 2528",
+      "last_outcome_kind": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 2528"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666144-22",
+      "status": "paused",
+      "last_error": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 8086",
+      "last_outcome_kind": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 8086"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666180-28",
+      "status": "paused",
+      "last_error": "agent_request_result_unknown",
+      "last_outcome_kind": "agent_request_result_unknown"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666215-34",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666252-40",
+      "status": "paused",
+      "last_error": "invalid_agent_output: missing field `unresolvedQuestions` at line 1 column 626",
+      "last_outcome_kind": "invalid_agent_output: missing field `unresolvedQuestions` at line 1 column 626"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666287-46",
+      "status": "paused",
+      "last_error": "agent_request_result_unknown",
+      "last_outcome_kind": "agent_request_result_unknown"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666323-52",
+      "status": "skipped",
+      "last_error": null,
+      "last_outcome_kind": "十分な根拠なし。primary snapshotは手順書作成の対話記録であり、再利用可能なrule/procedureを含まない。"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038666359-58",
+      "status": "paused",
+      "last_error": "agent_request_result_unknown",
+      "last_outcome_kind": "agent_request_result_unknown"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038667188-64",
+      "status": "paused",
+      "last_error": "invalid_question",
+      "last_outcome_kind": "invalid_question"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791038667268-70",
+      "status": "paused",
+      "last_error": "invalid_agent_output: unknown field `uri`, expected one of `snapshot_hash`, `from_byte`, `to_byte`, `question_id`, `expected_gain` at line 1 column 1179",
+      "last_outcome_kind": "invalid_agent_output: unknown field `uri`, expected one of `snapshot_hash`, `from_byte`, `to_byte`, `question_id`, `expected_gain` at line 1 column 1179"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067498995-76",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067499064-88",
+      "status": "paused",
+      "last_error": "invalid_agent_output: missing field `evidence` at line 72 column 5",
+      "last_outcome_kind": "invalid_agent_output: missing field `evidence` at line 72 column 5"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067499100-94",
+      "status": "paused",
+      "last_error": "agent_request_result_unknown",
+      "last_outcome_kind": "agent_request_result_unknown"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067499134-100",
+      "status": "paused",
+      "last_error": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 6715",
+      "last_outcome_kind": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 1 column 6715"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067499170-106",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791067499205-112",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791071101305-118",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791071101341-124",
+      "status": "paused",
+      "last_error": "agent_request_result_unknown",
+      "last_outcome_kind": "agent_request_result_unknown"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791071101376-130",
+      "status": "paused",
+      "last_error": "agent_request_result_unknown",
+      "last_outcome_kind": "agent_request_result_unknown"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791071101411-136",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791110166324-4",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791110166360-10",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791110166396-16",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791110166435-22",
+      "status": "paused",
+      "last_error": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 15 column 18",
+      "last_outcome_kind": "invalid_agent_output: unknown field `toByte`, expected one of `snapshotHash`, `text`, `role`, `fromByte` at line 15 column 18"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791110166471-28",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791113946625-34",
+      "status": "paused",
+      "last_error": "invalid_question",
+      "last_outcome_kind": "invalid_question"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791113946703-40",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791122091962-48",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791122092035-54",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791122092082-60",
+      "status": "paused",
+      "last_error": "agent_request_result_unknown",
+      "last_outcome_kind": "agent_request_result_unknown"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791125894168-80",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    },
+    {
+      "id": "rust-finding-job-unix-ms:1791125894208-86",
+      "status": "paused",
+      "last_error": "quote_outside_read_ranges",
+      "last_outcome_kind": "quote_outside_read_ranges"
+    }
+  ],
+  "recoveredEpisodeCompleted": 6,
+  "unknownRequests": [
+    {
+      "jobId": "rust-finding-job-unix-ms:1791067499030-82",
+      "inputGeneration": 0,
+      "updatedAt": "2026-10-04 10:02:22",
+      "transportError": null,
+      "requestDigest": "21824139389e2856a0656d60abc6508edfbee3b7512b192fae5d91695883618f"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791125894068-68",
+      "inputGeneration": 0,
+      "updatedAt": "2026-10-04 15:13:27",
+      "transportError": null,
+      "requestDigest": "f6ca55c1272c709516a4beaed93aa6d3319428ba64566e7dad217a35a50c0f62"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791125894129-74",
+      "inputGeneration": 0,
+      "updatedAt": "2026-10-04 15:13:27",
+      "transportError": null,
+      "requestDigest": "e28693c8f3b6db3d2fbb29c9b00afaf634508bb037378b4e262516abd4902068"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791125894250-98",
+      "inputGeneration": 0,
+      "updatedAt": "2026-10-04 15:18:57",
+      "transportError": null,
+      "requestDigest": "da353ad355511a68ec2be63e376a250292f59d6883842b653f87bd3f30e14958"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791125894292-104",
+      "inputGeneration": 0,
+      "updatedAt": "2026-10-04 15:18:57",
+      "transportError": null,
+      "requestDigest": "78d713dbf4b4b16c1259df7087c49cc6fe60668bfb3f57ae0abc2c75555cb2b1"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791038666180-28",
+      "inputGeneration": 1,
+      "updatedAt": "2026-10-04 21:41:49",
+      "transportError": "LLM HTTP 500 code= request_id=req_e8941209-8fec-4c7b-9203-1ba93ad7042b",
+      "requestDigest": "dcdfc4edc9f04ea5eba7ecd1f9681f00973642bbe2ec9e106e5e3d0a8305af69"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791038666287-46",
+      "inputGeneration": 1,
+      "updatedAt": "2026-10-04 21:45:47",
+      "transportError": "LLM HTTP 500 code= request_id=req_5c6981b2-72f2-4039-ae01-18b2ab6b7f5f",
+      "requestDigest": "4729ab94bbecb9f3abf35dc7c77d6f42574f862ae6673a223504454542242e24"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791038666359-58",
+      "inputGeneration": 1,
+      "updatedAt": "2026-10-04 21:47:38",
+      "transportError": "LLM HTTP 500 code= request_id=req_7a8ba5e5-6465-4fde-b3e5-76b58c2312dc",
+      "requestDigest": "e293043adc86856f7f4ca94c3ca577bfa3b035cae453b13878d7d949ffb010b0"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791067499100-94",
+      "inputGeneration": 1,
+      "updatedAt": "2026-10-04 21:55:59",
+      "transportError": "LLM HTTP 500 code= request_id=req_2dbe111f-9ae4-4997-b83e-4f7e69bca90e",
+      "requestDigest": "0c99e11eed6967bc24a74b08de6bff27dcb5a02812f2d5c0e2f07b233b4fb248"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791071101376-130",
+      "inputGeneration": 1,
+      "updatedAt": "2026-10-04 22:04:03",
+      "transportError": "LLM HTTP 500 code= request_id=req_f8401b47-4e7b-455a-b42b-e702a6dd0644",
+      "requestDigest": "47a87d22051279272f80c6760c61f715469a9532415d03233a2637e43b7d04ea"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791071101341-124",
+      "inputGeneration": 1,
+      "updatedAt": "2026-10-04 22:05:30",
+      "transportError": "LLM HTTP 500 code= request_id=req_5412c9dd-55d7-41cf-8bea-e2aeb52dceca",
+      "requestDigest": "e61f00ba2b81f1698d5682335619dcbe4a796fe45b2cb083b66e71b07c380cf4"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791122092082-60",
+      "inputGeneration": 1,
+      "updatedAt": "2026-10-04 22:22:23",
+      "transportError": "LLM HTTP 500 code= request_id=req_4304fc7d-eb5c-47fb-b10e-02c76a3d05cb",
+      "requestDigest": "a2ea460f7814e9b1a5ce2d74f2e2efc21fbd3319843c44c9489173465d6180c3"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791125894409-122",
+      "inputGeneration": 0,
+      "updatedAt": "2026-10-04 22:26:24",
+      "transportError": "LLM HTTP 500 code= request_id=req_2af1f7b3-02c3-40b2-b777-7e5241b82234",
+      "requestDigest": "90d21ee53605617f14f21fb3b40586815ba5712df8b34d6fcace149212dc14f8"
+    },
+    {
+      "jobId": "rust-finding-job-unix-ms:1791133655520-30",
+      "inputGeneration": 0,
+      "updatedAt": "2026-10-04 22:35:50",
+      "transportError": "LLM HTTP 500 code= request_id=req_daf381cd-6a5c-42aa-8e0c-5b1a587becfc",
+      "requestDigest": "9e1940f7d704c61be2062af83191c1c47385495522c79500049227e5c662ae64"
+    }
+  ],
+  "quoteDiagnostics": {
+    "counts": {
+      "wrong_fromByte_for_exact_quote": 85,
+      "quote_text_not_exact": 54,
+      "valid": 8
+    },
+    "jobs": [
+      {
+        "jobId": "rust-finding-job-unix-ms:1791067498995-76",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1008,
+            "exactPositions": [
+              1323
+            ],
+            "quoteBytes": 126
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2922,
+            "exactPositions": [
+              2132
+            ],
+            "quoteBytes": 148
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1500,
+            "exactPositions": [
+              2485
+            ],
+            "quoteBytes": 112
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2200,
+            "exactPositions": [
+              1704
+            ],
+            "quoteBytes": 147
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 3280,
+            "exactPositions": [
+              3675
+            ],
+            "quoteBytes": 248
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 4050,
+            "exactPositions": [
+              4680
+            ],
+            "quoteBytes": 232
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 3400,
+            "exactPositions": [],
+            "quoteBytes": 228
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 3780,
+            "exactPositions": [
+              3563
+            ],
+            "quoteBytes": 53
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 3560,
+            "exactPositions": [
+              4157
+            ],
+            "quoteBytes": 134
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 3900,
+            "exactPositions": [],
+            "quoteBytes": 181
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791067499170-106",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1900,
+            "exactPositions": [
+              2447
+            ],
+            "quoteBytes": 68
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1200,
+            "exactPositions": [
+              861
+            ],
+            "quoteBytes": 135
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791110166396-16",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 3850,
+            "exactPositions": [
+              5353
+            ],
+            "quoteBytes": 1191
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 4580,
+            "exactPositions": [],
+            "quoteBytes": 975
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 4740,
+            "exactPositions": [
+              7012
+            ],
+            "quoteBytes": 359
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 5560,
+            "exactPositions": [],
+            "quoteBytes": 370
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 0,
+            "exactPositions": [],
+            "quoteBytes": 4848
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791110166471-28",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2000,
+            "exactPositions": [],
+            "quoteBytes": 630
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2600,
+            "exactPositions": [
+              2726
+            ],
+            "quoteBytes": 451
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 4200,
+            "exactPositions": [
+              6012
+            ],
+            "quoteBytes": 407
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 4200,
+            "exactPositions": [
+              6245
+            ],
+            "quoteBytes": 174
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 3600,
+            "exactPositions": [
+              5088
+            ],
+            "quoteBytes": 100
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 5000,
+            "exactPositions": [],
+            "quoteBytes": 161
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 5400,
+            "exactPositions": [
+              8526
+            ],
+            "quoteBytes": 247
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 5700,
+            "exactPositions": [
+              8786
+            ],
+            "quoteBytes": 184
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 4800,
+            "exactPositions": [
+              5634
+            ],
+            "quoteBytes": 123
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1400,
+            "exactPositions": [
+              1078
+            ],
+            "quoteBytes": 692
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 3200,
+            "exactPositions": [
+              3179
+            ],
+            "quoteBytes": 230
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791122091962-48",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 4316,
+            "exactPositions": [],
+            "quoteBytes": 396
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 4900,
+            "exactPositions": [],
+            "quoteBytes": 378
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 5460,
+            "exactPositions": [],
+            "quoteBytes": 400
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 4316,
+            "exactPositions": [],
+            "quoteBytes": 396
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 4900,
+            "exactPositions": [],
+            "quoteBytes": 378
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 5460,
+            "exactPositions": [],
+            "quoteBytes": 400
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791133655393-12",
+        "inputGeneration": 0,
+        "quoteDiagnostics": [
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 1502,
+            "exactPositions": [],
+            "quoteBytes": 272
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 4050,
+            "exactPositions": [
+              4700
+            ],
+            "quoteBytes": 92
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 6290,
+            "exactPositions": [],
+            "quoteBytes": 223
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2430,
+            "exactPositions": [
+              2691
+            ],
+            "quoteBytes": 201
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 3180,
+            "exactPositions": [
+              3373
+            ],
+            "quoteBytes": 266
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2230,
+            "exactPositions": [],
+            "quoteBytes": 298
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 4190,
+            "exactPositions": [
+              4792
+            ],
+            "quoteBytes": 148
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 4370,
+            "exactPositions": [
+              5384
+            ],
+            "quoteBytes": 138
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 5230,
+            "exactPositions": [
+              5697
+            ],
+            "quoteBytes": 142
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 5430,
+            "exactPositions": [
+              5951
+            ],
+            "quoteBytes": 114
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2630,
+            "exactPositions": [
+              2893
+            ],
+            "quoteBytes": 158
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2130,
+            "exactPositions": [],
+            "quoteBytes": 166
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2830,
+            "exactPositions": [
+              3052
+            ],
+            "quoteBytes": 138
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791038666215-34",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 200,
+            "exactPositions": [],
+            "quoteBytes": 100
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 1200,
+            "exactPositions": [],
+            "quoteBytes": 126
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2100,
+            "exactPositions": [],
+            "quoteBytes": 166
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 3000,
+            "exactPositions": [
+              6166
+            ],
+            "quoteBytes": 129
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 3800,
+            "exactPositions": [
+              6297
+            ],
+            "quoteBytes": 100
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 0,
+            "exactPositions": [],
+            "quoteBytes": 2202
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791110166324-4",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 100,
+            "exactPositions": [
+              151
+            ],
+            "quoteBytes": 294
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1200,
+            "exactPositions": [
+              1082
+            ],
+            "quoteBytes": 177
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2000,
+            "exactPositions": [
+              1943
+            ],
+            "quoteBytes": 228
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2800,
+            "exactPositions": [],
+            "quoteBytes": 505
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 4200,
+            "exactPositions": [],
+            "quoteBytes": 370
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 5200,
+            "exactPositions": [],
+            "quoteBytes": 447
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 6800,
+            "exactPositions": [
+              7748
+            ],
+            "quoteBytes": 234
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 7600,
+            "exactPositions": [
+              7984
+            ],
+            "quoteBytes": 214
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 0,
+            "exactPositions": [],
+            "quoteBytes": 9082
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791125894447-128",
+        "inputGeneration": 0,
+        "quoteDiagnostics": [
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 400,
+            "exactPositions": [
+              872
+            ],
+            "quoteBytes": 168
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 700,
+            "exactPositions": [
+              1041
+            ],
+            "quoteBytes": 292
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791122092035-54",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 400,
+            "exactPositions": [],
+            "quoteBytes": 203
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 580,
+            "exactPositions": [
+              759
+            ],
+            "quoteBytes": 141
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 680,
+            "exactPositions": [
+              903
+            ],
+            "quoteBytes": 110
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 980,
+            "exactPositions": [],
+            "quoteBytes": 393
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 1380,
+            "exactPositions": [],
+            "quoteBytes": 243
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 1780,
+            "exactPositions": [],
+            "quoteBytes": 189
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2000,
+            "exactPositions": [],
+            "quoteBytes": 310
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2280,
+            "exactPositions": [],
+            "quoteBytes": 240
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2560,
+            "exactPositions": [
+              2870
+            ],
+            "quoteBytes": 279
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2900,
+            "exactPositions": [],
+            "quoteBytes": 312
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 3280,
+            "exactPositions": [],
+            "quoteBytes": 305
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791071101411-136",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 200,
+            "exactPositions": [],
+            "quoteBytes": 519
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 560,
+            "exactPositions": [
+              914
+            ],
+            "quoteBytes": 302
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 900,
+            "exactPositions": [
+              1553
+            ],
+            "quoteBytes": 272
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791110166360-10",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 571,
+            "exactPositions": [],
+            "quoteBytes": 323
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 905,
+            "exactPositions": [],
+            "quoteBytes": 112
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1045,
+            "exactPositions": [
+              917
+            ],
+            "quoteBytes": 208
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2220,
+            "exactPositions": [
+              3030
+            ],
+            "quoteBytes": 210
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2900,
+            "exactPositions": [
+              4167
+            ],
+            "quoteBytes": 333
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 4280,
+            "exactPositions": [
+              5941
+            ],
+            "quoteBytes": 170
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 5050,
+            "exactPositions": [],
+            "quoteBytes": 234
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 5480,
+            "exactPositions": [],
+            "quoteBytes": 388
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 8250,
+            "exactPositions": [
+              8493
+            ],
+            "quoteBytes": 301
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 0,
+            "exactPositions": [],
+            "quoteBytes": 1293
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791125894168-80",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 1000,
+            "exactPositions": [],
+            "quoteBytes": 193
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 3200,
+            "exactPositions": [],
+            "quoteBytes": 284
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 3000,
+            "exactPositions": [],
+            "quoteBytes": 219
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2900,
+            "exactPositions": [],
+            "quoteBytes": 251
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 1500,
+            "exactPositions": [],
+            "quoteBytes": 351
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 3100,
+            "exactPositions": [],
+            "quoteBytes": 192
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 4000,
+            "exactPositions": [
+              2791
+            ],
+            "quoteBytes": 233
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 4800,
+            "exactPositions": [
+              4771
+            ],
+            "quoteBytes": 158
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 5100,
+            "exactPositions": [],
+            "quoteBytes": 336
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2300,
+            "exactPositions": [],
+            "quoteBytes": 203
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 0,
+            "exactPositions": [
+              253
+            ],
+            "quoteBytes": 395
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2000,
+            "exactPositions": [],
+            "quoteBytes": 201
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791133655567-40",
+        "inputGeneration": 0,
+        "quoteDiagnostics": [
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1008,
+            "exactPositions": [
+              1052,
+              1872
+            ],
+            "quoteBytes": 239
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1180,
+            "exactPositions": [
+              1292,
+              2112
+            ],
+            "quoteBytes": 236
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 743,
+            "exactPositions": [
+              1015,
+              1746
+            ],
+            "quoteBytes": 36
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1420,
+            "exactPositions": [
+              1015,
+              1746
+            ],
+            "quoteBytes": 36
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791067499205-112",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 200,
+            "exactPositions": [
+              322
+            ],
+            "quoteBytes": 304
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1250,
+            "exactPositions": [
+              2424
+            ],
+            "quoteBytes": 267
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 580,
+            "exactPositions": [
+              781
+            ],
+            "quoteBytes": 149
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1000,
+            "exactPositions": [
+              1052
+            ],
+            "quoteBytes": 179
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 1450,
+            "exactPositions": [],
+            "quoteBytes": 300
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 200,
+            "exactPositions": [
+              322
+            ],
+            "quoteBytes": 304
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 580,
+            "exactPositions": [
+              781
+            ],
+            "quoteBytes": 149
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1000,
+            "exactPositions": [
+              1052
+            ],
+            "quoteBytes": 179
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1250,
+            "exactPositions": [
+              2424
+            ],
+            "quoteBytes": 267
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1450,
+            "exactPositions": [
+              1571
+            ],
+            "quoteBytes": 301
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791125894208-86",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 505,
+            "exactPositions": [
+              1363
+            ],
+            "quoteBytes": 410
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 908,
+            "exactPositions": [
+              2172
+            ],
+            "quoteBytes": 244
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1080,
+            "exactPositions": [
+              2569
+            ],
+            "quoteBytes": 167
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1400,
+            "exactPositions": [
+              3451
+            ],
+            "quoteBytes": 275
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1780,
+            "exactPositions": [
+              3234
+            ],
+            "quoteBytes": 215
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2180,
+            "exactPositions": [
+              3451
+            ],
+            "quoteBytes": 559
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 740,
+            "exactPositions": [
+              1997
+            ],
+            "quoteBytes": 173
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 0,
+            "exactPositions": [],
+            "quoteBytes": 4669
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791071101305-118",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 283,
+            "exactPositions": [
+              418
+            ],
+            "quoteBytes": 256
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 908,
+            "exactPositions": [
+              989
+            ],
+            "quoteBytes": 385
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1682,
+            "exactPositions": [
+              1376
+            ],
+            "quoteBytes": 339
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 200,
+            "exactPositions": [
+              163
+            ],
+            "quoteBytes": 253
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 726,
+            "exactPositions": [],
+            "quoteBytes": 311
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 908,
+            "exactPositions": [
+              1164
+            ],
+            "quoteBytes": 210
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 1682,
+            "exactPositions": [
+              1560
+            ],
+            "quoteBytes": 155
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2080,
+            "exactPositions": [
+              2290
+            ],
+            "quoteBytes": 178
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 0,
+            "exactPositions": [],
+            "quoteBytes": 2525
+          }
+        ]
+      },
+      {
+        "jobId": "rust-finding-job-unix-ms:1791113946703-40",
+        "inputGeneration": 1,
+        "quoteDiagnostics": [
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2953,
+            "exactPositions": [
+              5170
+            ],
+            "quoteBytes": 216
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 3280,
+            "exactPositions": [
+              5528
+            ],
+            "quoteBytes": 183
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 3098,
+            "exactPositions": [
+              6097
+            ],
+            "quoteBytes": 245
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2420,
+            "exactPositions": [
+              2275
+            ],
+            "quoteBytes": 187
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2770,
+            "exactPositions": [
+              3704
+            ],
+            "quoteBytes": 114
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 2270,
+            "exactPositions": [],
+            "quoteBytes": 177
+          },
+          {
+            "reason": "wrong_fromByte_for_exact_quote",
+            "providedFromByte": 2620,
+            "exactPositions": [
+              3240
+            ],
+            "quoteBytes": 63
+          },
+          {
+            "reason": "quote_text_not_exact",
+            "providedFromByte": 0,
+            "exactPositions": [],
+            "quoteBytes": 6366
+          }
+        ]
+      }
+    ]
+  },
+  "coveringDiagnostics": [
+    {
+      "jobId": "00000000-0000-0000-18db-608eccaeee5e",
+      "sourceKinds": {
+        "provided_candidate": 1
+      },
+      "claims": [
+        {
+          "supported": true,
+          "quoteSourceKinds": [
+            {
+              "role": "supports",
+              "sourceKind": "provided_candidate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "jobId": "00000000-0000-0000-18db-608ecd516c0f",
+      "sourceKinds": {
+        "provided_candidate": 1
+      },
+      "claims": [
+        {
+          "supported": true,
+          "quoteSourceKinds": [
+            {
+              "role": "supports",
+              "sourceKind": "provided_candidate"
+            }
+          ]
+        },
+        {
+          "supported": true,
+          "quoteSourceKinds": [
+            {
+              "role": "supports",
+              "sourceKind": "provided_candidate"
+            }
+          ]
+        },
+        {
+          "supported": true,
+          "quoteSourceKinds": [
+            {
+              "role": "supports",
+              "sourceKind": "provided_candidate"
+            }
+          ]
+        },
+        {
+          "supported": true,
+          "quoteSourceKinds": [
+            {
+              "role": "supports",
+              "sourceKind": "provided_candidate"
+            }
+          ]
+        },
+        {
+          "supported": true,
+          "quoteSourceKinds": [
+            {
+              "role": "supports",
+              "sourceKind": "provided_candidate"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "residentRenewObserved": {
+    "lastReclaimedAt": "2026-10-05T07:35:54.010+09:00",
+    "httpStatus": 200
+  },
+  "previousNetworkBlocker": "currently resolved; historical cause not established"
+}

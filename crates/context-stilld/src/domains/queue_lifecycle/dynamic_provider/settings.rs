@@ -57,13 +57,13 @@ pub(crate) fn settings_provider_probe(
     saved: bool,
 ) -> Result<Value, String> {
     use crate::domains::agent_runtime::transport::{send, CompletionRequest};
-    let messages = json!([{"role":"user","content":"Reply OK."}]);
+    let messages = json!([{"role":"user","content":"Return a JSON object with ok equal to true."}]);
     let probe =
         |target: &crate::domains::provider_connection::ClaimedLarmTarget| -> Result<Value, String> {
             let runtime = LocalLlmTargetConfig {
                 codex: false,
                 quota_db: None,
-                target_id: format!("larm:settings:{}", config.id),
+                target_id: format!("larm-agent-connection:{}", config.id),
                 api_base_url: target.api_base_url.clone(),
                 api_path: "/v1/chat/completions".into(),
                 model: target.model.clone(),
@@ -73,15 +73,11 @@ pub(crate) fn settings_provider_probe(
                 api_key: Some(target.bearer_token.as_str()),
                 messages: &messages,
                 max_output: 64,
-                response_format: None,
+                response_format: Some(super::super::structured_output::probe_format()),
                 timeout_seconds: 15,
             })
             .map_err(|_| "provider_inference_failed")?;
-            if completion.terminal_error.is_some()
-                && !matches!(completion.finish_reason.as_deref(), Some("stop" | "length"))
-            {
-                return Err("provider_response_invalid".into());
-            }
+            completion.validate_probe()?;
             Ok(
                 json!({"model":target.model,"endpoint":target.api_base_url,"contextWindow":target.context_window}),
             )

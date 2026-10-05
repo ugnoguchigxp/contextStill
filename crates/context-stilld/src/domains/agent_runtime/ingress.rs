@@ -146,7 +146,7 @@ fn table(queue: &str) -> Result<&'static str, String> {
         _ => Err("agent_queue_unsupported".into()),
     }
 }
-fn reprocess(c: &rusqlite::Connection, queue: &str, id: &str) -> Result<(), String> {
+fn reprocess(c: &mut rusqlite::Connection, queue: &str, id: &str) -> Result<(), String> {
     let table = table(queue)?;
     // Unknown requests retain their reservation; an explicit generation cannot erase it.
     let unknown=c.query_row("select exists(select 1 from agent_runs r join agent_steps s on s.run_id=r.id where r.queue_name=?1 and r.job_id=?2 and s.status in ('inflight','result_unknown'))",params![queue,id],|r|r.get::<_,bool>(0)).map_err(|e|e.to_string())?;
@@ -157,10 +157,20 @@ fn reprocess(c: &rusqlite::Connection, queue: &str, id: &str) -> Result<(), Stri
     if child {
         return Err("agent_research_requires_confirmed_cancellation".into());
     }
-    let changed=c.execute(&format!("update {table} set input_generation=input_generation+1,protocol_version=3,status='pending',attempt_count=0,completed_at=null,last_error=null,last_outcome_kind=null,next_run_at=null,locked_by=null,locked_at=null,heartbeat_at=null,updated_at=CURRENT_TIMESTAMP where id=?1 and status in ('completed','skipped','failed','paused')"),[id]).map_err(|e|e.to_string())?;
+    let tx = c.transaction().map_err(|e| e.to_string())?;
+    let changed=tx.execute(&format!("update {table} set input_generation=input_generation+1,protocol_version=3,status='pending',attempt_count=0,completed_at=null,last_error=null,last_outcome_kind=null,next_run_at=null,locked_by=null,locked_at=null,heartbeat_at=null,updated_at=CURRENT_TIMESTAMP where id=?1 and status in ('completed','skipped','failed','paused')"),[id]).map_err(|e|e.to_string())?;
     if changed != 1 {
         return Err("agent_reprocess_requires_terminal_or_paused_job".into());
     }
+    let generation: i64 = tx
+        .query_row(
+            &format!("select input_generation from {table} where id=?1"),
+            [id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    crate::domains::queue_lifecycle::events::append_queue_event_for_connection(&tx,&format!("agent-reprocess:{queue}:{id}:{generation}"),queue,id,"requeued",Some("agent_input_generation_changed"),Some(&json!({"protocolVersion":3,"inputGeneration":generation,"previousInputGeneration":generation-1,"oldReceiptsPreserved":true}).to_string())).map_err(|e|e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 

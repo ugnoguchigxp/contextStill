@@ -66,6 +66,20 @@ pub(crate) struct DynamicProviderClaim {
     pub(crate) api_key: Option<Zeroizing<String>>,
     pub(crate) request_timeout_seconds: u64,
     _manager: LarmManagerCheckout,
+    sqlite_path: std::path::PathBuf,
+}
+
+impl Drop for DynamicProviderClaim {
+    fn drop(&mut self) {
+        let rejected = open_query_only_connection(&self.sqlite_path).ok().and_then(|reader| reader.query_row("select release_reason='provider_credential_rejected' from llm_provider_leases where id=?1",[&self.job.provider_lease.id],|r|r.get::<_,bool>(0)).ok()).unwrap_or(false);
+        if rejected {
+            if let Ok(mut entry) = self._manager.entry.lock() {
+                if let Some(manager) = entry.manager.as_mut() {
+                    manager.invalidate_credential();
+                }
+            }
+        }
+    }
 }
 
 impl DynamicProviderClaim {
@@ -697,6 +711,7 @@ pub(crate) fn claim_dynamic_provider_execution_for_path(
             api_key,
             request_timeout_seconds: plan.connection.request_timeout_ms.div_ceil(1_000),
             _manager: manager,
+            sqlite_path: sqlite_path.to_path_buf(),
         }));
     }
     Ok(None)

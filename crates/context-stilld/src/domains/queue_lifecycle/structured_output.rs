@@ -1,5 +1,16 @@
 use serde_json::{json, Value};
 
+pub(crate) fn decision_options(mut body: Value, target_id: &str) -> Value {
+    if target_id.starts_with("larm-agent-connection:") {
+        body["chat_template_kwargs"] = json!({"enable_thinking":false});
+    }
+    body
+}
+
+pub(crate) fn probe_format() -> Value {
+    json!({"type":"json_schema","json_schema":{"name":"provider_probe","strict":true,"schema":object(json!({"ok":{"type":"boolean","enum":[true]}}))}})
+}
+
 fn object(properties: Value) -> Value {
     let required = properties
         .as_object()

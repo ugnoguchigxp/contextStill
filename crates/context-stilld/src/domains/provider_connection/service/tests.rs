@@ -683,7 +683,7 @@ fn expired_claimability_hint_must_still_pass_the_authoritative_claim() {
 }
 
 #[test]
-fn ready_status_waits_for_claimable_provider_and_respects_expiry_and_retry_after() {
+fn probing_provider_waits_and_respects_expiry_and_retry_after() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let server = thread::spawn(move || {
@@ -735,34 +735,62 @@ fn live_common_connection_provider_round_trip() {
     cfg.control_timeout_ms = 10000;
     cfg.max_concurrent_requests = 4;
     let mut manager = super::super::manager::LarmConnectionManager::new(cfg).unwrap();
-    let result =
-        (|| {
-            assert!(manager.reconcile(true)?.ready);
-            let capacity = manager.request_capacity()?;
-            let claimed = manager.target().expect("claimed provider");
-            let target = crate::domains::queue_lifecycle::episode_executor::LocalLlmTargetConfig {
-                codex: false,
-                quota_db: None,
-                target_id: "larm-common-canary".into(),
-                api_base_url: claimed.api_base_url.clone(),
-                api_path: "/v1/chat/completions".into(),
-                model: claimed.model.clone(),
-            };
-            let response = crate::domains::agent_runtime::transport::send(
-            crate::domains::agent_runtime::transport::CompletionRequest {
-                target: &target, api_key: Some(&claimed.bearer_token),
-                messages: &serde_json::json!([{"role":"user","content":"Reply with exactly OK."}]),
-                max_output: 32, response_format: None, timeout_seconds: 120
-            }).map_err(|_| LarmControlError::protocol("claimed Provider inference failed"))?;
-            assert!(response.terminal_error.is_none());
-            assert!(!response.content.trim().is_empty());
-            assert!(response.usage.is_some());
-            println!(
-                "profile=contextStill connection={} model={} capacity={} usage={:?}",
-                claimed.connection_id, claimed.model, capacity, response.usage
+    let result = (|| {
+        assert!(manager.reconcile(true)?.ready);
+        let capacity = manager.request_capacity()?;
+        let initial = manager.target().expect("claimed provider").clone();
+        let target = crate::domains::queue_lifecycle::episode_executor::LocalLlmTargetConfig {
+            codex: false,
+            quota_db: None,
+            target_id: "larm-agent-connection:isolated-canary".into(),
+            api_base_url: initial.api_base_url.clone(),
+            api_path: "/v1/chat/completions".into(),
+            model: initial.model.clone(),
+        };
+        let messages = serde_json::json!([{"role":"user","content":"Return only a JSON object with ok equal to true."}]);
+        let infer = |token: &str| {
+            crate::domains::agent_runtime::transport::send(
+                crate::domains::agent_runtime::transport::CompletionRequest {
+                    target: &target,
+                    api_key: Some(token),
+                    messages: &messages,
+                    max_output: 256,
+                    response_format: Some(
+                        crate::domains::queue_lifecycle::structured_output::probe_format(),
+                    ),
+                    timeout_seconds: 120,
+                },
+            )
+        };
+        let validate = |response: crate::domains::agent_runtime::transport::Completion| {
+            assert!(
+                response.terminal_error.is_none(),
+                "{:?}",
+                response.terminal_error
             );
-            Ok::<(), LarmControlError>(())
-        })();
+            assert_eq!(response.finish_reason.as_deref(), Some("stop"));
+            assert_eq!(
+                serde_json::from_str::<Value>(&response.content).unwrap(),
+                serde_json::json!({"ok":true})
+            );
+            assert!(response.usage.is_some());
+        };
+        validate(
+            infer(initial.bearer_token.as_str())
+                .map_err(|_| LarmControlError::protocol("initial inference failed"))?,
+        );
+        manager.renew_and_reclaim()?;
+        let renewed = manager.target().expect("renewed provider");
+        assert_ne!(initial.bearer_token.as_str(), renewed.bearer_token.as_str());
+        let old = infer(initial.bearer_token.as_str()).unwrap_err();
+        assert_eq!(old.to_string(), "provider_credential_rejected");
+        validate(
+            infer(renewed.bearer_token.as_str())
+                .map_err(|_| LarmControlError::protocol("renewed inference failed"))?,
+        );
+        println!("profile=contextStill connection={} model={} capacity={} structured=stop renew=passed oldCredential=401", renewed.connection_id,renewed.model,capacity);
+        Ok::<(), LarmControlError>(())
+    })();
     let released = manager.release();
     result.unwrap();
     released.unwrap();
@@ -791,5 +819,34 @@ fn release_accepts_a_gone_connection_after_larm_restart() {
         .unwrap()
         .release("old-connection")
         .unwrap();
+    server.join().unwrap();
+}
+
+#[test]
+fn ready_with_stale_probe_cache_goes_directly_to_authoritative_claim() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let mut raw = connection_json();
+    raw["providers"][0]["claimable"] = Value::Bool(false);
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        assert!(read_request(&mut stream)
+            .starts_with("POST /v1/agent-connections/aconn_epoch_1/claim "));
+        stream
+            .write_all(
+                json_response(
+                    503,
+                    serde_json::json!({"error":{"code":"provider_semantic_not_ready"}}),
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+    });
+    let client = LarmControlClient::new(config(&origin)).unwrap();
+    let ready = client
+        .wait_until_ready(serde_json::from_value(raw).unwrap())
+        .unwrap();
+    assert!(!ready.providers[0].claimable);
+    assert!(client.claim(&ready).unwrap_err().retryable);
     server.join().unwrap();
 }

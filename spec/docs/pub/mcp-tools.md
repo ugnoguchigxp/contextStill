@@ -3,8 +3,8 @@
 context-still exposes a compact MCP surface for coding agents. The tools are designed around this repeatable workflow:
 
 ```text
-initial_instructions -> plan or implementation work -> review design and implementation -> context_compile -> work -> compile_eval
-initial_instructions -> simple single task (commit, push, verification only)
+initial_instructions -> substantial investigation, planning, or implementation -> review design and implementation -> context_compile -> work -> compile_eval
+initial_instructions -> simple request (question, minor wording correction, commit, push, verification only) -> work
 ```
 
 ## Client Registration
@@ -65,7 +65,7 @@ Authentication uses a fresh local bearer token on every start. Read `authTokenPa
 | Tool                        | Primary use                                                                                           |
 | --------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `initial_instructions`      | Load operating rules and hook guidance once per project session                                       |
-| `context_compile`           | Compile context for planning or implementation after reviewing the relevant design and implementation   |
+| `context_compile`           | Compile context for substantial tasks after reviewing the relevant design and implementation   |
 | `compile_eval`              | Record post-task usefulness scores for compiled context                                               | Record Good/Bad or system/AI outcome feedback for a decision                                          |
 
 ## Supplemental Tool Inventory
@@ -90,8 +90,8 @@ Deprecated hidden aliases remain for compatibility but are not listed:
 ## Recommended Agent Workflow
 
 1. Call `initial_instructions` once when starting work in this project.
-2. If the task is only a simple single operation that involves neither planning nor implementation decisions, such as running git commit, git push, or verification, skip `context_compile` and perform the task.
-3. For planning or tasks that require implementation decisions, first read the relevant design documents and confirm how the target is implemented.
+2. For simple requests, such as answering a question, making a minor wording correction, or only running git commit, git push, or verification, skip `context_compile` and perform the task.
+3. For substantial tasks involving multiple investigations, design decisions, or changes across related areas, first read the relevant design documents and confirm how the target is implemented.
 4. Call `context_compile` with the actual task goal and, for workspace tasks, a stable `projectRef`, explicit `repoKey`, or absolute `repoPath`.
 5. Do the work and verify changes.
 6. Call `compile_eval` for the compile run used during the task.

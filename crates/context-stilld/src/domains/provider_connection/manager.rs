@@ -39,6 +39,7 @@ pub struct LarmConnectionManager {
     next_poll_at: Option<Instant>,
     transient_backoff_ms: u64,
     pending_create_key: Option<String>,
+    pending_renew_key: Option<String>,
     pending_create_body: Option<serde_json::Value>,
     recovered_connection_id: Option<String>,
     state_path: Option<PathBuf>,
@@ -57,6 +58,7 @@ impl LarmConnectionManager {
             next_poll_at: None,
             transient_backoff_ms: 0,
             pending_create_key: None,
+            pending_renew_key: None,
             pending_create_body: None,
             recovered_connection_id: None,
             state_path: None,
@@ -81,6 +83,7 @@ impl LarmConnectionManager {
             manager.pending_create_body =
                 value.get("createBody").filter(|v| v.is_object()).cloned();
             manager.recovered_connection_id = value["id"].as_str().map(str::to_string);
+            manager.pending_renew_key = value["renewKey"].as_str().map(str::to_string);
             manager.pending_reason = value["reason"].as_str().map(str::to_string);
             manager.create_attempted = value["createAttempted"].as_bool().unwrap_or(false);
             // Activity/auth failures can be persisted before any remote create.
@@ -101,7 +104,7 @@ impl LarmConnectionManager {
         let Some(path) = self.state_path.as_ref() else {
             return Ok(());
         };
-        let value = serde_json::json!({"key":self.pending_create_key,"id":self.connection_id(),"reason":self.pending_reason,"createAttempted":self.create_attempted,"createBody":self.pending_create_body});
+        let value = serde_json::json!({"key":self.pending_create_key,"id":self.connection_id(),"reason":self.pending_reason,"createAttempted":self.create_attempted,"createBody":self.pending_create_body,"renewKey":self.pending_renew_key});
         let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
         std::fs::write(&temporary, value.to_string()).map_err(|error| {
             LarmControlError::configuration(format!("failed to persist LARM state: {error}"))
@@ -113,6 +116,7 @@ impl LarmConnectionManager {
 
     fn rotate_key_after_release(&mut self) -> Result<(), LarmControlError> {
         self.connection = None;
+        self.pending_renew_key = None;
         self.recovered_connection_id = None;
         self.pending_create_key = Some(self.client.new_idempotency_key("create")?);
         self.pending_reason = None;
@@ -187,6 +191,11 @@ impl LarmConnectionManager {
 
     pub(crate) fn connection(&self) -> Option<&PublicLarmConnection> {
         self.connection.as_ref()
+    }
+
+    pub(crate) fn invalidate_credential(&mut self) {
+        self.target = None;
+        self.request_capacity = None;
     }
 
     pub fn connection_id(&self) -> Option<&str> {
@@ -288,6 +297,9 @@ impl LarmConnectionManager {
                 self.connection = Some(current);
             }
         }
+        if self.pending_renew_key.is_some() {
+            self.renew_and_reclaim()?;
+        }
         if let Some(target) = self.target.as_ref() {
             let requires_renewal = match self.client.target_requires_renewal(target) {
                 Ok(requires_renewal) => requires_renewal,
@@ -325,16 +337,32 @@ impl LarmConnectionManager {
             .ok_or_else(|| LarmControlError::configuration("no LARM connection to renew"))?;
         self.target = None;
         self.state = LarmConnectionManagerState::Renewing;
-        let key = match self.client.new_idempotency_key("renew") {
-            Ok(key) => key,
-            Err(error) => {
-                self.fail_closed(&error);
-                return Err(error);
+        let key = match self.pending_renew_key.clone() {
+            Some(key) => key,
+            None => {
+                let key = self.client.new_idempotency_key("renew")?;
+                self.pending_renew_key = Some(key.clone());
+                self.persist()?;
+                key
             }
         };
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        use sha2::Digest;
+        let operation_hash = format!("{:x}", sha2::Sha256::digest(key.as_bytes()));
+        eprintln!(
+            "{}",
+            serde_json::json!({"event":"larm_connection_renew","phase":"requested","connectionId":connection_id,"operationHash":operation_hash,"timestampMs":started})
+        );
         let renewed = match self.client.renew(&connection_id, &key) {
             Ok(connection) => connection,
             Err(error) => {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"event":"larm_connection_renew","phase":"rejected_or_unknown","connectionId":connection_id,"operationHash":operation_hash,"errorKind":error.kind,"httpStatus":error.http_status,"retryable":error.retryable})
+                );
                 self.fail_closed(&error);
                 return Err(error);
             }
@@ -346,6 +374,8 @@ impl LarmConnectionManager {
             }
         }
         self.connection = Some(renewed.clone());
+        self.pending_renew_key = None;
+        self.persist()?;
         self.state = LarmConnectionManagerState::WaitingReady;
         let ready = match self.client.wait_until_ready(renewed) {
             Ok(connection) => connection,
@@ -362,6 +392,10 @@ impl LarmConnectionManager {
                 return Err(error);
             }
         };
+        eprintln!(
+            "{}",
+            serde_json::json!({"event":"larm_connection_renew","phase":"reclaimed","connectionId":connection_id,"operationHash":operation_hash,"expiresAt":target.expires_at,"elapsedMs":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis().saturating_sub(started)})
+        );
         self.connection = Some(ready);
         self.target = Some(target);
         self.state = LarmConnectionManagerState::Ready;
@@ -488,16 +522,10 @@ impl LarmConnectionManager {
                 "LARM connection was not ready after readiness polling",
             ));
         }
-        let ready = if self.client.connection_requires_renewal(&ready)? {
-            self.state = LarmConnectionManagerState::Renewing;
-            let key = self.client.new_idempotency_key("renew")?;
-            let renewed = self.client.renew(&ready.id, &key)?;
-            ensure_same_connection_identity(&ready, &renewed)?;
-            self.state = LarmConnectionManagerState::WaitingReady;
-            self.client.wait_until_ready(renewed)?
-        } else {
-            ready
-        };
+        if self.client.connection_requires_renewal(&ready)? {
+            self.connection = Some(ready);
+            return self.renew_and_reclaim();
+        }
         self.connection = Some(ready.clone());
         self.state = LarmConnectionManagerState::Claiming;
         self.target = Some(self.client.claim(&ready)?);
@@ -1103,6 +1131,7 @@ mod tests {
         let server = thread::spawn(move || {
             let mut renewed = connection_json("epoch-1");
             renewed["catalogRevision"] = serde_json::Value::String("catalog-1".to_string());
+            renewed["providers"][0]["claimable"] = serde_json::Value::Bool(false);
             let responses = [
                 json_response(renewed),
                 json_response(claim_json(&response_origin)),
@@ -1136,6 +1165,63 @@ mod tests {
         assert!(requests[0].contains("/renew HTTP/1.1"));
         assert!(requests[1].contains("/claim HTTP/1.1"));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn ambiguous_renew_reuses_persisted_key_after_restart_and_discards_old_credential() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let response_origin = origin.clone();
+        let path = std::env::temp_dir().join(format!(
+            "contextstill-renew-retry-{}.json",
+            std::process::id()
+        ));
+        let server = thread::spawn(move || {
+            let mut renewed = connection_json("epoch-1");
+            renewed["catalogRevision"] = serde_json::json!("catalog-1");
+            let mut requests = Vec::new();
+            for response in [
+                json_response_with_status(
+                    503,
+                    "Unavailable",
+                    serde_json::json!({"error":{"code":"unavailable"}}),
+                ),
+                json_response(renewed),
+                json_response(claim_json(&response_origin)),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                requests.push(read_request(&mut stream));
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+            requests
+        });
+        let mut manager =
+            LarmConnectionManager::new_persistent(config(&origin), path.clone()).unwrap();
+        manager.connection = Some(public_connection("epoch-1"));
+        manager.pending_create_key = Some("persisted-create-key".into());
+        manager.create_attempted = true;
+        assert!(manager.renew_and_reclaim().is_err());
+        assert!(manager.target().is_none());
+        let key = manager.pending_renew_key.clone().unwrap();
+        drop(manager);
+        let mut restarted =
+            LarmConnectionManager::new_persistent(config(&origin), path.clone()).unwrap();
+        assert_eq!(restarted.pending_renew_key.as_ref(), Some(&key));
+        restarted.connection = Some(public_connection("epoch-1"));
+        restarted.renew_and_reclaim().unwrap();
+        assert!(restarted.pending_renew_key.is_none());
+        assert_eq!(
+            restarted.target().unwrap().bearer_token.as_str(),
+            "new-secret"
+        );
+        let requests = server.join().unwrap();
+        for request in &requests[..2] {
+            assert!(request
+                .to_ascii_lowercase()
+                .contains(&format!("idempotency-key: {}", key.to_ascii_lowercase())));
+        }
+        assert!(requests[2].starts_with("POST /v1/agent-connections/aconn_epoch_1/claim "));
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
