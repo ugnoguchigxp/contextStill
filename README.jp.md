@@ -64,7 +64,7 @@ context-still は hosted SaaS ではありません。DB、source、settings、A
 
 ## デスクトップクイックスタート
 
-Bun 1.3.14、Git、stable Rust（CargoとCコンパイラ）が必要です。
+Bun 1.4.4、Git、stable Rust（CargoとCコンパイラ）が必要です。
 
 ```bash
 git clone https://github.com/ugnoguchigxp/contextStill.git

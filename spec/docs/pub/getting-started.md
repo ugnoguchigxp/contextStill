@@ -14,7 +14,7 @@ The Tauri shell is the desktop packaging target. Until that shell exists, use th
 
 ## Desktop Quick Start
 
-Requirements: Bun 1.3.14, Git, and the stable Rust toolchain (Cargo and a native C compiler).
+Requirements: Bun 1.4.4, Git, and the stable Rust toolchain (Cargo and a native C compiler).
 
 ```bash
 git clone https://github.com/ugnoguchigxp/contextStill.git

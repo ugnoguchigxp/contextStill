@@ -8,7 +8,7 @@
     "context-still": "./src/cli/context-still.ts",
     "memory-router": "./src/cli/context-still.ts"
   },
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.4",
   "scripts": {
     "dev": "bun ./node_modules/vite/bin/vite.js",
     "start": "cargo run -q -p context-stilld -- run",
@@ -217,7 +217,7 @@
     "@vitejs/plugin-react": "6.0.1",
     "@vitest/coverage-v8": "4.1.6",
     "ajv": "8.20.0",
-    "bun-types": "1.3.12",
+    "bun-types": "1.4.4",
     "drizzle-kit": "0.31.10",
     "jsdom": "29.1.1",
     "s11tnext-cli": "0.1.2",

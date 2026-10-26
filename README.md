@@ -65,7 +65,7 @@ context-still is local-first software, not a hosted SaaS. You control the databa
 
 ## Desktop Quick Start
 
-Requirements: Bun 1.3.14, Git, and the stable Rust toolchain (Cargo and a native C compiler).
+Requirements: Bun 1.4.4, Git, and the stable Rust toolchain (Cargo and a native C compiler).
 
 ```bash
 git clone https://github.com/ugnoguchigxp/contextStill.git
