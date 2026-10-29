@@ -34,6 +34,23 @@ pub(super) fn calibrate_episode(mut canonical: CanonicalEpisode) -> CanonicalEpi
 
 pub(super) fn review_episode_value(canonical: &CanonicalEpisode) -> ValueReview {
     let scores = &canonical.scores;
+    if canonical.generation_kind == "personal_episode" {
+        let publish = scores.evidence_quality >= 60
+            && scores.confidence >= 55
+            && scores.importance >= 55
+            && (!canonical.key_decisions.is_empty()
+                || !canonical.open_loops.is_empty()
+                || !canonical.context.trim().is_empty());
+        return ValueReview {
+            publish,
+            score: scores.importance,
+            reasons: if publish {
+                vec![]
+            } else {
+                vec!["personal_evidence_or_value_below_threshold".into()]
+            },
+        };
+    }
     let reusable_signal = scores
         .reusability
         .max(scores.decision_density)
@@ -81,7 +98,9 @@ pub(super) fn quality_value_score(scores: &EpisodeScores) -> i64 {
 pub(super) fn canonical_json(canonical: &CanonicalEpisode) -> Value {
     json!({
         "title": canonical.title,
+        "eventStart":canonical.event_start,"eventEnd":canonical.event_end,"timePrecision":canonical.time_precision,"topics":canonical.topics,"entities":canonical.entities,
         "context": canonical.context,
+        "evidenceQuotes":canonical.evidence_quotes,
         "intent": canonical.intent,
         "keyDecisions": canonical.key_decisions,
         "actionTaken": canonical.action_taken,
@@ -143,7 +162,7 @@ pub(super) fn clamp_score(value: i64) -> i64 {
 
 pub(super) fn normalize_generation_kind(value: &str) -> String {
     match value {
-        "failure_episode" | "decision_episode" => value.to_string(),
+        "failure_episode" | "decision_episode" | "personal_episode" => value.to_string(),
         _ => "task_episode".to_string(),
     }
 }

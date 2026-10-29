@@ -21,6 +21,7 @@ impl Fixture {
         let source = self.0.join("source.sqlite");
         let writer = SqliteWriterRuntime::start(&source, 4, 8).unwrap();
         writer.handle().execute("test.seed", |connection| {
+            connection.execute("INSERT INTO vibe_memories(id,session_id,content,metadata,created_at) VALUES('private-cache','saaa:fixture','忘却の対象になる原文','{\"saaa\":{}}','1')",[]).map_err(|e|e.to_string())?;
             connection.execute("INSERT INTO knowledge_items(id, type, status, title, body) VALUES('restore-test', 'rule', 'active', 'Restore fixture', 'Preserve this knowledge through backup')", [])
                 .map(|_| ()).map_err(|error| error.to_string())
         }).unwrap();
@@ -41,6 +42,17 @@ fn verifies_and_restores_a_real_backup_without_mutating_it() {
     let fixture = Fixture::new();
     let backup = fixture.backup();
     let before = std::fs::read(&backup).unwrap();
+    let c = Connection::open(&backup).unwrap();
+    assert_eq!(
+        c.query_row(
+            "SELECT count(*) FROM vibe_memories WHERE json_type(metadata,'$.saaa')='object'",
+            [],
+            |r| r.get::<_, u32>(0)
+        )
+        .unwrap(),
+        0
+    );
+    drop(c);
     let verified = verify(&backup).unwrap();
     assert_eq!(verified.status, "verified");
     assert_eq!(verified.knowledge_items, 1);

@@ -684,6 +684,7 @@ pub(crate) fn read_filtered_vibe_source(
         .optional()
         .map_err(|error| CliError::io(format!("failed to load vibe memory: {error}")))?
         .ok_or_else(|| CliError::io(format!("vibe memory not found: {source_key}")))?;
+    crate::domains::agent_log_sync::saaa::deny_knowledge_source(connection, source_key)?;
     let mut blocks = vec![filter_source_text(&content)];
     let table_exists: bool = connection.query_row(
         "select exists(select 1 from sqlite_master where type = 'table' and name = 'agent_diff_entries')",

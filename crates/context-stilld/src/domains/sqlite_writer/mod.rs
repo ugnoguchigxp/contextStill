@@ -8,3 +8,5 @@ pub use service::{
     SqliteWriterHandle, SqliteWriterRuntime, SqliteWriterStatus, TransactionControl,
     WriterExecution,
 };
+
+mod personal_backup;

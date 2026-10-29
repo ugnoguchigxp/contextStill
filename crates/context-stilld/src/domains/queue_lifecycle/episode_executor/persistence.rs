@@ -29,6 +29,11 @@ pub(super) fn create_episode_idempotently(
     api_key: Option<&str>,
     timeout_seconds: u64,
 ) -> Result<EpisodePersistOutcome, EpisodeProcessError> {
+    crate::domains::agent_log_sync::saaa::validate(&document.metadata)?;
+    crate::domains::agent_log_sync::saaa::verify_quotes(
+        &document.metadata,
+        &item.canonical.evidence_quotes,
+    )?;
     if let Some(existing) = existing_episode_id(connection, &item.source_key)? {
         return Ok(EpisodePersistOutcome::SourceDeduped(existing));
     }
@@ -65,6 +70,11 @@ pub(super) fn create_episode_idempotently(
         }
         Err(error) => {
             let _ = connection.execute_batch("ROLLBACK");
+            crate::domains::agent_log_sync::saaa::validate(&document.metadata)?;
+            crate::domains::agent_log_sync::saaa::verify_quotes(
+                &document.metadata,
+                &item.canonical.evidence_quotes,
+            )?;
             if let Some(existing) = existing_episode_id(connection, &item.source_key)? {
                 Ok(EpisodePersistOutcome::SourceDeduped(existing))
             } else {
@@ -80,6 +90,11 @@ pub(super) fn create_episode_idempotently_in_transaction(
     document: &SourceDocument,
     identity: &EpisodeWriteIdentity,
 ) -> Result<EpisodePersistOutcome, CliError> {
+    crate::domains::agent_log_sync::saaa::validate(&document.metadata)?;
+    crate::domains::agent_log_sync::saaa::verify_quotes(
+        &document.metadata,
+        &item.canonical.evidence_quotes,
+    )?;
     if let Some(existing) = existing_episode_id(connection, &item.source_key)? {
         return Ok(EpisodePersistOutcome::SourceDeduped(existing));
     }
@@ -121,6 +136,7 @@ pub(super) fn create_episode_idempotently_in_transaction(
             "projectIdentity": project_identity,
             "valueReview": value_review_json(&value_review)
         },
+        "saaa": document.metadata.get("saaa"),
         "triggers": canonical.useful_future_triggers
     });
     let applicability = json!({

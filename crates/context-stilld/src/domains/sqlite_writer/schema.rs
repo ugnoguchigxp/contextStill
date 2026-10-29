@@ -10,6 +10,11 @@ use crate::domains::vector_index;
 pub const CURRENT_SCHEMA_VERSION: i64 = 1;
 pub const CURRENT_SCHEMA_REVISION: i64 = 13;
 
+const SAAA_MEMORY_SCHEMA_SOURCE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../src/db/sqlite/saaa-memory-schema.ts"
+));
+
 const TYPESCRIPT_SCHEMA_SOURCE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../src/db/sqlite/core-schema.ts"
@@ -142,6 +147,11 @@ pub fn read_schema_revision(path: &Path) -> Result<i64, String> {
 }
 
 fn rendered_core_schema(vector_dimension: usize) -> Result<String, String> {
+    let personal = SAAA_MEMORY_SCHEMA_SOURCE
+        .trim()
+        .strip_prefix("export const saaaMemorySchemaSql = `")
+        .and_then(|s| s.strip_suffix("`;"))
+        .ok_or("invalid personal memory schema template")?;
     let start_marker = "  return `\n";
     let end_marker = "\n`;\n}";
     let start = TYPESCRIPT_SCHEMA_SOURCE
@@ -178,6 +188,7 @@ fn rendered_core_schema(vector_dimension: usize) -> Result<String, String> {
         .ok_or_else(|| "failed to locate manual research SQLite schema template".to_string())?;
     Ok(TYPESCRIPT_SCHEMA_SOURCE[start..end]
         .replace("${dimension}", &vector_dimension.to_string())
+        .replace("${saaaMemorySchemaSql}", personal)
         .replace("${manualResearchSchemaSql}", manual)
         .replace("${curationQueueSchemaSql}", &queue))
 }

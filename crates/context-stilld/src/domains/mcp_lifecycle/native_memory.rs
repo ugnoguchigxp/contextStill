@@ -31,6 +31,7 @@ pub(crate) fn search_memory(params: &Value, context: &NativeToolContext) -> Valu
         r#"
         select id, session_id, content, memory_type, metadata, created_at
         from vibe_memories
+        where COALESCE(json_type(metadata,'$.saaa'),'null')!='object'
         order by created_at desc
         limit 500
         "#,
@@ -220,7 +221,7 @@ fn fetch_memory_row(connection: &Connection, id: &str) -> Result<Option<MemoryFe
             r#"
             select id, session_id, content, memory_type, metadata, created_at
             from vibe_memories
-            where id = ?1
+            where id = ?1 AND COALESCE(json_type(metadata,'$.saaa'),'null')!='object'
             limit 1
             "#,
             [id],

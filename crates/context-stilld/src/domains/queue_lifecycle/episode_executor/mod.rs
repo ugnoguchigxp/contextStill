@@ -14,7 +14,7 @@ mod store;
 #[cfg(test)]
 mod test_support;
 mod tests;
-mod types;
+pub(crate) mod types;
 pub(crate) use entry::{
     run_episode_distiller_job_for_connection, run_episode_distiller_job_for_path,
 };

@@ -142,6 +142,7 @@ impl EpisodeStore<'_> {
         api_key: Option<&str>,
         timeout_seconds: u64,
     ) -> Result<EpisodePersistOutcome, EpisodeProcessError> {
+        crate::domains::agent_log_sync::saaa::validate(&document.metadata)?;
         match self {
             Self::Legacy(connection) => create_episode_idempotently(
                 connection,

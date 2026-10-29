@@ -272,6 +272,7 @@ pub(crate) fn run_sync<E: EnvProvider>(env: &E) -> Result<AgentLogSyncSummary, C
         });
     }
 
+    summary.imported += super::saaa::sync(env, &paths.sqlite_core_path)?;
     summary.finished_at = service::now_timestamp();
     Ok(summary)
 }

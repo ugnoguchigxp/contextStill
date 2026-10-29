@@ -107,6 +107,7 @@ export const episodeRetrievalFeedbackInputSchema = z.object({
 });
 
 export const episodeCardSchema = episodeCardCreateSchema.omit({ refs: true }).extend({
+  scope: z.enum(["repo", "global", "personal"]),
   id: z.string().min(1),
   classificationStatus: z.enum(["classified", "unresolved", "conflict", "malformed"]),
   staleAt: z.coerce.date().nullable(),

@@ -1056,3 +1056,6 @@ fn split_episode_execution_uses_query_only_reads_and_fenced_writer_persistence()
     runtime.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
+
+#[path = "tests/personal.rs"]
+mod personal;

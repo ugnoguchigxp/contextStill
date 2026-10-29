@@ -190,6 +190,12 @@ pub(super) fn create_episode_runtime_tables(connection: &Connection) {
 
 pub(super) fn test_canonical_episode() -> CanonicalEpisode {
     CanonicalEpisode {
+        evidence_quotes: Vec::new(),
+        event_start: None,
+        event_end: None,
+        time_precision: None,
+        topics: vec![],
+        entities: vec![],
         title: "Atomic EpisodeCard insert".to_string(),
         context: "Rust should not leave partial EpisodeCard rows.".to_string(),
         intent: "Protect retry semantics.".to_string(),

@@ -12,7 +12,7 @@ mod memory_recall_contract;
 mod memory_recall_projection;
 mod native_common;
 pub(crate) mod native_compile;
-mod native_episodes;
+pub(crate) mod native_episodes;
 mod native_handlers;
 #[cfg(test)]
 mod native_handlers_tests;
@@ -20,7 +20,7 @@ mod native_knowledge;
 mod native_memory;
 mod native_memory_recall;
 mod native_resources;
-mod native_tools;
+pub(crate) mod native_tools;
 #[cfg(test)]
 mod native_tools_tests;
 pub(crate) mod project_identity;

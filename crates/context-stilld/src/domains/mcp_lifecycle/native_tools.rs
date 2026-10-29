@@ -212,6 +212,8 @@ fn exposed_tools() -> Value {
         tool("search_episodes", "Search EpisodeCards, compact past-work precedents with refs back to raw evidence.", json!({
             "type":"object",
             "properties":{
+                "personalScopes":{"type":"array","items":{"type":"string"},"maxItems":8},
+                "eventFrom":{"type":"string"},"eventUntil":{"type":"string"},
                 "query":{"type":"string","description":"Search text for title, situation, lesson, refs."},
                 "status":{"type":"string","enum":["active","deprecated"],"description":"Single status filter. Defaults to active."},
                 "statuses":{"type":"array","items":{"type":"string","enum":["active","deprecated"]},"description":"Multiple status filters."},
@@ -228,7 +230,7 @@ fn exposed_tools() -> Value {
         })),
         tool("fetch_episode", "Fetch one EpisodeCard with refs for raw evidence drill down.", json!({
             "type":"object",
-            "properties":{"id":{"type":"string","description":"EpisodeCard id."}},
+            "properties":{"sourceKey":{"type":"string"},"personalScopes":{"type":"array","items":{"type":"string"},"maxItems":8},"id":{"type":"string","description":"EpisodeCard id."}},
             "required":["id"]
         })),
         tool("doctor", "Run diagnostic checks on the contextStill system (Gnosis compatible).", json!({"type":"object","properties":{}}))

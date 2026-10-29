@@ -1,3 +1,4 @@
+import { saaaMemorySchemaSql } from "./saaa-memory-schema.js";
 import { manualResearchSchemaSql } from "./manual-research-schema.js";
 import { curationQueueSchemaSql } from "./curation-queue-schema.js";
 
@@ -1400,6 +1401,8 @@ CREATE TABLE IF NOT EXISTS landscape_snapshots (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) STRICT;
+
+${saaaMemorySchemaSql}
 
 ${manualResearchSchemaSql}
 `;

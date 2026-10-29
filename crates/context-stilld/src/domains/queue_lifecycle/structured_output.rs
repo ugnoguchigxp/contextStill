@@ -47,10 +47,20 @@ pub(super) fn format(name: &str) -> Value {
                 "technologies",
                 "changeTypes",
                 "tools",
+                "topics",
+                "entities",
             ] {
                 fields.insert(key.into(), strings());
             }
-            fields.insert("generationKind".into(),json!({"type":"string","enum":["task_episode","failure_episode","decision_episode"]}));
+            for key in ["eventStart", "eventEnd"] {
+                fields.insert(key.into(), json!({"type":["string","null"]}));
+            }
+            fields.insert(
+                "timePrecision".into(),
+                json!({"type":["string","null"],"enum":["instant","day","month","year",null]}),
+            );
+            fields.insert("evidenceQuotes".into(),json!({"type":"array","maxItems":8,"items":object(json!({"sourceId":{"type":"string"},"quote":{"type":"string","maxLength":600}}))}));
+            fields.insert("generationKind".into(),json!({"type":"string","enum":["task_episode","failure_episode","decision_episode","personal_episode"]}));
             fields.insert(
                 "outcomeKind".into(),
                 json!({"type":"string","enum":["success","failure","mixed","unknown"]}),

@@ -491,6 +491,12 @@ pub fn create_offline_backup(sqlite_path: &Path, output_path: &Path) -> Result<u
         .execute("VACUUM INTO ?1", [output_path.to_string_lossy().as_ref()])
         .map_err(|error| format!("failed to create SQLite backup: {error}"))?;
     drop(connection);
+    // Personal Episode derivatives are rebuildable caches, not backup authorities.
+    // Purge them from this new artifact and compact freed pages before publishing it.
+    if let Err(error) = super::personal_backup::sanitize(output_path) {
+        let _ = std::fs::remove_file(output_path);
+        return Err(error);
+    }
     lock_file
         .unlock()
         .map_err(|error| format!("failed to release SQLite writer lock: {error}"))?;

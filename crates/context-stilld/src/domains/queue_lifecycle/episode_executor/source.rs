@@ -66,6 +66,7 @@ pub(super) fn read_source_document(
         .map_err(|error| CliError::io(format!("failed to load vibe memory: {error}")))?
         .ok_or_else(|| CliError::io(format!("vibe memory not found: {vibe_memory_id}")))?;
 
+    crate::domains::agent_log_sync::saaa::validate(&parse_json_or_empty(&memory.3))?;
     let mut parts = Vec::new();
     let mut events = Vec::new();
     append_source_block(

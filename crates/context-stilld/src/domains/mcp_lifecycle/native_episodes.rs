@@ -66,12 +66,66 @@ pub(crate) fn search_episodes(params: &Value, context: &NativeToolContext) -> Va
             }
         }));
     }
-    let rows = match fetch_episode_rows(&connection, &identity) {
+    let mut rows = match fetch_episode_rows(&connection, &identity) {
         Ok(rows) => rows,
         Err(error) => return tool_error(&error),
     };
+    let personal_scopes = match optional_string_array(args, "personalScopes") {
+        Ok(s) => s,
+        Err(e) => return tool_error(&e),
+    };
+    if !personal_scopes.is_empty() {
+        let mut stmt=match connection.prepare(&format!("select {EPISODE_SELECT_COLUMNS} from episode_cards where scope='personal' order by created_at desc")){Ok(s)=>s,Err(e)=>return tool_error(&e.to_string())};
+        let found = match stmt.query_map([], map_episode_row) {
+            Ok(r) => r,
+            Err(e) => return tool_error(&e.to_string()),
+        };
+        rows.extend(
+            found
+                .flatten()
+                .filter(|r| personal_allowed(r, &personal_scopes)),
+        );
+    }
     let mut items = Vec::new();
     for row in rows {
+        let metadata = parse_json_or_empty(&row.metadata);
+        if crate::domains::agent_log_sync::saaa::validate(&metadata).is_err() {
+            continue;
+        }
+        if args.contains_key("eventFrom") || args.contains_key("eventUntil") {
+            let Some(canonical) = metadata.pointer("/episodeDistillation/canonical") else {
+                continue;
+            };
+            let Some(precision) = canonical["timePrecision"].as_str() else {
+                continue;
+            };
+            let Some(start) = canonical["eventStart"]
+                .as_str()
+                .and_then(|s| crate::shared::event_time::bounds(s, precision))
+            else {
+                continue;
+            };
+            let end = canonical["eventEnd"]
+                .as_str()
+                .and_then(|s| crate::shared::event_time::bounds(s, precision))
+                .unwrap_or(start);
+            if let Some(from) = string_arg(args, "eventFrom") {
+                let Some(from) = crate::shared::event_time::query_bound(&from) else {
+                    return tool_error("Invalid eventFrom");
+                };
+                if end.1 < from {
+                    continue;
+                }
+            }
+            if let Some(until) = string_arg(args, "eventUntil") {
+                let Some(until) = crate::shared::event_time::query_bound(&until) else {
+                    return tool_error("Invalid eventUntil");
+                };
+                if start.0 >= until {
+                    continue;
+                }
+            }
+        }
         if !statuses.iter().any(|status| status == &row.status)
             || (!outcome_kinds.is_empty()
                 && !outcome_kinds.iter().any(|kind| kind == &row.outcome_kind))
@@ -150,6 +204,21 @@ pub(crate) fn fetch_episode(params: &Value, context: &NativeToolContext) -> Valu
         Ok(None) => return tool_error("Episode not found."),
         Err(error) => return tool_error(&error),
     };
+    if row.scope == "personal"
+        && (row.status != "active"
+            || !personal_allowed(
+                &row,
+                &optional_string_array(args, "personalScopes").unwrap_or_default(),
+            ))
+    {
+        return tool_error("Episode scope is unavailable.");
+    }
+    if string_arg(args, "sourceKey").is_some_and(|v| v != row.source_key)
+        || crate::domains::agent_log_sync::saaa::validate(&parse_json_or_empty(&row.metadata))
+            .is_err()
+    {
+        return tool_error("Episode source version is unavailable.");
+    }
     content_json(episode_full_payload(
         row,
         fetch_episode_refs(&connection, &id),
@@ -287,6 +356,9 @@ fn fetch_episode_refs(connection: &Connection, episode_id: &str) -> Vec<EpisodeR
 fn episode_search_payload(row: EpisodeRow, refs: Vec<EpisodeRef>, score: Option<i64>) -> Value {
     json!({
         "id": row.id,
+        "sourceKey": row.source_key,
+        "sourceContract": parse_json_or_empty(&row.metadata).get("saaa"),
+        "eventTime":event_time_payload(&row.metadata),
         "title": row.title,
         "situation": row.situation,
         "outcome": row.outcome,
@@ -314,6 +386,8 @@ fn episode_search_payload(row: EpisodeRow, refs: Vec<EpisodeRef>, score: Option<
 fn episode_full_payload(row: EpisodeRow, refs: Vec<EpisodeRef>) -> Value {
     json!({
         "id": row.id,
+        "sourceContract":parse_json_or_empty(&row.metadata).get("saaa"),
+        "eventTime":event_time_payload(&row.metadata),
         "title": row.title,
         "situation": row.situation,
         "observations": row.observations,
@@ -373,6 +447,17 @@ fn episode_search_text(row: &EpisodeRow, refs: &[EpisodeRef]) -> String {
             .join(" "),
     ]
     .join("\n")
+}
+
+fn personal_allowed(row: &EpisodeRow, scopes: &[String]) -> bool {
+    let metadata = parse_json_or_empty(&row.metadata);
+    matches!(crate::domains::agent_log_sync::saaa::contract(&metadata),Ok(Some(spec)) if spec.sources.iter().all(|s|scopes.contains(&s.scope)))
+}
+
+fn event_time_payload(metadata: &str) -> Value {
+    let metadata = parse_json_or_empty(metadata);
+    let canonical = &metadata["episodeDistillation"]["canonical"];
+    json!({"start":canonical["eventStart"],"end":canonical["eventEnd"],"precision":canonical["timePrecision"]})
 }
 
 #[cfg(test)]

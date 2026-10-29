@@ -26,6 +26,19 @@ pub(super) fn project_identity_snapshot_string(
 pub(super) fn resolve_episode_write_identity(
     metadata: &Value,
 ) -> Result<EpisodeWriteIdentity, CliError> {
+    if crate::domains::agent_log_sync::saaa::contract(metadata)?.is_some() {
+        crate::domains::agent_log_sync::saaa::validate(metadata)?;
+        let resolved = resolve_compile_project_identity(
+            &CompileProjectIdentityInput::default(),
+            CompileProjectIdentityTrust::TrustedAdapter,
+            None,
+        )
+        .map_err(|e| CliError::io(e.to_string()))?;
+        return Ok(EpisodeWriteIdentity {
+            scope: "personal".into(),
+            resolved,
+        });
+    }
     let snapshot = metadata
         .get("projectIdentity")
         .and_then(Value::as_object)

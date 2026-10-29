@@ -213,7 +213,7 @@ pub(crate) fn store_source_result(
     })
 }
 
-fn enqueue_episode_distiller(
+pub(super) fn enqueue_episode_distiller(
     tx: &rusqlite::Transaction<'_>,
     memory_id: &str,
     source_id: &str,

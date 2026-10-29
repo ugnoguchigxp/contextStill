@@ -131,9 +131,28 @@ pub(super) struct Segment {
     pub(super) event_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct EvidenceQuote {
+    pub(crate) source_id: String,
+    pub(crate) quote: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct CanonicalEpisode {
     pub(super) title: String,
+    #[serde(default, rename = "evidenceQuotes")]
+    pub(super) evidence_quotes: Vec<EvidenceQuote>,
+    #[serde(default, rename = "eventStart")]
+    pub(super) event_start: Option<String>,
+    #[serde(default, rename = "eventEnd")]
+    pub(super) event_end: Option<String>,
+    #[serde(default, rename = "timePrecision")]
+    pub(super) time_precision: Option<String>,
+    #[serde(default)]
+    pub(super) topics: Vec<String>,
+    #[serde(default)]
+    pub(super) entities: Vec<String>,
     #[serde(default, alias = "situation")]
     pub(super) context: String,
     #[serde(default)]
