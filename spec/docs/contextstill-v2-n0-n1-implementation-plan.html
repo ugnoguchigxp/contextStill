@@ -1,0 +1,2010 @@
+<article lang="ja">
+  <h1>contextStill v2 実装計画：N0 骨組みとN1 取り込み・検索（2026-10-30）</h1>
+  <p>
+    <a href="eumenes-knowledge-map-proposal-2026-10-29.html">方針提案</a>の段階N0とN1を、coder
+    subagentがこの文書だけで実装できる粒度に落とした計画である。前提となる事実は<a
+      href="eumenes-knowledge-base-research-2026-10-29.html"
+      >現状調査</a
+    >にある。方針そのもの（TS化、Rust排除、3層の知識、Eumenes方式の基盤）は決定済みで、本書では扱わない。
+  </p>
+  <p>
+    本書の数値のうち旧DBの件数と分布は、2026-10-30に<code>~/Code/contextStill-db-backup-20261029/context-still-core.sqlite</code>を<code>mode=ro&amp;immutable=1</code>で開いて集計した値である。Eumenesのコードは<code>~/Code/eumenes</code>（読み取り専用）を参照した。確認できなかった点は「未検証」と書く。
+  </p>
+
+  <h2>1. 目的と非目標</h2>
+  <h3>目的</h3>
+  <ul>
+    <li>
+      <strong>N0</strong
+      >：mainから旧コードを外し、Eumenes形式の骨組み（単一writer、migration一覧、settingsと秘密、API
+      token、LARMのembedding接続、queue、vectors、N1の中核スキーマ）を置く。<code>bun run verify</code>が通る。
+    </li>
+    <li>
+      <strong>N1</strong>：snapshotからの取り込み（冪等、由来の修復、UTC
+      ISO化、<code>space='coding'</code>）、FTS5
+      trigram、ベクトル（要検証状態での引き継ぎと検証command）、RRFによるhybrid検索、Eumenes向けMCP（<code>search_knowledge</code>、<code>get_knowledge</code>）、評価集合と旧版の語彙採点器との比較runner。
+    </li>
+  </ul>
+  <h3>非目標（N1までに作らない）</h3>
+  <ul>
+    <li>
+      正本知識（canonical）、テーマ、クラスタリング、再蒸留、知識マップ（<code>map_*</code>表）、芋づる展開、<code>related_knowledge</code>・<code>browse_theme</code>・<code>knowledge_feedback</code>。N1の検索対象は原子知識（atom）とEpisodeだけである。
+    </li>
+    <li>
+      蒸留パイプライン（finding、covering、finalize、Episode蒸留）、agent
+      logの同期、<code>context_compile</code>、Web
+      UI、LLM推論のLARM接続。LARMはembeddingだけを使う。
+    </li>
+    <li>
+      旧DBとの差分追跡の自動化、旧daemonの停止、秘密情報の移行。新しいlibraryの導入（下記の固定版以外）。
+    </li>
+  </ul>
+
+  <h2>2. すべてのworkstreamに共通する制約</h2>
+  <p>各coder promptに、この節をそのまま貼る。</p>
+  <ol>
+    <li>TypeScriptだけを書く。Rust、sqlite-vec、Keychain、PostgreSQL、drizzleは使わない。</li>
+    <li>
+      テストと受入確認で、listenするserverやbackground
+      processを起動しない。<code>Bun.serve</code>、<code>bun run start</code>、<code>Bun.spawn</code>で常駐するものは禁止。HonoとMCPは<code>app.request()</code>で、DBは一時ディレクトリで、LARMは注入した<code>fetch</code>のfixtureで試す。テストからlive
+      LARMや外部networkに接続しない（preloadが<code>fetch</code>と<code>Bun.serve</code>を塞ぐ。4.6節）。
+    </li>
+    <li>
+      秘密を読まない：<code>.env*</code>（<code>.env.example</code>を含む）、LaunchAgentのplist、Keychain、<code>~/Library/Application Support/contextStill</code>。
+    </li>
+    <li>
+      commit、push、worktree、<code>git checkout</code>・<code>reset</code>・<code>clean</code>・<code>stash</code>などの不可逆なgit操作をしない。tracked
+      fileの削除は、本書が列挙したものだけを<code>git rm</code>で行う（<code>legacy/v1</code>に保存済み）。untrackedとignoredのファイル（<code>node_modules</code>、<code>target</code>、<code>coverage</code>、<code>dist-web</code>、<code>artifacts</code>、<code>exports</code>、<code>scratch</code>、<code>.tmp</code>、<code>.serena</code>、<code>.DS_Store</code>など）は消さない。
+    </li>
+    <li>
+      <code>/Users/y.noguchi/Code/contextStill</code
+      >の外へ書かない（例外はテストが作る<code>os.tmpdir()</code>配下の一時ディレクトリ）。<code>~/Code/eumenes</code>、<code>~/Code/contextStill-legacy</code>、snapshotは変更しない。snapshotは<code>file:&lt;path&gt;?mode=ro&amp;immutable=1</code>と<code>{ readonly: true }</code>で開く。旧版のlive
+      DB（<code>~/Code/contextStill-legacy/data/context-still-core.sqlite</code>）は開かない。
+    </li>
+    <li>
+      server、旧daemon、他人のprocessを起動・停止・再起動しない。起動が必要な確認はownerに依頼する旨を報告に書く。
+    </li>
+    <li>
+      依存はEumenesと同じ固定版を使う（4.5節）。それ以外のpackageを足さない。足す必要が出たらorchestratorへ報告して止まる。
+    </li>
+    <li>
+      自分のwrite範囲外のファイルを変更しない。契約（<code>contracts/</code>、<code>repository/migrations.ts</code>、本書の型とDDL）を変えたくなったら、変更せずにorchestratorへ報告する。
+    </li>
+    <li>
+      Eumenesのコードを写すのは許可する（同じowner）。写したときはimport先とenv名を本書の名前へ直し、Eumenes固有の機能は持ち込まない。
+    </li>
+  </ol>
+
+  <h2>3. 既定値と環境変数</h2>
+  <p>
+    新版が読む環境変数は下表だけである。<code>resolveConfig(env, repoRoot)</code>は表にない変数を一切読まない。旧版の<code>CONTEXT_STILL_SQLITE_CORE_PATH</code>、<code>CONTEXT_STILL_APP_DATA_DIR</code>、<code>CONTEXT_STILL_DB_BACKEND</code>、<code>CONTEXT_STILL_API_HOST</code>、<code>CONTEXT_STILL_MCP_PORT</code>、<code>CONTEXT_STILL_MCP_HOST</code>、<code>CONTEXT_STILL_ADMIN_API_*</code>などが設定されていても無視する。表の名前は旧版のコード（<code>crates</code>、<code>src</code>、<code>api</code>）に出現しないことを確認済みである。
+  </p>
+  <table>
+    <caption>
+      環境変数と既定値
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">変数</th>
+        <th scope="col">既定値</th>
+        <th scope="col">規則</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>CONTEXT_STILL_DB</code></td>
+        <td><code>&lt;repoRoot&gt;/data/context-still.sqlite3</code></td>
+        <td>
+          絶対pathへ解決する。<code>~/Code/contextStill-legacy/</code>、<code>~/Library/Application Support/contextStill</code>、<code>~/Code/contextStill-db-backup-20261029/</code>の配下なら<code>path_reserved_by_legacy</code>で起動を拒否する（文字列比較のみ。これらのpathをfsで調べない）。<code>:memory:</code>は拒否
+        </td>
+      </tr>
+      <tr>
+        <td><code>CONTEXT_STILL_KEY_DIR</code></td>
+        <td><code>&lt;DBのディレクトリ&gt;/keys</code></td>
+        <td>
+          0700。<code>settings.key</code>、<code>api.token</code>、<code>mcp.token</code>を置く。予約pathの規則はDBと同じ
+        </td>
+      </tr>
+      <tr>
+        <td><code>CONTEXT_STILL_SECRET_KEY</code></td>
+        <td>なし</td>
+        <td>base64の32 byte。あれば<code>settings.key</code>より優先</td>
+      </tr>
+      <tr>
+        <td><code>CONTEXT_STILL_API_TOKEN</code></td>
+        <td>なし（<code>keys/api.token</code>）</td>
+        <td>24文字以上。fileは64桁hex、0600、排他的に作成</td>
+      </tr>
+      <tr>
+        <td><code>CONTEXT_STILL_MCP_TOKEN</code></td>
+        <td>なし（<code>keys/mcp.token</code>）</td>
+        <td>API tokenとは別のtoken。Eumenesに渡すのはこちらだけ。形式はAPI tokenと同じ</td>
+      </tr>
+      <tr>
+        <td><code>CONTEXT_STILL_HOST</code></td>
+        <td><code>127.0.0.1</code></td>
+        <td>
+          <code>127.0.0.1</code
+          >、<code>::1</code>、<code>localhost</code>以外は<code>host_not_loopback</code>で拒否
+        </td>
+      </tr>
+      <tr>
+        <td><code>CONTEXT_STILL_PORT</code></td>
+        <td><code>39181</code></td>
+        <td>
+          1024〜65535。39171と39172（旧版）は<code>port_reserved_by_legacy</code>で拒否。API（<code>/api/*</code>）とMCP（<code>/mcp</code>）を同じportで出す
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>LARM_API_TOKEN</code
+          >（または<code>LARM_CONTROL_TOKEN</code>）
+        </td>
+        <td>なし</td>
+        <td>
+          LARM制御APIのbearer。旧版・Eumenesと同じLARMを使うので名前を共有する。ログ、DB、応答に出さない
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    LARMの接続先（base
+    URL）は環境変数ではなく<code>settings_document</code>の<code>larm.baseUrl</code>を正本とする（Eumenesと同じ）。既定は<code>null</code>で、未設定ならembeddingは<code>larm_not_configured</code>になり、検索はベクトルなしで動く。設定はmaintenance
+    command
+    <code>bun run settings:larm -- --base-url &lt;url&gt;</code
+    >か<code>PUT /api/settings/larm</code>で行う。port
+    39181が他の常駐processと衝突しないことは<strong>未検証</strong>である。
+  </p>
+
+  <h2>4. 構成</h2>
+  <h3>4.1 ディレクトリ</h3>
+  <pre><code>package.json  bun.lock  bunfig.toml  tsconfig.json  .oxlintrc.json  .oxfmtrc.json
+api/
+  infrastructure/   sqlite/index.ts flock.ts digest.ts atomic-file.ts auth-config.ts
+                    vector.ts time.ts handle.ts scope.ts logger.ts http.ts wait-for.ts
+  application/      config.ts runtime.ts app.ts server.ts migrations.ts error-status.ts
+                    commands/{import-legacy,vectors-verify-legacy,vectors-embed,
+                              eval-search,settings-larm}.ts
+  domains/&lt;name&gt;/   index.ts contracts/ service/ repository/ controller/ test/
+scripts/            verify.ts domains.ts boundaries.ts test-domain.ts test-preload.ts
+eval/sets/          評価集合（JSONL、tracked）
+data/               実行時のDBとkeys（gitignore済み）</code></pre>
+  <p>
+    domainは外部へ<code>index.ts</code>と<code>contracts/</code>だけを公開する。1
+    fileが800行に近づいたら分ける。<code>cli/</code>と<code>web/</code>はN1までは作らない。DBを開くのはbackend
+    process（<code>server.ts</code>）とmaintenance
+    command（<code>application/commands/*</code>）だけで、どちらも<code>openStore</code>が取るOS
+    lockを通るので、同時に1
+    processしかwriterにならない。backendが動いている間にcommandを実行すると<code>database_writer_owned</code>で終了する。
+  </p>
+
+  <h3>4.2 domainとtier</h3>
+  <p>
+    <code>scripts/domains.ts</code
+    >に下表を宣言し、<code>scripts/boundaries.ts</code>が検査する。依存先は自分より低いtierに限る。domainから<code>api/application</code>へのimportは禁止、<code>api/infrastructure</code>はdomainをimportしない。
+  </p>
+  <table>
+    <caption>
+      domain一覧
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">domain</th>
+        <th scope="col">tier</th>
+        <th scope="col">依存（api）</th>
+        <th scope="col">責務</th>
+        <th scope="col">実装の段階</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>settings</code></td>
+        <td>0</td>
+        <td>なし</td>
+        <td>設定文書、master key、AES-256-GCMの資格情報</td>
+        <td>N0</td>
+      </tr>
+      <tr>
+        <td><code>larm</code></td>
+        <td>0</td>
+        <td>なし</td>
+        <td>Agent Connection（embedding）とembed呼び出し</td>
+        <td>N0</td>
+      </tr>
+      <tr>
+        <td><code>queue</code></td>
+        <td>0</td>
+        <td>なし</td>
+        <td>Eumenesのqueueを写したもの。N1では handlerなし</td>
+        <td>N0</td>
+      </tr>
+      <tr>
+        <td><code>vectors</code></td>
+        <td>0</td>
+        <td>なし</td>
+        <td>vector spaceとFloat32 BLOBの保存、検証記録</td>
+        <td>N0</td>
+      </tr>
+      <tr>
+        <td><code>sources</code></td>
+        <td>0</td>
+        <td>なし</td>
+        <td>原記録（会話ログ、文書、web）と断片</td>
+        <td>N0</td>
+      </tr>
+      <tr>
+        <td><code>usage</code></td>
+        <td>0</td>
+        <td>なし</td>
+        <td>利用実績</td>
+        <td>N0</td>
+      </tr>
+      <tr>
+        <td><code>experience</code></td>
+        <td>1</td>
+        <td><code>sources</code></td>
+        <td>Episode、Episodeの根拠、FTS</td>
+        <td>N0</td>
+      </tr>
+      <tr>
+        <td><code>knowledge</code></td>
+        <td>1</td>
+        <td><code>sources</code></td>
+        <td>知識（atom／canonical）、根拠、FTS</td>
+        <td>N0</td>
+      </tr>
+      <tr>
+        <td><code>search</code></td>
+        <td>2</td>
+        <td>
+          <code>knowledge</code
+          >、<code>experience</code>、<code
+            >vectors</code
+          >
+        </td>
+        <td>
+          hybrid検索（読み取り専用。knowledge／experience／vectorsの表をSELECTしてよい唯一のdomain）
+        </td>
+        <td>契約N0、実装N1-B</td>
+      </tr>
+      <tr>
+        <td><code>legacy</code></td>
+        <td>2</td>
+        <td>
+          <code>sources</code
+          >、<code>experience</code>、<code>knowledge</code>、<code>vectors</code>、<code
+            >usage</code
+          >
+        </td>
+        <td>snapshotからの取り込み、対応表</td>
+        <td>契約・migration N0、実装N1-A</td>
+      </tr>
+      <tr>
+        <td><code>indexing</code></td>
+        <td>2</td>
+        <td>
+          <code>larm</code
+          >、<code>vectors</code>、<code>knowledge</code>、<code
+            >experience</code
+          >
+        </td>
+        <td>旧ベクトルの検証、埋め込みの補充</td>
+        <td>契約N0、実装N1-D</td>
+      </tr>
+      <tr>
+        <td><code>mcp</code></td>
+        <td>3</td>
+        <td>
+          <code>search</code
+          >、<code>knowledge</code>、<code>experience</code>、<code
+            >sources</code
+          >
+        </td>
+        <td>Eumenes向けMCP endpoint</td>
+        <td>契約N0、実装N1-C</td>
+      </tr>
+      <tr>
+        <td><code>evaluation</code></td>
+        <td>3</td>
+        <td>
+          <code>search</code
+          >、<code>legacy</code>、<code
+            >knowledge</code
+          >
+        </td>
+        <td>評価集合、旧版の語彙採点器、指標</td>
+        <td>契約N0、実装N1-E</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    domainをまたぐ書き込みは、1つの<code>store.write</code>の中で各domainの<code>index.ts</code>が公開する同期関数（<code>(db: Database, …) =&gt; …</code>）を呼んで行う。他domainの表へ直接SQLを書かない。例外は読み取りだけで、<code>search</code>（検索）、<code>indexing</code>（ベクトルの検証・補充の対象の列挙）、<code>evaluation</code>（旧採点器の基準線）の3つ（2026-10-30のレビュー後に<code>indexing</code>と<code>evaluation</code>を追加。書き込みは公開関数だけ）。
+  </p>
+
+  <h3>4.3 backendの組み立て</h3>
+  <ul>
+    <li>
+      <code>config.ts</code
+      >：<code>resolveConfig(env: Record&lt;string, string | undefined&gt;, repoRoot: string): RuntimeConfig</code>。3節の規則をすべてここで検査する。
+    </li>
+    <li>
+      <code>runtime.ts</code
+      >：<code>openRuntime(config, deps?: { fetch?: typeof fetch; now?: () =&gt; Date }): Promise&lt;Runtime&gt;</code>。<code>openStore(config.dbPath, allMigrations)</code>、<code>createSettings</code>、<code>createLarmEmbedding</code>、<code>createQueue</code>（handlerなし、<code>start()</code>しない）、<code>createSearch</code>を組み、<code>close()</code>でLARM接続をreleaseしstoreを閉じる。
+    </li>
+    <li>
+      <code>app.ts</code
+      >：<code>createApp(runtime: Runtime, tokens: { api: string; mcp: string }): Hono</code>。<code>GET /api/health</code>（認証なし、<code>{"ok":true,"version":"2.0.0-alpha.0"}</code>）、<code>/api/*</code>はAPI
+      tokenのbearer（定数時間比較）、<code>registerMcp(app, …)</code>で<code>/mcp</code>。<code>app.onError</code>は<code>{error: code}</code>と<code>error-status.ts</code>の表のstatusを返し、表にないcodeは500
+      <code>internal_error</code>。
+    </li>
+    <li>
+      <code>server.ts</code
+      >：唯一の<code>Bun.serve</code>呼び出し。<code>hostname</code>は<code>config.host</code>、<code>port</code>は<code>config.port</code>、SIGINT／SIGTERMで<code>runtime.close()</code>。テストからimportしない。
+    </li>
+    <li>
+      N0のAPI：<code>GET /api/settings</code>（文書と診断。秘密は「あるかどうか」だけ）、<code>PUT /api/settings/larm</code>（<code>{baseUrl: string | null}</code>）、<code>GET /api/larm/status</code>。
+    </li>
+  </ul>
+
+  <h3>4.4 maintenance command</h3>
+  <p>
+    <code>application/commands/*.ts</code
+    >はN0が書く薄い入口で、argvを解析して3節のconfigで<code>openRuntime</code>し、domainの公開関数を呼び、reportをJSONでstdoutに出し、<code>runtime.close()</code>する。終了code：0成功、1失敗、2引数誤り、3
+    <code>database_writer_owned</code>。
+  </p>
+  <table>
+    <caption>
+      commandと引数
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">script</th>
+        <th scope="col">呼ぶ関数</th>
+        <th scope="col">引数（既定値）</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>import:legacy</code></td>
+        <td><code>runLegacyImport</code>（legacy）</td>
+        <td>
+          <code>--snapshot &lt;path&gt;</code
+          >（必須）、<code>--dry-run</code>、<code>--only &lt;table,…&gt;</code>、<code
+            >--batch 500</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>vectors:verify-legacy</code></td>
+        <td><code>verifyLegacyVectors</code>（indexing）</td>
+        <td>
+          <code>--sample 32</code
+          >、<code>--min 0.995</code>、<code>--mean 0.999</code>、<code
+            >--dry-run</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>vectors:embed</code></td>
+        <td><code>embedMissing</code>（indexing）</td>
+        <td>
+          <code>--owner knowledge|episode</code
+          >（必須）、<code>--all</code>（既定はmissingのみ）、<code>--batch 16</code>、<code>--limit &lt;n&gt;</code>、<code
+            >--dry-run</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>eval:search</code></td>
+        <td><code>runEvaluation</code>（evaluation）</td>
+        <td>
+          <code>--set &lt;path&gt;</code
+          >（必須）、<code>--systems legacy-lexical,v2-hybrid</code>、<code>--lanes fts,short</code>、<code>--k 10</code>、<code
+            >--out data/eval/reports/&lt;UTC時刻&gt;.json</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>settings:larm</code></td>
+        <td>settingsの<code>setLarm</code></td>
+        <td>
+          <code>--base-url &lt;url&gt;</code>または<code
+            >--clear</code
+          >
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>4.5 依存とrepo設定</h3>
+  <ul>
+    <li>
+      <code>dependencies</code
+      >：<code>hono@4.12.34</code>、<code>zod@4.4.3</code>。<code>devDependencies</code>：<code>@types/bun@1.3.14</code>、<code>oxfmt@0.71.0</code>、<code>oxlint@1.86.0</code>、<code>typescript@7.0.2</code>。すべてEumenesと同じ版である。pino、MCP
+      SDK、s11tnextは入れない（loggerは小さな自作のJSON
+      loggerをstderrへ、MCPはJSON-RPCを自前で実装する）。新規依存は0件。
+    </li>
+    <li>
+      <code>package.json</code
+      >：<code>"name":"context-still"</code>、<code>"version":"2.0.0-alpha.0"</code>、<code>"private":true</code>、<code>"type":"module"</code>、<code>"license":"MIT"</code>、<code>"packageManager":"bun@1.4.4"</code>。scripts：
+    </li>
+  </ul>
+  <pre><code class="language-json">"start": "bun api/application/server.ts",
+"verify": "bun scripts/verify.ts",
+"typecheck": "bun check",
+"lint": "oxlint --deny-warnings api scripts",
+"lint:fix": "oxlint --deny-warnings --fix api scripts",
+"format": "oxfmt --write api scripts eval package.json tsconfig.json .oxlintrc.json .oxfmtrc.json",
+"format:check": "oxfmt --check api scripts eval package.json tsconfig.json .oxlintrc.json .oxfmtrc.json",
+"test": "bun test api scripts",
+"test:domain": "bun scripts/test-domain.ts",
+"boundaries": "bun scripts/boundaries.ts",
+"import:legacy": "bun api/application/commands/import-legacy.ts",
+"vectors:verify-legacy": "bun api/application/commands/vectors-verify-legacy.ts",
+"vectors:embed": "bun api/application/commands/vectors-embed.ts",
+"eval:search": "bun api/application/commands/eval-search.ts",
+"settings:larm": "bun api/application/commands/settings-larm.ts",
+"spec:view": （現行のまま）, "spec:convert": （現行のまま）,
+"spec:check": （現行のまま）, "spec:fix": （現行のまま）</code></pre>
+  <ul>
+    <li>
+      <code>tsconfig.json</code
+      >：Eumenesと同じ<code>compilerOptions</code>から<code>jsx</code>、<code>DOM</code>系lib、<code>vite/client</code>を除き、<code>"types": ["bun"]</code>、<code>"include": ["api", "scripts"]</code>。
+    </li>
+    <li>
+      <code>.oxlintrc.json</code>：plugins
+      <code>["typescript","unicorn","oxc"]</code
+      >、<code>correctness: error</code>、<code>unicorn/prefer-array-flat-map: error</code>。ignoreに<code>node_modules/**</code>、<code>data/**</code>、<code>coverage/**</code>、<code>.s11tnext/**</code>、<code>.serena/**</code>、<code>target/**</code>、<code>scratch/**</code>、<code>.tmp/**</code>、<code>github-pages/**</code>、<code>docs/**</code>。
+    </li>
+    <li>
+      <code>.oxfmtrc.json</code>：Eumenesと同じ（タブ、幅80、double
+      quote、trailing comma
+      all）。ignoreは上と同じものに<code>**/*.md</code>と<code>spec/**</code>を足す。
+    </li>
+    <li>
+      <code>bunfig.toml</code
+      >：<code>[install] peer = false</code>、<code>minimumReleaseAge = 604800</code>、<code>[test] preload = ["./scripts/test-preload.ts"]</code>。
+    </li>
+  </ul>
+
+  <h3>4.6 テストの安全装置</h3>
+  <p><code>scripts/test-preload.ts</code>はテスト開始前に次を行う。</p>
+  <ul>
+    <li>
+      <code>process.env</code
+      >から<code>CONTEXT_STILL_</code>と<code>LARM_</code>で始まる変数を消す。
+    </li>
+    <li>
+      <code>globalThis.fetch</code
+      >を<code>network_disabled_in_tests</code>を投げる関数に置き換える。<code>Bun.serve</code>も<code>serve_disabled_in_tests</code>を投げる関数に置き換える（Bun
+      1.4.4で両方とも置き換えられることを確認済み）。network相当の処理は、必ず依存として注入した<code>fetch</code>で行う。
+    </li>
+  </ul>
+  <p>
+    <code>scripts/verify.ts</code
+    >は次を順に実行し、最初の失敗で止まり、各stepの結果を表示する：<code
+      >format:check</code
+    >
+    → <code>lint</code> →
+    <code>typecheck</code> → <code>boundaries</code> →
+    <code>test</code> →
+    <code>spec:check</code
+    >。<code>scripts/test-domain.ts &lt;name&gt;</code>は<code>bun test api/domains/&lt;name&gt;</code>を実行する。
+  </p>
+
+  <h2>5. 契約</h2>
+  <p>
+    この節の型、DDL、schemaはN0が<code>contracts/</code>と<code>repository/migrations.ts</code>に書き、N1では変更しない。
+  </p>
+
+  <h3>5.1 共通（api/infrastructure）</h3>
+  <pre><code class="language-ts">// scope.ts
+export type Space = "coding" | "general" | "eumenes" | "personal";
+export type Scope = "global" | "repo";
+export type UpsertResult = "inserted" | "updated" | "unchanged";
+
+// time.ts  旧版の時刻をUTC ISO（toISOString形式）へ。解釈できなければ null
+export function toUtcIso(value: string | null | undefined): string | null;
+//  "unix-ms:1782131618752"   -&gt; "2026-06-22T12:33:38.752Z"
+//  "2026-09-11 05:04:10"     -&gt; "2026-09-11T05:04:10.000Z"（SQLiteのCURRENT_TIMESTAMPはUTC）
+//  "2026-06-18T14:57:56.032Z"-&gt; そのまま正規化
+//  "2026-06-18T23:57:56+09:00" -&gt; "2026-06-18T14:57:56.000Z"
+//  "", "abc", "unix-ms:x"    -&gt; null
+export function classifyTime(value: string): "iso" | "sqlite" | "unix_ms" | "invalid";
+
+// handle.ts  外部に出すIDは handle だけ
+export type HandleKind = "knowledge" | "episode";
+export const HANDLE_PATTERN = /^(kn|ep)_[a-z2-7]{26}$/;
+export function makeHandle(kind: HandleKind, id: string): string;
+//  prefix = kind==="knowledge" ? "kn_" : "ep_"
+//  body = RFC4648 base32（小文字、paddingなし）of sha256(`contextstill:handle:v1:${kind}:${id}`) の先頭16 byte → 26文字
+export function handleKind(handle: string): HandleKind | null;
+
+// digest.ts  Eumenesから写す
+export function sha256Hex(input: string | Uint8Array): string;
+export function canonicalJson(value: unknown): string; // keyを辞書順に並べたJSON
+
+// vector.ts  Eumenesから写す（VectorSpaceShape, vectorSpaceKey, packVector, unpackVector, dot）
+// 追加：
+export function l2norm(v: ArrayLike&lt;number&gt;): number;
+export function cosine(a: ArrayLike&lt;number&gt;, b: ArrayLike&lt;number&gt;): number;</code></pre>
+  <p>
+    <code>sqlite/index.ts</code
+    >、<code>flock.ts</code>、<code>atomic-file.ts</code>、<code>wait-for.ts</code>、<code>http.ts</code>（<code>parseJsonBody</code>、<code>parseQuery</code>）はEumenesの同名fileを写す。<code>openStore</code>の<code>pre-migration-backup</code>は、既存DBのschemaを変えるときだけ<code>&lt;db&gt;.pre-migration-&lt;UTC時刻&gt;.sqlite3</code>へ<code>VACUUM INTO</code>する単純な形にしてよい。<code>auth-config.ts</code>は<code>EUMENES_*</code>を3節の名前へ直し、<code>readApiToken</code>／<code>ensureApiToken</code>と同じ規則の<code>ensureMcpToken(env, defaultDbPath)</code>を足す。
+  </p>
+
+  <h3>5.2 SQLite DDL（N0とN1のすべて）</h3>
+  <p>
+    全表<code>STRICT</code>。時刻はすべて<code>toISOString()</code>形式のUTC文字列。<code>seq INTEGER PRIMARY KEY</code>はFTSの<code>content_rowid</code>のための安定したrowidで、外部へは出さない。migrationのidと<code>after</code>：
+  </p>
+  <table>
+    <caption>
+      migrationの一覧（この順で登録し、GOLDEN testで固定する）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">id</th>
+        <th scope="col">after</th>
+        <th scope="col">file</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>settings/0001-init</code></td>
+        <td>なし</td>
+        <td><code>api/domains/settings/repository/migrations.ts</code></td>
+      </tr>
+      <tr>
+        <td><code>queue/0001-init</code></td>
+        <td>なし</td>
+        <td>
+          <code>api/domains/queue/repository/migrations.ts</code
+          >（Eumenesの<code>queue/0001-init</code>のSQLを1文字も変えずに写す）
+        </td>
+      </tr>
+      <tr>
+        <td><code>sources/0001-init</code></td>
+        <td>なし</td>
+        <td><code>api/domains/sources/repository/migrations.ts</code></td>
+      </tr>
+      <tr>
+        <td><code>experience/0001-init</code></td>
+        <td><code>sources/0001-init</code></td>
+        <td><code>api/domains/experience/repository/migrations.ts</code></td>
+      </tr>
+      <tr>
+        <td><code>knowledge/0001-init</code></td>
+        <td><code>sources/0001-init</code></td>
+        <td><code>api/domains/knowledge/repository/migrations.ts</code></td>
+      </tr>
+      <tr>
+        <td><code>vectors/0001-init</code></td>
+        <td>なし</td>
+        <td><code>api/domains/vectors/repository/migrations.ts</code></td>
+      </tr>
+      <tr>
+        <td><code>usage/0001-init</code></td>
+        <td>なし</td>
+        <td><code>api/domains/usage/repository/migrations.ts</code></td>
+      </tr>
+      <tr>
+        <td><code>legacy/0001-init</code></td>
+        <td>なし</td>
+        <td><code>api/domains/legacy/repository/migrations.ts</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code class="language-sql">-- settings/0001-init
+CREATE TABLE settings_document (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  revision INTEGER NOT NULL,
+  document TEXT NOT NULL CHECK (json_valid(document)),
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE settings_credentials (
+  id TEXT PRIMARY KEY,
+  encrypted TEXT NOT NULL CHECK (encrypted LIKE 'v2.%'),
+  updated_at TEXT NOT NULL
+) STRICT;
+
+-- sources/0001-init
+CREATE TABLE source_records (
+  seq INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK (kind IN ('agent_log','document','web','research')),
+  uri TEXT NOT NULL,
+  title TEXT,
+  content TEXT NOT NULL,
+  content_digest TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  space TEXT NOT NULL CHECK (space IN ('coding','general','eumenes','personal')),
+  scope TEXT NOT NULL CHECK (scope IN ('global','repo')),
+  repo_key TEXT,
+  recorded_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata_json)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (scope = 'repo' OR repo_key IS NULL)
+) STRICT;
+CREATE UNIQUE INDEX source_records_kind_uri_idx ON source_records(kind, uri);
+CREATE INDEX source_records_filter_idx ON source_records(space, scope, repo_key);
+CREATE TABLE source_fragments (
+  seq INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  source_id TEXT NOT NULL REFERENCES source_records(id) ON DELETE CASCADE,
+  locator TEXT NOT NULL,
+  byte_start INTEGER,
+  byte_end INTEGER,
+  heading TEXT,
+  content TEXT NOT NULL,
+  content_digest TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (source_id, locator),
+  CHECK ((byte_start IS NULL) = (byte_end IS NULL)),
+  CHECK (byte_start IS NULL OR (byte_start &gt;= 0 AND byte_end &gt;= byte_start))
+) STRICT;
+
+-- experience/0001-init
+CREATE TABLE episodes (
+  seq INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  handle TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  situation TEXT NOT NULL,
+  intent TEXT NOT NULL DEFAULT '',
+  decision TEXT NOT NULL DEFAULT '',
+  observations TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL DEFAULT '',
+  outcome TEXT NOT NULL DEFAULT '',
+  lesson TEXT NOT NULL DEFAULT '',
+  open_questions_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(open_questions_json)),
+  outcome_kind TEXT NOT NULL CHECK (outcome_kind IN ('success','failure','mixed','unknown')),
+  event_start TEXT,
+  event_end TEXT,
+  time_precision TEXT NOT NULL DEFAULT 'unknown'
+    CHECK (time_precision IN ('exact','minute','day','month','unknown')),
+  confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+  importance REAL NOT NULL CHECK (importance BETWEEN 0 AND 1),
+  status TEXT NOT NULL CHECK (status IN ('active','stale','retracted')),
+  space TEXT NOT NULL CHECK (space IN ('coding','general','eumenes','personal')),
+  scope TEXT NOT NULL CHECK (scope IN ('global','repo')),
+  repo_key TEXT,
+  facets_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(facets_json)),
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata_json)),
+  revision INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (scope = 'repo' OR repo_key IS NULL)
+) STRICT;
+CREATE INDEX episodes_filter_idx ON episodes(status, space, scope, repo_key);
+CREATE TABLE episode_sources (
+  episode_id TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+  source_id TEXT NOT NULL REFERENCES source_records(id),
+  locator TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL CHECK (role IN ('derived_from','supports')),
+  PRIMARY KEY (episode_id, source_id, locator)
+) STRICT;
+CREATE INDEX episode_sources_source_idx ON episode_sources(source_id);
+CREATE VIRTUAL TABLE episodes_fts USING fts5(
+  title, situation, action, outcome, lesson,
+  content='episodes', content_rowid='seq', tokenize='trigram'
+);
+CREATE TRIGGER episodes_fts_ai AFTER INSERT ON episodes BEGIN
+  INSERT INTO episodes_fts(rowid, title, situation, action, outcome, lesson)
+  VALUES (new.seq, new.title, new.situation, new.action, new.outcome, new.lesson);
+END;
+CREATE TRIGGER episodes_fts_ad AFTER DELETE ON episodes BEGIN
+  INSERT INTO episodes_fts(episodes_fts, rowid, title, situation, action, outcome, lesson)
+  VALUES ('delete', old.seq, old.title, old.situation, old.action, old.outcome, old.lesson);
+END;
+CREATE TRIGGER episodes_fts_au AFTER UPDATE OF title, situation, action, outcome, lesson ON episodes BEGIN
+  INSERT INTO episodes_fts(episodes_fts, rowid, title, situation, action, outcome, lesson)
+  VALUES ('delete', old.seq, old.title, old.situation, old.action, old.outcome, old.lesson);
+  INSERT INTO episodes_fts(rowid, title, situation, action, outcome, lesson)
+  VALUES (new.seq, new.title, new.situation, new.action, new.outcome, new.lesson);
+END;
+
+-- knowledge/0001-init
+CREATE TABLE knowledge_items (
+  seq INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  handle TEXT NOT NULL UNIQUE,
+  layer TEXT NOT NULL CHECK (layer IN ('atom','canonical')),
+  type TEXT NOT NULL CHECK (type IN ('rule','procedure')),
+  polarity TEXT NOT NULL CHECK (polarity IN ('positive','negative')),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  applies_when_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(applies_when_json)),
+  not_applies_when_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(not_applies_when_json)),
+  steps_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(steps_json)),
+  facets_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(facets_json)),
+  confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+  importance REAL NOT NULL CHECK (importance BETWEEN 0 AND 1),
+  status TEXT NOT NULL CHECK (status IN ('candidate','active','superseded','retracted')),
+  space TEXT NOT NULL CHECK (space IN ('coding','general','eumenes','personal')),
+  scope TEXT NOT NULL CHECK (scope IN ('global','repo')),
+  repo_key TEXT,
+  revision INTEGER NOT NULL DEFAULT 1,
+  valid_from TEXT,
+  valid_until TEXT,
+  content_digest TEXT NOT NULL,
+  provenance_status TEXT NOT NULL
+    CHECK (provenance_status IN ('resolved','external','source_missing','unresolved')),
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata_json)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (scope = 'repo' OR repo_key IS NULL)
+) STRICT;
+CREATE INDEX knowledge_items_filter_idx ON knowledge_items(status, layer, space, scope, repo_key);
+CREATE TABLE knowledge_evidence (
+  id TEXT PRIMARY KEY,
+  knowledge_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('atom','source','fragment','episode','external')),
+  target_id TEXT,
+  external_ref TEXT,
+  role TEXT NOT NULL CHECK (role IN ('derived_from','supports','refutes')),
+  quote TEXT,
+  confidence REAL CHECK (confidence IS NULL OR confidence BETWEEN 0 AND 1),
+  origin TEXT NOT NULL CHECK (origin IN ('legacy_import','pipeline','human')),
+  created_at TEXT NOT NULL,
+  CHECK ((target_kind = 'external') = (target_id IS NULL)),
+  CHECK ((target_kind = 'external') = (external_ref IS NOT NULL))
+) STRICT;
+CREATE INDEX knowledge_evidence_item_idx ON knowledge_evidence(knowledge_id);
+CREATE INDEX knowledge_evidence_target_idx ON knowledge_evidence(target_kind, target_id);
+CREATE VIRTUAL TABLE knowledge_fts USING fts5(
+  title, body, content='knowledge_items', content_rowid='seq', tokenize='trigram'
+);
+CREATE TRIGGER knowledge_fts_ai AFTER INSERT ON knowledge_items BEGIN
+  INSERT INTO knowledge_fts(rowid, title, body) VALUES (new.seq, new.title, new.body);
+END;
+CREATE TRIGGER knowledge_fts_ad AFTER DELETE ON knowledge_items BEGIN
+  INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body) VALUES ('delete', old.seq, old.title, old.body);
+END;
+CREATE TRIGGER knowledge_fts_au AFTER UPDATE OF title, body ON knowledge_items BEGIN
+  INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body) VALUES ('delete', old.seq, old.title, old.body);
+  INSERT INTO knowledge_fts(rowid, title, body) VALUES (new.seq, new.title, new.body);
+END;
+
+-- vectors/0001-init
+CREATE TABLE vector_spaces (
+  space_key TEXT PRIMARY KEY,
+  model_id TEXT NOT NULL,
+  revision TEXT NOT NULL,
+  artifact_digest TEXT NOT NULL,
+  dimension INTEGER NOT NULL CHECK (dimension &gt; 0),
+  descriptor_json TEXT NOT NULL CHECK (json_valid(descriptor_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE vectors (
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('knowledge','episode')),
+  owner_id TEXT NOT NULL,
+  space_key TEXT NOT NULL REFERENCES vector_spaces(space_key),
+  content_digest TEXT NOT NULL,
+  vector BLOB NOT NULL,
+  origin TEXT NOT NULL CHECK (origin IN ('legacy_import','larm')),
+  verification TEXT NOT NULL CHECK (verification IN ('unverified','verified','mismatch','stale')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (owner_kind, owner_id, space_key)
+) STRICT;
+CREATE INDEX vectors_scan_idx ON vectors(space_key, owner_kind, verification);
+CREATE TABLE vector_verifications (
+  id TEXT PRIMARY KEY,
+  space_key TEXT NOT NULL REFERENCES vector_spaces(space_key),
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('knowledge','episode')),
+  origin TEXT NOT NULL CHECK (origin IN ('legacy_import','larm')),
+  sample_size INTEGER NOT NULL,
+  min_cosine REAL,
+  mean_cosine REAL,
+  threshold_min REAL NOT NULL,
+  threshold_mean REAL NOT NULL,
+  passed INTEGER NOT NULL CHECK (passed IN (0,1)),
+  detail_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(detail_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+-- usage/0001-init
+CREATE TABLE usage_events (
+  id TEXT PRIMARY KEY,
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('knowledge','episode')),
+  owner_id TEXT NOT NULL,
+  channel TEXT NOT NULL CHECK (channel IN ('compile','search','mcp')),
+  verdict TEXT NOT NULL CHECK (verdict IN ('presented','used','not_used','wrong','off_topic')),
+  actor TEXT NOT NULL CHECK (actor IN ('agent','system','user','eumenes')),
+  run_ref TEXT,
+  reason TEXT,
+  origin TEXT NOT NULL CHECK (origin IN ('legacy_import','live')),
+  occurred_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata_json))
+) STRICT;
+CREATE INDEX usage_events_owner_idx ON usage_events(owner_kind, owner_id, verdict);
+CREATE INDEX usage_events_run_idx ON usage_events(run_ref);
+
+-- legacy/0001-init
+CREATE TABLE legacy_import_runs (
+  id TEXT PRIMARY KEY,
+  importer_version TEXT NOT NULL,
+  snapshot_fingerprint TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('running','succeeded','failed')),
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  report_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(report_json))
+) STRICT;
+CREATE TABLE legacy_import_map (
+  legacy_table TEXT NOT NULL,
+  legacy_id TEXT NOT NULL,
+  target_table TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  legacy_digest TEXT NOT NULL,
+  import_run_id TEXT NOT NULL REFERENCES legacy_import_runs(id),
+  imported_at TEXT NOT NULL,
+  PRIMARY KEY (legacy_table, legacy_id)
+) STRICT;
+CREATE INDEX legacy_import_map_target_idx ON legacy_import_map(target_table, target_id);</code></pre>
+  <p>
+    <code>vectors.vector</code
+    >のbyte長は<code>4 × dimension</code>であることをrepositoryの関数で検査する（SQLでは検査できない）。<code>content_digest</code>は保存したtextの<code>sha256Hex</code>である。
+  </p>
+
+  <h3>5.3 N0が実装するdomainの公開入口</h3>
+  <p>
+    すべて<code>bun:sqlite</code>の<code>Database</code>を受ける同期関数で、transactionは呼び出し側（<code>store.write</code>）が持つ。<code>handle</code>と<code>content_digest</code>はrepositoryの中で計算する。upsertは<code>INSERT … ON CONFLICT(id) DO UPDATE … WHERE</code>（いずれかの列が違うときだけ）で書き、<code>seq</code>を変えない。更新時は<code>revision</code>を1増やす。
+  </p>
+  <pre><code class="language-ts">// sources
+export type SourceKind = "agent_log" | "document" | "web" | "research";
+export interface SourceRecordInput {
+  id: string; kind: SourceKind; uri: string; title: string | null; content: string;
+  space: Space; scope: Scope; repoKey: string | null; recordedAt: string;
+  metadata: Record&lt;string, unknown&gt;; createdAt: string; updatedAt: string;
+}
+export function upsertSourceRecord(db: Database, input: SourceRecordInput): UpsertResult;
+export interface SourceFragmentInput {
+  id: string; sourceId: string; locator: string; byteStart: number | null; byteEnd: number | null;
+  heading: string | null; content: string; createdAt: string;
+}
+export function upsertSourceFragment(db: Database, input: SourceFragmentInput): UpsertResult;
+export interface SourceRecordRow { id: string; kind: SourceKind; uri: string; title: string | null;
+  content: string; space: Space; scope: Scope; repoKey: string | null; recordedAt: string; }
+export function getSourceRecord(db: Database, id: string): SourceRecordRow | null;
+export function findSourceByUri(db: Database, kind: SourceKind, uri: string): { id: string } | null;
+export interface SourceFragmentRow { id: string; sourceId: string; locator: string; heading: string | null; content: string; }
+export function getSourceFragment(db: Database, id: string): SourceFragmentRow | null;
+
+// experience
+export type OutcomeKind = "success" | "failure" | "mixed" | "unknown";
+export type EpisodeStatus = "active" | "stale" | "retracted";
+export type TimePrecision = "exact" | "minute" | "day" | "month" | "unknown";
+export interface EpisodeInput {
+  id: string; title: string; situation: string; intent: string; decision: string;
+  observations: string; action: string; outcome: string; lesson: string; openQuestions: string[];
+  outcomeKind: OutcomeKind; eventStart: string | null; eventEnd: string | null; timePrecision: TimePrecision;
+  confidence: number; importance: number; status: EpisodeStatus;
+  space: Space; scope: Scope; repoKey: string | null;
+  facets: Record&lt;string, unknown&gt;; metadata: Record&lt;string, unknown&gt;; createdAt: string; updatedAt: string;
+}
+export function upsertEpisode(db: Database, input: EpisodeInput): UpsertResult;
+export function replaceEpisodeSources(db: Database, episodeId: string,
+  refs: { sourceId: string; locator: string; role: "derived_from" | "supports" }[]): void;
+export interface EpisodeRow extends Omit&lt;EpisodeInput, "metadata"&gt; { handle: string; revision: number; }
+export function getEpisodeById(db: Database, id: string): EpisodeRow | null;
+export function getEpisodeByHandle(db: Database, handle: string): EpisodeRow | null;
+export function listEpisodeSources(db: Database, episodeId: string): { sourceId: string; locator: string; role: string }[];
+
+// knowledge
+export type KnowledgeLayer = "atom" | "canonical";
+export type KnowledgeType = "rule" | "procedure";
+export type Polarity = "positive" | "negative";
+export type KnowledgeStatus = "candidate" | "active" | "superseded" | "retracted";
+export type ProvenanceStatus = "resolved" | "external" | "source_missing" | "unresolved";
+export interface KnowledgeInput {
+  id: string; layer: KnowledgeLayer; type: KnowledgeType; polarity: Polarity; title: string; body: string;
+  appliesWhen: string[]; notAppliesWhen: string[]; steps: string[]; facets: Record&lt;string, unknown&gt;;
+  confidence: number; importance: number; status: KnowledgeStatus;
+  space: Space; scope: Scope; repoKey: string | null; validFrom: string | null; validUntil: string | null;
+  provenanceStatus: ProvenanceStatus; metadata: Record&lt;string, unknown&gt;; createdAt: string; updatedAt: string;
+}
+export function upsertKnowledgeItem(db: Database, input: KnowledgeInput): UpsertResult;
+export type EvidenceTargetKind = "atom" | "source" | "fragment" | "episode" | "external";
+export type EvidenceRole = "derived_from" | "supports" | "refutes";
+export type EvidenceOrigin = "legacy_import" | "pipeline" | "human";
+export interface EvidenceInput { targetKind: EvidenceTargetKind; targetId: string | null; externalRef: string | null;
+  role: EvidenceRole; quote: string | null; confidence: number | null; }
+// 指定originの行をすべて消してから入れ直す。id = "ev_" + sha256Hex(`${knowledgeId}|${targetKind}|${targetId ?? externalRef}|${role}|${origin}`).slice(0, 32)
+export function replaceKnowledgeEvidence(db: Database, knowledgeId: string, origin: EvidenceOrigin,
+  evidence: EvidenceInput[], createdAt: string): void;
+export interface KnowledgeRow extends Omit&lt;KnowledgeInput, "metadata"&gt; { handle: string; revision: number; contentDigest: string; metadata: Record&lt;string, unknown&gt;; }
+export function getKnowledgeById(db: Database, id: string): KnowledgeRow | null;
+export function getKnowledgeByHandle(db: Database, handle: string): KnowledgeRow | null;
+export interface EvidenceRow extends EvidenceInput { id: string; origin: EvidenceOrigin; }
+export function listKnowledgeEvidence(db: Database, knowledgeId: string): EvidenceRow[];
+
+// vectors
+export type VectorOwnerKind = "knowledge" | "episode";
+export type VectorOrigin = "legacy_import" | "larm";
+export type VectorVerification = "unverified" | "verified" | "mismatch" | "stale";
+export function ensureVectorSpace(db: Database, descriptor: LarmEmbeddingSpace, now: string): string; // space_keyを返す
+export function upsertVector(db: Database, input: { ownerKind: VectorOwnerKind; ownerId: string; spaceKey: string;
+  contentDigest: string; vector: Float32Array; origin: VectorOrigin; verification: VectorVerification; now: string }): UpsertResult;
+export function getVector(db: Database, ownerKind: VectorOwnerKind, ownerId: string, spaceKey: string):
+  { contentDigest: string; vector: Float32Array; origin: VectorOrigin; verification: VectorVerification } | null;
+export function setVerification(db: Database, input: { spaceKey: string; ownerKind: VectorOwnerKind;
+  origin: VectorOrigin; from: VectorVerification[]; to: VectorVerification; now: string }): number;
+export function recordVerificationRun(db: Database, run: { id: string; spaceKey: string; ownerKind: VectorOwnerKind;
+  origin: VectorOrigin; sampleSize: number; minCosine: number | null; meanCosine: number | null;
+  thresholdMin: number; thresholdMean: number; passed: boolean; detail: Record&lt;string, unknown&gt;; now: string }): void;
+export function topK(query: Float32Array, rows: Iterable&lt;{ ownerId: string; vector: Uint8Array }&gt;, k: number):
+  { ownerId: string; score: number }[]; // dotで降順、同点はownerId昇順
+
+// usage
+export interface UsageEventInput { id: string; ownerKind: VectorOwnerKind; ownerId: string;
+  channel: "compile" | "search" | "mcp"; verdict: "presented" | "used" | "not_used" | "wrong" | "off_topic";
+  actor: "agent" | "system" | "user" | "eumenes"; runRef: string | null; reason: string | null;
+  origin: "legacy_import" | "live"; occurredAt: string; metadata: Record&lt;string, unknown&gt;; }
+export function insertUsageEvent(db: Database, input: UsageEventInput): "inserted" | "unchanged"; // INSERT OR IGNORE
+
+// legacy（repository、N0が実装）
+export type LegacyTable = "vibe_memories" | "sources" | "source_fragments" | "episode_cards"
+  | "knowledge_items" | "knowledge_usage_events" | "knowledge_items_vec_fallback";
+export function getImportMap(db: Database, table: LegacyTable, legacyId: string):
+  { targetTable: string; targetId: string; legacyDigest: string } | null;
+export function putImportMap(db: Database, row: { legacyTable: LegacyTable; legacyId: string; targetTable: string;
+  targetId: string; legacyDigest: string; importRunId: string; importedAt: string }): void;
+export function startImportRun(db: Database, run: { id: string; importerVersion: string; snapshotFingerprint: string; startedAt: string }): void;
+export function finishImportRun(db: Database, id: string, status: "succeeded" | "failed", report: unknown, finishedAt: string): void;
+// "legacy:knowledge_items:&lt;uuid&gt;" → 対応する新しいID。評価集合が使う
+export function resolveLegacyRef(db: Database, ref: string): { targetTable: string; targetId: string } | null;</code></pre>
+  <p>
+    settings：Eumenesの<code>createSettings</code>を縮めた<code>createSettings(store, { dbPath, keyDir, env }): Promise&lt;SettingsService&gt;</code>。文書のschemaは<code>{ revision: number; larm: { baseUrl: string | null; audience: "same-host" | "saaa-desktop" | null; embeddingProfile: string } }</code>（既定<code>{baseUrl:null, audience:null, embeddingProfile:"embeddingCanary"}</code>）。<code>SettingsService</code>は<code>get()</code>、<code>setLarm(patch)</code>、<code>setCredential(id, plaintext)</code>、<code>hasCredential(id)</code>、<code>credential(id)</code>、<code>diagnostics()</code>（<code>keyError</code>を含み、秘密は含まない）。master
+    keyの規則（env優先、<code>keys/settings.key</code>を0700／0600で排他的に作成、暗号文があるのに鍵がなければ作り直さず<code>secret_key_unavailable</code>）と暗号形式<code>v2.&lt;iv&gt;.&lt;tag&gt;.&lt;bytes&gt;</code>はEumenesと同じで、AADは<code>contextstill:settings:v2:&lt;rowId&gt;</code>とする。
+  </p>
+
+  <h3>5.4 LARM embedding（larm domain）</h3>
+  <p>
+    旧版<code>larm_embedding.rs</code>の<code>larm-embedding.v1</code>契約をそのまま引き継ぐ。
+  </p>
+  <pre><code class="language-ts">export const LARM_EMBEDDING_SPACE = {
+  contractVersion: "larm-embedding.v1",
+  workload: "embedding",
+  model: {
+    id: "intfloat/multilingual-e5-small",
+    revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+    artifactDigest: "63bc913284590439c0fdadcd5f61ee9ad9630591075314bc975fb190983ed62c",
+  },
+  dimension: 384,
+  inputTypes: ["query", "passage"],
+  prefixes: { query: "query: ", passage: "passage: " },
+  normalization: "l2",
+  tokenization: {
+    kind: "sentencepiece-bpe",
+    tokenizerDigest: "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39",
+    maxTokens: 512, truncation: "end", pooling: "mean",
+  },
+} as const;
+export type LarmEmbeddingSpace = typeof LARM_EMBEDDING_SPACE;
+// vector_spacesの鍵：vectorSpaceKey({modelId, revision, artifactDigest, dimension})（N0のtestで値を固定する）
+export type EmbeddingInputType = "query" | "passage";
+export type LarmErrorCode = "larm_not_configured" | "larm_token_missing" | "larm_unreachable"
+  | "larm_busy" | "larm_provider_conflict" | "larm_deploying" | "larm_contract_mismatch"
+  | "larm_embedding_space_mismatch" | "larm_http_error";
+export class LarmError extends Error { constructor(public code: LarmErrorCode, public retryAfterMs?: number); }
+export interface LarmEmbeddingStatus { configured: boolean; tokenPresent: boolean;
+  connection: "none" | "ready" | "error"; lastError: LarmErrorCode | null; }
+export interface LarmEmbeddingClient {
+  status(): LarmEmbeddingStatus;
+  /** textsは素のtext。前置き（query: ／passage: ）はclientで付けない（下記、未検証） */
+  embed(texts: string[], type: EmbeddingInputType, opts?: { signal?: AbortSignal }): Promise&lt;Float32Array[]&gt;;
+  release(): Promise&lt;void&gt;;
+}
+export function createLarmEmbedding(deps: {
+  baseUrl: () =&gt; string | null; token: () =&gt; string | undefined;
+  audience: () =&gt; "same-host" | "saaa-desktop" | null; profile: () =&gt; string;
+  fetch: typeof fetch; now?: () =&gt; number; sleep?: (ms: number) =&gt; Promise&lt;void&gt;;
+  controlTimeoutMs?: number; embedTimeoutMs?: number; maxBatch?: number;
+}): LarmEmbeddingClient;</code></pre>
+  <ol>
+    <li>
+      接続：<code>POST {base}/v1/agent-connections</code>、header
+      <code>Authorization: Bearer &lt;LARM_API_TOKEN&gt;</code
+      >、<code>Idempotency-Key</code>（接続1回ごとに新しいUUID）、<code>Prefer: wait=1</code>、body
+      <code>{"profile":"embeddingCanary","audience":&lt;a&gt;,"client":"contextstill","ttlSeconds":300,"allowFallback":false,"deploymentPolicy":"existing-only"}</code
+      >。audienceは設定が<code>null</code>ならbase
+      URLのhostがloopbackのとき<code>same-host</code>、それ以外は<code>saaa-desktop</code>。201／202を受理、409は<code>larm_provider_conflict</code>（<code>Retry-After</code>秒をms化）、それ以外は<code>larm_http_error</code>、接続不能は<code>larm_unreachable</code>。
+    </li>
+    <li>
+      応答検証：<code>id</code>が<code>^[A-Za-z0-9._:-]{1,160}$</code>、<code>providers</code>が1件で<code>name="embedding"</code>、<code>protocol="larm.embedding.v1"</code>、<code>endpoint="/v1/embed"</code>、<code>embeddingSpace</code>が<code>LARM_EMBEDDING_SPACE</code>と全項目一致。違えば<code>larm_embedding_space_mismatch</code>。
+    </li>
+    <li>
+      ready待ち：<code>GET /v1/agent-connections/{id}</code>を最大3回（間隔1秒、注入した<code>sleep</code>）。<code>status="ready"</code>かつ<code>providers[0].readiness="ready"</code>かつ<code>claimable=true</code>でなければ<code>larm_deploying</code>。<code>released</code>／<code>expired</code>／<code>failed</code>なら接続を捨てて次回作り直す。
+    </li>
+    <li>
+      claim：<code>POST /v1/agent-connections/{id}/claim</code>、body
+      <code>{"format":"larm-embedding-provider-v1"}</code
+      >。<code>providers[0].configuration.kind="larm-embedding-provider-v1"</code>、<code>endpoint</code>が<code>{base}/v1/embed</code>の絶対URLと一致、<code>embeddingSpace</code>一致、<code>credential.token</code>非空、<code>credential.expiresAt</code>（RFC
+      3339）を確認する。credentialは期限の30秒前まで再利用する。
+    </li>
+    <li>
+      embed：<code>POST {endpoint}</code>、<code>Authorization: Bearer &lt;credential&gt;</code>、body
+      <code>{"texts":[…],"type":"query"|"passage","normalize":true,"priority":"normal"}</code
+      >、<code>maxBatch</code>（既定16）件ずつ。200の応答<code>{"dimension":384,"type":…,"normalize":true,"embeddings":number[][]}</code>で、件数、次元、有限値、L2
+      normが1±1e-3であることを確認する（違えば<code>larm_contract_mismatch</code>）。503は<code>larm_busy</code>で、<code>Retry-After</code>がなければ30秒（<a
+        href="llm-provider-busy-503-contract.html"
+        >busy 503契約</a
+      >）。401／403はcredentialを捨て、1回だけclaimし直す。
+    </li>
+    <li>
+      release：<code>DELETE /v1/agent-connections/{id}</code>（204を期待）。<code>runtime.close()</code>から呼ぶ。tokenとcredentialはログ、DB、応答、例外messageに入れない。
+    </li>
+  </ol>
+  <p>
+    <strong>未検証</strong
+    >：<code>/v1/embed</code>が<code>type</code>に応じてserver側で前置きを付けるかどうか。旧版は素のtextに<code>type:"passage"</code>を付けて送っており、clientで前置きを付けていない。本書もそれに合わせ、N1-Dの検証commandが前置きの有無を診断する。1回のembedで送れる最大件数も未検証で、16件は仮の値である。
+  </p>
+
+  <h3>5.5 検索（search domain）</h3>
+  <pre><code class="language-ts">export type SearchKind = "knowledge" | "episode";
+export type SearchLane = "fts" | "short" | "vector";
+export type DegradedReason = "vector_unavailable" | "vector_unverified" | "no_lexical_terms"
+  | "expansion_unavailable" | "theme_unavailable";
+export interface SearchRequest {
+  query: string;                       // trim後 1..512文字
+  kinds: SearchKind[];                 // 1件以上
+  spaces: Space[];                     // 1件以上。"personal"を含むと SearchError("space_not_allowed")
+  repoKey?: string | null;             // 未指定ならrepo scopeの行は対象外
+  types?: KnowledgeType[];             // knowledgeだけに効く
+  layers?: KnowledgeLayer[];           // 既定 ["atom"]（N2で既定を見直すhook）
+  limit: number;                       // 1..50
+  lanes?: SearchLane[];                // 既定は3つすべて
+  queryVector?: Float32Array;          // 指定時はLARMを呼ばない（test・評価用）
+}
+export interface SearchHit {
+  kind: SearchKind; id: string; handle: string; title: string; summary: string;
+  type: KnowledgeType | null; polarity: Polarity | null; status: string; space: Space;
+  confidence: number; score: number;
+  lanes: { lane: SearchLane; rank: number; raw: number }[];
+}
+export interface SearchResponse {
+  hits: SearchHit[]; degraded: DegradedReason[]; lanesUsed: SearchLane[];
+  candidateCounts: Record&lt;SearchLane, number&gt;;
+}
+export class SearchError extends Error { constructor(public code: "invalid_query" | "space_not_allowed"); }
+export interface SearchService { search(req: SearchRequest, opts?: { signal?: AbortSignal }): Promise&lt;SearchResponse&gt;; }
+export function createSearch(deps: { store: SqliteStore; spaceKey: string;
+  embedQuery?: (text: string, signal?: AbortSignal) =&gt; Promise&lt;Float32Array&gt;; queryTimeoutMs?: number }): SearchService;
+export function tokenizeQuery(query: string): { ftsTerms: string[]; shortTerms: string[] };</code></pre>
+  <ol>
+    <li>
+      <strong>範囲を先に絞る</strong
+      >。各laneのSQLは、絞り込み条件をWHEREに持ったうえで順位を付ける。条件は<code>status='active'</code>（knowledgeは加えて<code>layer IN (:layers)</code>、<code>type IN (:types)</code>）、<code>space IN (:spaces)</code>、<code>(scope='global' OR (scope='repo' AND :repoKey IS NOT NULL AND repo_key=:repoKey))</code>。絞り込み前に件数を切ることはしない。
+    </li>
+    <li>
+      <strong>語の分解</strong
+      >（<code>tokenizeQuery</code>）：NFKCとlowercaseのあと<code>new Intl.Segmenter("ja", {granularity: "word"})</code>で<code>isWordLike</code>の語を取り、隣り合う2語がともにCJK（漢字・かな・カナ）なら連結した語も足す（連結後12文字以下）。3文字以上の語は<code>ftsTerms</code>（最大32）、ちょうど2文字の語は<code>shortTerms</code>（最大8）、1文字は捨てる。重複は除く。ひらがなだけの2文字語（「する」「して」など）は、上限を当てる前に<code>shortTerms</code>から除く（2026-10-30改訂：上限16では60問中45問で問いの後半が捨てられ、ひらがなの2文字語はknowledgeの過半に現れる雑音だった）。NFKCはquery側だけに掛けており、索引側の全角英字などは正規化していない（N1の既知の制約）。trigram
+      tokenizerは3文字未満の語を引けないため（確認済み）、2文字の語を別laneで扱う。
+    </li>
+    <li>
+      <strong>fts lane</strong
+      >：<code>knowledge_fts MATCH ?</code>に、各語を<code>"</code>で囲み（中の<code>"</code>は<code>""</code>）<code> OR </code>で連結した式を渡す。順位は<code>bm25(knowledge_fts, 2.0, 1.0)</code>の昇順（episodeは<code>bm25(episodes_fts, 2.0, 1.0, 1.0, 1.0, 1.5)</code>）。上位100件。
+    </li>
+    <li>
+      <strong>short lane</strong
+      >：対象行ごとに<code>instr(lower(title), t) &gt; 0</code>なら2点、<code>instr(lower(body), t) &gt; 0</code>（episodeはsituation、action、outcome、lessonのいずれか）なら1点を語ごとに足す。語ごとのヒット数（その語がtitleか本文列のどれかに含まれる）が<code>ceil(語数/2)</code>以上の行だけを候補にし、<code>points</code>降順、ヒット数降順、<code>seq</code>昇順の上位100件（2026-10-30改訂：網羅条件がないと、共通の2文字語を多く含む長い本文で100件が飽和し、RRFでfts上位の正解を押し下げていた）。
+    </li>
+    <li>
+      <strong>vector lane</strong
+      >：<code>queryVector</code>か<code>embedQuery(query)</code>（既定timeout
+      2秒）で問い合わせのベクトルを得る。<code>vectors</code>と対象表を絞り込み条件付きでJOINし、<code>space_key=:spaceKey AND (origin='larm' OR verification='verified') AND verification NOT IN ('mismatch','stale')</code>で、knowledgeはさらにvectorの<code>content_digest</code>が対象行の<code>content_digest</code>と一致する行だけを（episodesには<code>content_digest</code>列がないので、verificationだけで判定する）<code>topK</code>で上位100件にする。embeddingに失敗したら<code>vector_unavailable</code>、使える行が0件で<code>verification='unverified'</code>の行があれば<code>vector_unverified</code>をdegradedに入れ、laneを外す。検索全体は失敗させない。
+    </li>
+    <li>
+      <strong>RRF</strong
+      >：<code>score(d) = Σ_lane w_lane / (k + rank_lane(d))</code>。<code>k = 60</code>、rankは1始まり、<code>w_fts = 1.0</code>、<code>w_vector = 1.0</code>、<code>w_short = 0.5</code>。laneに出なかった文書はそのlaneの項を0とする。knowledgeとepisodeはlaneごとに別々に順位を付け、合算後に混ぜる。同点はlaneの最良rank昇順、kind（knowledgeが先）、id昇順。上位<code>limit</code>件を返す。
+    </li>
+    <li>
+      <code>ftsTerms</code
+      >と<code>shortTerms</code>がともに空なら<code>no_lexical_terms</code>をdegradedに入れ、vector
+      laneだけで返す。<code>summary</code>はknowledgeが本文、episodeが<code>lesson</code>→<code>outcome</code>→<code>situation</code>の最初の空でないものを、空白を1つにまとめて280文字で切ったもの。N1では<code>expansion_unavailable</code>と<code>theme_unavailable</code>は呼び出し側（MCP）が付ける。
+    </li>
+  </ol>
+
+  <h3>5.6 MCP（mcp domain）</h3>
+  <pre><code class="language-ts">export interface McpDeps {
+  path: "/mcp"; token: string; allowedHosts: string[]; // 例 ["127.0.0.1:39181","localhost:39181","[::1]:39181"]
+  search: SearchService; store: SqliteStore; now?: () =&gt; number;
+}
+export function registerMcp(app: Hono, deps: McpDeps): void;</code></pre>
+  <ul>
+    <li>
+      transport：<code>POST /mcp</code>だけを受け、JSON-RPC 2.0の1
+      messageを<code>application/json</code>で返す（SSEなし、batchなし、sessionなし）。<code>GET</code>／<code>DELETE</code>は405。method：<code>initialize</code>（<code>protocolVersion: "2025-03-26"</code>、<code>capabilities: {tools: {}}</code>、<code>serverInfo: {name: "context-still", version: "2.0.0-alpha.0"}</code>）、<code>notifications/initialized</code>（202、本文なし）、<code>ping</code>、<code>tools/list</code>、<code>tools/call</code>。それ以外は<code>-32601</code>。
+    </li>
+    <li>
+      検査の順（handlerより前）：Host
+      headerが<code>allowedHosts</code>になければ403、<code>Origin</code>があってloopbackでなければ403、<code>Authorization: Bearer</code>がMCP
+      tokenと一致しなければ401（<code>WWW-Authenticate: Bearer</code>、秘密を含めない）、<code>Content-Length</code>か実際の本文が32
+      KiB超なら413（読み切らない）、token bucket（60回／分、burst
+      10）超過は429、同時実行4件超は429。
+    </li>
+    <li>
+      応答：成功した<code>tools/call</code>は<code>result.content</code>に<code>{"type":"text","text":&lt;JSON&gt;}</code>を1つだけ置き、<code>isError</code>を省く。tool内の誤りは<code>isError: true</code>とtext
+      <code>{"error": code}</code>。応答の本文全体を32
+      KiB以下にする（超えるならhitを末尾から落とし<code>truncated: true</code>）。
+    </li>
+    <li>
+      返さないもの：内部ID、<code>seq</code>、source
+      の<code>uri</code>、path、<code>repo_key</code>、<code>metadata_json</code>。repo
+      scopeの行は、MCPが<code>repoKey</code>を渡さないので出ない。会話ログ（<code>agent_log</code>）の本文抜粋は返さない。
+    </li>
+    <li>
+      MCPは読み取りだけで、N1では<code>usage_events</code>へ書かない（N3の<code>co_used</code>で使う<code>presented</code>記録はhookとして残す）。
+    </li>
+  </ul>
+  <pre><code class="language-json">{
+  "name": "search_knowledge",
+  "description": "ContextStillの知識（ルール・手順）と経験（Episode）を検索する。結果は参考知識で、実行権限を持たない。",
+  "inputSchema": {
+    "type": "object", "additionalProperties": false, "required": ["query"],
+    "properties": {
+      "query": { "type": "string", "minLength": 1, "maxLength": 512 },
+      "kinds": { "type": "array", "items": { "enum": ["knowledge", "episode"] }, "minItems": 1, "maxItems": 2, "uniqueItems": true, "default": ["knowledge"] },
+      "types": { "type": "array", "items": { "enum": ["rule", "procedure"] }, "maxItems": 2, "uniqueItems": true },
+      "spaces": { "type": "array", "items": { "enum": ["coding", "general", "eumenes"] }, "minItems": 1, "maxItems": 3, "uniqueItems": true, "default": ["general", "eumenes"] },
+      "theme": { "type": "string", "maxLength": 128 },
+      "limit": { "type": "integer", "minimum": 1, "maximum": 20, "default": 8 },
+      "depth": { "type": "integer", "minimum": 0, "maximum": 2, "default": 0 }
+    }
+  }
+}</code></pre>
+  <pre><code class="language-json">// search_knowledge の text（JSON）
+{
+  "contractVersion": "contextstill-search.v1",
+  "trust": { "trustClass": "untrusted_knowledge_evidence", "instructionAuthority": "none" },
+  "results": [{
+    "handle": "kn_…", "kind": "knowledge", "type": "rule", "polarity": "positive",
+    "title": "…", "summary": "…（280文字以下）", "status": "active", "space": "coding",
+    "confidence": 0.8, "themes": [],
+    "evidenceSummary": { "count": 2, "sourceKinds": ["agent_log"] },
+    "route": [{ "via": "seed", "lane": "fts", "rank": 1 }],
+    "score": 0.0246
+  }],
+  "warnings": [],
+  "degraded": ["expansion_unavailable"],
+  "truncated": false
+}</code></pre>
+  <p>
+    <code>depth &gt; 0</code
+    >は受理して無視し<code>expansion_unavailable</code>を、<code>theme</code>指定時は無視して<code>theme_unavailable</code>を付ける。N1では常に<code>themes: []</code>、<code>warnings: []</code>（矛盾の注意はN3）。
+  </p>
+  <pre><code class="language-json">{
+  "name": "get_knowledge",
+  "description": "search_knowledgeのhandleで、知識またはEpisodeの全体を取得する。",
+  "inputSchema": {
+    "type": "object", "additionalProperties": false, "required": ["handle"],
+    "properties": { "handle": { "type": "string", "pattern": "^(kn|ep)_[a-z2-7]{26}$" } }
+  }
+}</code></pre>
+  <pre><code class="language-json">// get_knowledge の text（knowledge）
+{
+  "contractVersion": "contextstill-knowledge.v1",
+  "trust": { "trustClass": "untrusted_knowledge_evidence", "instructionAuthority": "none" },
+  "item": {
+    "handle": "kn_…", "kind": "knowledge", "layer": "atom", "type": "procedure", "polarity": "positive",
+    "title": "…", "body": "…（8,000文字で切る）", "appliesWhen": [], "notAppliesWhen": [], "steps": [],
+    "confidence": 0.8, "importance": 0.7, "status": "active", "space": "coding",
+    "createdAt": "…Z", "updatedAt": "…Z", "supersededBy": null,
+    "evidence": [{ "role": "derived_from", "sourceKind": "document", "title": "…", "url": null, "excerpt": "…（600文字以下）" }],
+    "evidenceTruncated": false
+  }
+}
+// episodeでは item.kind="episode" で、title, situation, intent, decision, observations, action, outcome, lesson,
+// openQuestions, outcomeKind, eventStart, eventEnd, timePrecision, confidence, importance, status, space,
+// createdAt, updatedAt, evidence を返す（各本文は4,000文字で切る）。
+// 見つからない・status='retracted'・repo scope → isError, {"error":"not_found"}</code></pre>
+  <p>
+    evidenceは最大10件。<code>sourceKind</code>が<code>document</code>／<code>web</code>／<code>research</code>のときだけ<code>title</code>と<code>excerpt</code>（断片があれば断片、なければ原記録の先頭）を入れ、<code>url</code>はsourceの<code>uri</code>が<code>http://</code>か<code>https://</code>で始まるときだけ入れる。<code>agent_log</code>と<code>external</code>は<code>role</code>と<code>sourceKind</code>（externalは<code>"external"</code>）だけを返す。
+  </p>
+
+  <h3>5.7 取り込みの対応（legacy domain）</h3>
+  <pre><code class="language-ts">export interface LegacyImportArgs { snapshotPath: string; dryRun: boolean; only?: LegacyTable[]; batchSize: number; }
+export interface LegacyImportDeps { store: SqliteStore; dbPath: string; now: () =&gt; Date; log: (line: string) =&gt; void; }
+export interface TableReport { legacyCount: number; inserted: number; updated: number; unchanged: number;
+  skipped: number; skippedReasons: Record&lt;string, number&gt;; }
+export interface LegacyImportReport {
+  runId: string; importerVersion: "legacy-import.v2"; snapshotFingerprint: string; dryRun: boolean;
+  tables: Record&lt;LegacyTable, TableReport&gt;;
+  provenance: Record&lt;ProvenanceStatus, number&gt; &amp; { byOrigin: Record&lt;string, number&gt;; activeUnresolved: number };
+  time: { converted: Record&lt;"iso" | "sqlite" | "unix_ms", number&gt;; invalid: number };
+  vectors: { imported: number; stale: number; invalid: number };
+}
+export function runLegacyImport(deps: LegacyImportDeps, args: LegacyImportArgs): Promise&lt;LegacyImportReport&gt;;</code></pre>
+  <p>
+    snapshotは<code>new Database(`file:${path}?mode=ro&amp;immutable=1`, { readonly: true })</code>で開く。realpathが旧版のlive
+    DBか、取り込み先DB（<code>deps.dbPath</code>）と同じなら<code>snapshot_path_forbidden</code>で止まる。fingerprintは<code>sha256Hex(canonicalJson({size, mtimeMs, pageCount, schemaSha}))</code>（2.5
+    GBをhashしない）。行ごとの<code>legacy_digest</code>は<code>sha256Hex("legacy-import.v2|" + canonicalJson(旧行))</code>（knowledgeは計算済みの由来、episodeはrefs、vectorはknowledgeのtitleとbodyも含める）で、対応表と同じで取り込み先の行もあればskip（<code>unchanged</code>）、違えばupsert（<code>updated</code>）する。変換規則を変えたら版を上げ、全行を規則の変化として取り込み直す（2026-10-30にv1→v2：scope、wiki_fileの由来、vectorの保護を直した）。旧版から消えた行は消さず、件数だけreportに出す。書き込みは<code>batchSize</code>行ごとに1回の<code>store.write</code>で、前のbatchを<code>await</code>してから次へ進む。新しいIDは旧版のIDをそのまま使う（UUID。表をまたいで同じIDが出たら<code>id_collision</code>で止まる）。
+  </p>
+  <table>
+    <caption>
+      旧表から新表への対応（取り込み順）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">旧表（snapshotの件数）</th>
+        <th scope="col">新表</th>
+        <th scope="col">規則</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>vibe_memories</code>（19,730）</td>
+        <td><code>source_records</code></td>
+        <td>
+          <code>kind='agent_log'</code
+          >、<code>uri='vibe_memory:'+id</code>、<code>title=subject</code>、<code>content</code>、<code>recorded_at=toUtcIso(created_at)</code>、<code>space='coding'</code>、<code>scope='global'</code>、metadataに<code
+            >{legacy:{sessionId, memoryType, metadata}}</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>sources</code
+          >（178）／<code>source_fragments</code>（2,260）
+        </td>
+        <td>
+          <code>source_records</code>／<code
+            >source_fragments</code
+          >
+        </td>
+        <td>
+          <code>wiki</code
+          >→<code>document</code>、<code>web*</code>→<code>web</code>。uri、title、body、locator、headingはそのまま。scopeは下の正規化
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>episode_cards</code
+          >（14,160）／<code>episode_refs</code>（14,160）
+        </td>
+        <td>
+          <code>episodes</code>／<code
+            >episode_sources</code
+          >
+        </td>
+        <td>
+          situation、observations、action、outcome、lesson、outcome_kindをそのまま。intent／decisionは空、openQuestionsは<code>[]</code>、eventStart／Endは<code>null</code>、precision
+          <code>unknown</code
+          >。confidence／importanceは÷100。facetsに<code>{applicability, antiApplicability, domains, technologies, changeTypes, tools}</code>。refの<code>ref_value</code>（vibe
+          memoryのID）→source、<code>locator</code>（例<code>bytes:0-14097</code>）をそのまま。状態は<code>active</code>→<code>active</code>、<code>stale_at</code>ありは<code
+            >stale</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>knowledge_items</code>（9,579）</td>
+        <td>
+          <code>knowledge_items</code>／<code
+            >knowledge_evidence</code
+          >
+        </td>
+        <td>
+          <code>layer='atom'</code
+          >、type、polarity、title、bodyはそのまま。facetsに<code>{appliesTo, intentTags}</code>、confidence／importanceは÷100。状態は下表。metadataに<code>{legacy:{status, scope, dynamicScore, compileSelectCount, classificationStatus}}</code>（<code>dynamicScore</code>は評価のbaselineが使うので必須）。由来は次節
+        </td>
+      </tr>
+      <tr>
+        <td><code>knowledge_usage_events</code>（87,180）</td>
+        <td><code>usage_events</code></td>
+        <td>
+          id、<code>owner_kind='knowledge'</code>、<code>channel='compile'</code>、verdict（used／not_used／off_topic）、actor、<code>run_ref=run_id</code>、reason、<code>origin='legacy_import'</code>、<code
+            >occurred_at=toUtcIso(created_at)</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>knowledge_items_vec_fallback</code>（9,579）</td>
+        <td><code>vectors</code></td>
+        <td>
+          <code>ensureVectorSpace(LARM_EMBEDDING_SPACE)</code
+          >の鍵で、<code>owner_kind='knowledge'</code>、<code>origin='legacy_import'</code>。<code>embedding_json</code>を384次元・有限値・norm
+          1±1e-3で検査し、違えば<code>invalid</code>でskip。旧<code>content_hash</code>が<code>sha256Hex(title+"\n"+body)</code>（新しい<code>content_digest</code>）と一致すれば<code>verification='unverified'</code>、違えば<code
+            >'stale'</code
+          >
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>
+      scopeの正規化（2026-10-30改訂）：repo_keyは<code>canonicalRepoKey</code>で正規化する。旧<code>repo_key</code>が非空なら、<code>/</code>で始まるpathなら末尾の名前、<code>owner/name</code>形式なら<code>name</code>、それ以外はそのまま、を小文字にする。旧<code>repo_key</code>が空で<code>repo_path</code>が非空なら、<code>repo_path</code>の末尾の名前を小文字にする。旧<code>global</code>→<code>global</code>。旧<code>repo</code>でrepo_keyが得られる→<code>repo</code>。旧<code>repo</code>で<code>repo_key</code>も<code>repo_path</code>も空→<code>global</code>（分類器がrepoを決められなかった行）。旧値（scope、repoKey、repoPath、projectRef）は<code>metadata.legacy</code>に残す。改訂前の規則は「<code>repo_key</code>がnullなら匿名化済みの一般知識」と見なしていたが、レビューで、<code>repo_path</code>を持つ分類済みのrepo固有データ（知識2,506件、Episode
+      7,558件）がglobalになり、Eumenesの検索や別repoへ漏れることが分かった。改訂後の取り込みでは、知識がrepo
+      2,575件・global 7,004件、Episodeがrepo 13,317件・global
+      843件。旧<code>repo_key</code>と<code>repo_path</code>が両方ある行では、正規化後の値は知識69件中69件、Episode
+      5,364件中5,353件で一致した（不一致はworktreeやsubdirectoryを指すrepo_pathで、repo_keyを優先する）。
+    </li>
+    <li>
+      知識の状態：<code>active</code>→<code>active</code>。<code>draft</code>は原子知識の候補として扱い、<code>metadata.finalizeSummary.decision='stored'</code>かつ<code>qualityGates</code>が<code>importance</code>、<code>candidate_quality</code>、<code>applicability</code>、<code>embedding</code>の4つを含めば<code>active</code>（方針提案10章の「gateを通れば自動でactive」）、それ以外は<code>candidate</code>。snapshotのdraft
+      428件はすべて<code>stored</code>である。<code>deprecated</code>（49件）→<code>retracted</code>。
+    </li>
+    <li>
+      時刻：<code>created_at</code>、<code>updated_at</code>は<code>toUtcIso</code>で変換し、nullになったら<code>created_at</code>は<code>updated_at</code>、それもなければ取り込み時刻を使って<code>time.invalid</code>を数える。snapshotの形式は、知識がISO
+      7,211／SQLite形式 2,331／unix-ms 37、Episodeが ISO 125／SQLite形式 14,035、会話ログが ISO
+      4,761／unix-ms 14,969、利用実績が ISO 12,220／unix-ms 74,960である。
+    </li>
+  </ul>
+  <h4>由来の修復</h4>
+  <p>
+    各知識について、次の順で最初に見つかった由来を<code>origin='legacy_import'</code>、<code>role='derived_from'</code>の根拠として入れ、<code>provenance_status</code>を決める。加えて<code>knowledge_source_links</code>の断片は常に<code>target_kind='fragment'</code>の根拠として足す。
+  </p>
+  <ol>
+    <li>
+      <code>metadata.foundCandidateId</code> →
+      <code>found_candidates.id</code> →
+      <code>finding_job_id</code> →
+      <code>finding_candidate_queue.id</code>の<code>(source_kind, source_key, source_uri)</code>。
+    </li>
+    <li>
+      上がなければ<code>metadata.targetKind</code>／<code>targetKey</code>（値が固定文字列<code>the source target</code>のときは使わない）。
+    </li>
+    <li>
+      上もなければ<code>knowledge_origin_links</code>の<code>(origin_kind, origin_key, origin_uri)</code>。
+    </li>
+  </ol>
+  <table>
+    <caption>
+      source_kindごとの解決
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">旧source_kind</th>
+        <th scope="col">見つかったとき</th>
+        <th scope="col">見つからないとき</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>vibe_memory</code></td>
+        <td>
+          <code>source_key</code
+          >のIDで<code>source_records</code>がある→<code>target_kind='source'</code>、<code
+            >resolved</code
+          >
+        </td>
+        <td>
+          <code>external_ref='vibe_memory:'+key</code>、<code
+            >source_missing</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>wiki_file</code></td>
+        <td>
+          <code>source_uri</code
+          >（<code>sourceDocumentUri</code>）が非空なら<code>sources.uri</code>との完全一致だけ→<code>resolved</code>（なければ<code>source_missing</code>）。<code>source_uri</code>が空のときだけ、<code>sources.uri = source_key</code>か、<code>/wiki/pages/&lt;source_key&gt;</code>で終わる候補がちょうど1件なら<code>resolved</code>（2026-10-30改訂：末尾一致だけでは、別repo（memoryRouter）のwiki由来の593件が同名のcontextStillのページへ結び付いていた）
+        </td>
+        <td>
+          <code>external_ref='wiki:'+key</code>、<code
+            >source_missing</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>web_ingest</code></td>
+        <td>
+          <code>sources.uri = source_uri</code>→<code
+            >resolved</code
+          >
+        </td>
+        <td>
+          <code>external_ref=source_uri</code>（URL）、<code
+            >external</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td><code>knowledge_candidate</code></td>
+        <td>（原記録を持たない）</td>
+        <td>
+          <code>external_ref='agent_candidate:'+key</code>、<code
+            >external</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td>どれも辿れない</td>
+        <td colspan="2">根拠なし、<code>unresolved</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    snapshotでの事前集計（本計画作成時）：<code>foundCandidateId</code>の連鎖で辿れる知識は8,655件（vibe_memory
+    7,890、knowledge_candidate 549、web_ingest 163、wiki_file
+    53）。ただしvibe_memoryの7,890件のうち、原記録が<code>vibe_memories</code>に残っているのは3,602件だけで、残りは<code>source_missing</code>になる。連鎖のない924件は2.と3.で辿る。調査文書の「active知識の由来はすべて特定できる」は原記録のキーが分かるという意味で、原記録の実在までは保証しない。
+  </p>
+
+  <h3>5.8 評価（evaluation domain）</h3>
+  <pre><code class="language-ts">export const evalCaseSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]{1,64}$/),
+  query: z.string().min(1).max(512),
+  spaces: z.array(z.enum(["coding", "general", "eumenes"])).min(1),
+  kinds: z.array(z.enum(["knowledge", "episode"])).min(1).default(["knowledge"]),
+  relevant: z.array(z.object({ ref: z.string().regex(/^legacy:(knowledge_items|episode_cards):[0-9a-f-]{36}$/),
+    grade: z.number().int().min(1).max(3) })).min(1),
+  labelSource: z.enum(["agent-draft", "owner"]),
+  style: z.enum(["paraphrase", "keyword", "question"]),
+  note: z.string().max(500).optional(),
+}).strict();
+export type EvalSystem = "legacy-lexical" | "legacy-query-first" | "v2-hybrid";
+export interface EvalArgs { setPath: string; systems: EvalSystem[]; lanes: SearchLane[]; k: number; outPath: string; }
+export interface EvalDeps { store: SqliteStore; search: SearchService; now: () =&gt; Date; log: (line: string) =&gt; void; }
+export interface SystemMetrics { recallAtK: number; mrrAtK: number; ndcgAtK: number; queries: number; zeroHit: number; }
+export interface EvalReport { set: string; k: number; lanes: SearchLane[]; generatedAt: string;
+  systems: Record&lt;EvalSystem, SystemMetrics&gt;; unresolvedRefs: string[];
+  perQuery: { id: string; system: EvalSystem; hits: string[]; firstRelevantRank: number | null }[];
+  wins: { v2: number; legacy: number; tie: number }; }
+export function runEvaluation(deps: EvalDeps, args: EvalArgs): Promise&lt;EvalReport&gt;;
+export function legacyScoreText(value: string, query: string): number;       // 旧版の移植
+export function legacyQueryTokens(query: string): string[];</code></pre>
+  <ul>
+    <li>
+      file：<code>eval/sets/&lt;name&gt;.jsonl</code>、1行1件。<code>ref</code>は<code>resolveLegacyRef</code>で新しいIDに解決し、解決できないrefは<code>unresolvedRefs</code>に出して指標から除く。
+    </li>
+    <li>
+      指標（k=10）：Recall@k = |relevant ∩ topK| / |relevant|、MRR@k =
+      最初の正解の順位の逆数（なければ0）、nDCG@k は gain = 2^grade − 1、割引 log2(rank +
+      1)。queryごとの平均。
+    </li>
+    <li>
+      <code>legacy-lexical</code
+      >：旧<code>native_common.rs::score_text</code>と<code>normalized_query_tokens</code>の移植。query全体をtrim・lowercaseし、全体が<code>title+"\n"+body</code>（lowercase）に含まれれば+4、tokenごとに含まれれば+1。tokenは<code>[\p{L}\p{N}_-]</code>以外で区切った2文字以上の語（重複除去）、非ASCIIを含む語には幅3、次に幅2の文字n-gramを足し、48個で切る。点数に<code>Math.round(metadata.legacy.dynamicScore)</code>を足し、0以下を除き降順（同点は旧版のSQLの<code>importance</code>降順、<code>updated_at</code>降順、最後にid昇順）。対象行はv2と同じ絞り込み（公平のため）。旧testの「<code>score_text("データベースをバックアップしてから移行する", "本番のデータベース移行を安全に行う") &gt;= 2</code>、<code>score_text("UIのボタン文言を変更する", 同) == 0</code>」をtestに入れる。
+    </li>
+    <li>
+      <code>legacy-query-first</code
+      >（2026-10-30追加）：<code>legacy-lexical</code>は旧<code>native_knowledge.rs</code>の忠実な移植だが、dynamicScore（0〜90）が一致点（多くて約50）を圧倒し、問いと関係なく人気の知識が上位を埋める（実測Recall@10
+      0.021）。旧版の<code>context_compile</code>の経路（<code>native_compile/retrieval.rs</code>の<code>include_query_matches</code>）に倣い、<code>query_score &gt; 0</code>の行だけを<code>query_score</code>降順、次にdynamicScore降順、同点は<code>legacy-lexical</code>と同じ順で並べる。旧版との比較はこちらを主に見る。reportの<code>winsVsQueryFirst</code>はv2との勝敗。
+    </li>
+    <li>
+      reportの追加（2026-10-30）：<code>unreachableRefs</code>（解決できたが、activeでない・globalでない・atomでない・caseのspacesやkinds外で、検索で決して出ないref。指標から除く）、<code>byStyle</code>（style別の指標）。
+    </li>
+    <li>
+      <code>v2-hybrid</code
+      >：<code>search({query, spaces, kinds, lanes, limit: k})</code>。LARMなしの夜間実行は<code>--lanes fts,short</code>で、ベクトルを含む評価はownerがLARM接続後に<code>--lanes fts,short,vector</code>で行う。
+    </li>
+    <li>
+      N1の制約：N1は原子知識を検索するので、言い換えの重複が上位を埋め、Recallを下げうる。正本（N2）ができたら同じ評価集合で測り直す。
+    </li>
+  </ul>
+
+  <h2>6. N0で外すもの・残すもの</h2>
+  <h3>git rmで外す（tracked fileのみ。legacy/v1に保存済み）</h3>
+  <pre><code>.env.example  api/  biome.json  bun.lock  Cargo.lock  Cargo.toml  CHANGELOG.md  crates/
+docker-compose.yml  drizzle/  drizzle.config.ts  e2e/  foundry-rust.toml  hooks.json.example
+implementation_plan.md  index.html  playwright.config.ts  README.jp.md  rust-toolchain.toml
+scratch/（tracked 3件）  scripts/  shared/  src/  test/  tsconfig.json  vite.config.ts  vitest.config.ts  web/
+spec/article/  spec/context-compile-foundation/  spec/maintainability-budget.json
+spec/docs/pub/*.md（README.mdを除く13件）
+.github/workflows/dependency-audit.yml  .github/workflows/release-dry-run.yml</code></pre>
+  <p>
+    <code>.env.example</code
+    >は中身を読まずに<code>git rm</code>する。<code>api/</code>、<code>scripts/</code>、<code>tsconfig.json</code>、<code>bun.lock</code>はgit
+    rmのあと新しく作り直す。2026-10-30時点で、これらのディレクトリにuntrackedとignoredのファイルはない（<code>spec/docs/assets/</code>の<code>.DS_Store</code>だけ）。
+  </p>
+  <h3>書き直す</h3>
+  <ul>
+    <li>
+      <code>package.json</code
+      >、<code>tsconfig.json</code>、<code>bunfig.toml</code>、<code>.oxlintrc.json</code>、<code>.oxfmtrc.json</code>（4.5節）、<code>bun.lock</code>（<code>bun install</code>で生成）。
+    </li>
+    <li>
+      <code>README.md</code
+      >：v2の現状（N0／N1段階、起動、環境変数、旧版は<code>legacy/v1</code>と<code>~/Code/contextStill-legacy</code>）だけを短く正確に。
+    </li>
+    <li>
+      <code>AGENTS.md</code
+      >：先頭の<code>initial_instructions</code>の行と「Spec HTML
+      documents」節はそのまま残し、Eumenes
+      AGENTS.mdにならって「Web・CLIはAPIを使いDBを開かない（maintenance commandはOS
+      lockを取る）」「domainの業務判断・SQL・試験は各domainに置き、下位は上位を参照しない」「serverを無断で起動しない」「検証は<code>bun run verify</code>、domain単位は<code>bun run test:domain -- &lt;name&gt;</code>」を足す。<code>CLAUDE.md</code>は変更しない。
+    </li>
+    <li>
+      <code>spec/docs/pub/README.md</code
+      >：v2の公開説明（起動、環境変数表、MCP接続方法）を最小限で。
+    </li>
+    <li>
+      <code>.github/workflows/verify.yml</code>：1 job（checkout → setup-bun 1.4.4 →
+      <code>bun install --frozen-lockfile</code> →
+      <code>bun run verify</code>）。既存のpin済みaction
+      SHAを再利用する。<code>.github/dependabot.yml</code>：<code>cargo</code>と<code>docker-compose</code>の項を消す。
+    </li>
+    <li>
+      <code>.gitignore</code
+      >：現行を維持し、<code>data/</code>が含まれることを確認するだけ（既に含む）。
+    </li>
+    <li>
+      <code>CONTRIBUTING.md</code
+      >：開発commandの記述がcargoや旧scriptを指していれば、新しいscriptへ直す（その部分だけ）。
+    </li>
+  </ul>
+  <h3>触らずに残す</h3>
+  <p>
+    <code>LICENSE</code
+    >、<code>CODE_OF_CONDUCT.md</code>、<code>GOVERNANCE.md</code>、<code>SECURITY.md</code>、<code>SUPPORT.md</code>、<code>CLAUDE.md</code>、<code>.github/ISSUE_TEMPLATE/</code>、<code>.github/pull_request_template.md</code>、<code>.github/workflows/pages.yml</code>、<code>seo-audit.yml</code>、<code>docs/</code>と<code>github-pages/</code>（公開LP）、<code>contexts/</code>、<code>s11tnext.config.toml</code>、<code>.s11tnext/</code>（N4でpromptを移植するとき使う）、<code>.serena/</code>、<code>spec/docs/</code>のHTMLとassets（整理は統合手順I1）。
+  </p>
+
+  <h2>7. Workstream</h2>
+  <figure>
+    <pre class="mermaid">
+flowchart LR
+  N0["N0 骨組み（分割しない）"] --&gt; I1["I1 文書の整理（orchestrator）"]
+  N0 --&gt; A["N1-A 取り込み"]
+  N0 --&gt; B["N1-B 検索"]
+  N0 --&gt; C["N1-C MCP"]
+  N0 --&gt; D["N1-D ベクトル検証・補充"]
+  N0 --&gt; E["N1-E 評価"]
+  A --&gt; I2["I2 統合：verify・実取り込み・評価"]
+  B --&gt; I2
+  C --&gt; I2
+  D --&gt; I2
+  E --&gt; I2
+    </pre>
+    <figcaption>workstreamの順序。N1-AからN1-Eは、N0の契約を前提に並行して進められる</figcaption>
+  </figure>
+
+  <h3>N0 骨組み（分割しない）</h3>
+  <p>
+    shared file（package.json、bun.lock、tsconfig、root
+    composition、migration一覧、domains.ts）をすべて持つため、1人で行う。
+  </p>
+  <ul>
+    <li>
+      <strong>書いてよい</strong
+      >：6節の削除と書き直しの対象、<code>package.json</code>、<code>bun.lock</code>、<code>bunfig.toml</code>、<code>tsconfig.json</code>、<code>.oxlintrc.json</code>、<code>.oxfmtrc.json</code>、<code>api/**</code>、<code>scripts/**</code>、<code>eval/sets/.gitkeep</code>、<code>README.md</code>、<code>AGENTS.md</code>、<code>CONTRIBUTING.md</code>、<code>spec/docs/pub/**</code>、<code>.github/workflows/verify.yml</code>、<code>.github/dependabot.yml</code>。
+    </li>
+    <li>
+      <strong>禁止</strong
+      >：<code>spec/docs/*.html</code>、<code>spec/docs/.archived/**</code>、<code>spec/docs/assets/**</code>、6節の「触らずに残す」、ignoredとuntrackedのファイル、<code>node_modules</code>以外の生成物の削除。
+    </li>
+    <li>
+      <strong>作るもの</strong
+      >：4章の構成、5.1〜5.4の実装、5.2の全migration、5.3の全repository関数（N0実装のdomain）、settings／larm／queue（Eumenesの<code>api/domains/queue</code>を写す。<code>recovery.test.ts</code>と<code>crash-worker.ts</code>はprocessを起動するので写さない。<code>boundaries.test.ts</code>はEumenesの<code>domains</code>に依存するので写さない）、N1
+      domain（search、legacy、indexing、mcp、evaluation）の<code>contracts/index.ts</code>（5.5〜5.8を完全に）と<code>repository/migrations.ts</code>（legacyのみ）、および<code>index.ts</code>が公開する関数の仮実装（呼ぶと<code>Error("not_implemented")</code>を投げる。<code>registerMcp</code>の仮実装は<code>/mcp</code>へ503
+      <code>{"error":"mcp_not_implemented"}</code>を返す）、4.4のcommand、4.6のpreloadとverify。
+    </li>
+    <li>
+      <strong>テスト</strong>（すべて一時ディレクトリ、注入fetch）：
+      <ul>
+        <li>
+          <code>api/infrastructure/sqlite/index.test.ts</code
+          >：同じpathの2回目の<code>openStore</code>が<code>WriterOwnedError</code>、writeの直列化、適用済みmigrationのSQL変更で<code>migration_checksum_mismatch</code>。
+        </li>
+        <li>
+          <code>api/infrastructure/time.test.ts</code
+          >、<code>handle.test.ts</code>（5.1の例をすべて。handleは同じ入力で同じ値、正規表現に一致）。
+        </li>
+        <li>
+          <code>api/application/config.test.ts</code
+          >：既定値、39171／39172拒否、非loopback拒否、予約path拒否、旧env名を設定しても結果が変わらない。
+        </li>
+        <li>
+          <code>api/application/migrations.test.ts</code
+          >：GOLDEN（idの順序の配列を固定）、新規DBへ全適用、trigramのFTSで3文字の日本語が当たる、upsertの更新でFTSが追従する（旧文言で当たらず新文言で当たる）。
+        </li>
+        <li>
+          <code>api/domains/settings/test/secrets.test.ts</code
+          >：鍵fileが0600・dirが0700、env鍵の優先、暗号文があって鍵がないと<code>keyError</code>、AADにより暗号文を別行へ移すと復号に失敗、診断に平文が出ない。
+        </li>
+        <li>
+          <code>api/infrastructure/auth-config.test.ts</code
+          >：api.token／mcp.tokenの作成（64桁hex、0600）、env指定の24文字未満は拒否。
+        </li>
+        <li>
+          <code>api/domains/larm/test/embedding.test.ts</code>：5.4の各段階をfixture
+          fetchで（成功、space不一致、409、503とRetry-Afterの既定30秒、token欠如、base
+          URL未設定、次元不一致、credential期限での再claim、release）。fixtureの応答にtokenが含まれても、例外messageとstatusに出ない。
+        </li>
+        <li>
+          <code>api/domains/vectors/test/</code
+          >：pack／unpack、<code>vectorSpaceKey(LARM e5)</code>の値を固定、<code>topK</code>の順序と同点、byte長の検査。
+        </li>
+        <li>
+          <code>api/domains/{sources,experience,knowledge,usage,legacy}/test/</code
+          >：upsertのinserted／updated／unchanged、revisionの増加、CHECK制約（external根拠のtarget_id必須違反など）、<code>replaceKnowledgeEvidence</code>の冪等性、<code>resolveLegacyRef</code>。
+        </li>
+        <li>
+          <code>api/application/app.test.ts</code
+          >：<code>app.request</code>で<code
+            >/api/health</code
+          >
+          200、<code>/api/settings</code>がtokenなし401・ありで200で秘密を含まない。<code>/mcp</code>の挙動は試さない（N1-Cの所有）。
+        </li>
+        <li>
+          <code>scripts/boundaries.test.ts</code
+          >：上位tierへのimport、宣言外の依存、<code>contracts</code>以外の内部pathへのimport、domainから<code>api/application</code>へのimportを検出する。
+        </li>
+        <li>
+          <code>scripts/test-preload.test.ts</code
+          >：<code>fetch</code>と<code>Bun.serve</code>が塞がれている。
+        </li>
+      </ul>
+    </li>
+    <li>
+      <strong>受入</strong
+      >：<code>bun install</code>のあと<code>bun run verify</code>が成功。<code>git ls-files | grep -E '(\.rs$|Cargo|drizzle|biome|vite|vitest|playwright)'</code>が空。<code>git status --short</code>で、変更が「書いてよい」範囲だけにある。
+    </li>
+  </ul>
+
+  <h3>N1-A 取り込み</h3>
+  <ul>
+    <li><strong>目的</strong>：5.7の<code>runLegacyImport</code>を実装する。</li>
+    <li>
+      <strong>書いてよい</strong
+      >：<code>api/domains/legacy/**</code>。ただし<code>contracts/**</code>と<code>repository/migrations.ts</code>は除く。<code>data/tmp-import/**</code>（実snapshotでの確認用DB）。
+    </li>
+    <li>
+      <strong>禁止</strong>：上記以外のすべて（他domain、application、scripts、package.json）。
+    </li>
+    <li>
+      <strong>テスト</strong
+      >：<code>api/domains/legacy/test/legacy-fixture.ts</code>で、snapshotの<code>.schema</code>から写した旧12表（<code>vibe_memories</code>、<code>sources</code>、<code>source_fragments</code>、<code>episode_cards</code>、<code>episode_refs</code>、<code>knowledge_items</code>、<code>knowledge_usage_events</code>、<code>knowledge_items_vec_fallback</code>、<code>found_candidates</code>、<code>finding_candidate_queue</code>、<code>knowledge_source_links</code>、<code>knowledge_origin_links</code>。<code>settings</code>を参照するtriggerは除く）を一時DBに作り、各規則を通る小さなdataを入れる。確認すること：2回目の実行で全表<code>inserted=0, updated=0</code>、旧行を1件変えると<code>updated=1</code>、件数一致、3形式の時刻変換、由来の4つの状態とsource_kindごとの解決、draftのgate判定、scope正規化、ベクトルのunverified／stale／invalid、snapshotがlive
+      DBのpathなら拒否、<code>--dry-run</code>は何も書かない。
+    </li>
+    <li>
+      <strong>受入</strong
+      >：<code>bun run test:domain -- legacy</code>が成功。加えて実snapshotで<code>CONTEXT_STILL_DB=data/tmp-import/context-still.sqlite3 bun run import:legacy -- --snapshot ~/Code/contextStill-db-backup-20261029/context-still-core.sqlite</code>を2回実行し、1回目のreportの<code>legacyCount</code>が5.7表の件数と一致し、<code>inserted + skipped = legacyCount</code>、2回目は<code>inserted=0</code>かつ<code>updated=0</code>。reportをorchestratorへ渡す（<code>data/tmp-import/</code>は消さずに残す）。
+    </li>
+  </ul>
+
+  <h3>N1-B 検索</h3>
+  <ul>
+    <li>
+      <strong>目的</strong
+      >：5.5の<code>createSearch</code>と<code>tokenizeQuery</code>を実装する。
+    </li>
+    <li>
+      <strong>書いてよい</strong
+      >：<code>api/domains/search/**</code>。ただし<code>contracts/**</code>は除く。
+    </li>
+    <li><strong>禁止</strong>：上記以外のすべて。</li>
+    <li>
+      <strong>テスト</strong
+      >（N0のupsert関数で一時DBに種を入れ、<code>queryVector</code>を直接渡す）：範囲外（repo
+      scope、別space、retracted、canonical）の行がどれだけ良く一致しても出ない。範囲外の強い一致を200件入れても範囲内の1件が返る（絞り込み前に切っていない）。「書き込み」のような3文字以上の日本語の部分一致、2文字語（「規則」）がshort
+      laneで当たる。RRFの点数が式どおり（手計算した値と一致）。同点の順序。<code>vector_unavailable</code>（embedQueryが失敗）、<code>vector_unverified</code>（unverifiedだけのとき）、<code>no_lexical_terms</code>。<code>personal</code>で<code>space_not_allowed</code>。episodeとknowledgeの混在。
+    </li>
+    <li><strong>受入</strong>：<code>bun run test:domain -- search</code>が成功。</li>
+  </ul>
+
+  <h3>N1-C MCP</h3>
+  <ul>
+    <li><strong>目的</strong>：5.6の<code>registerMcp</code>を実装する。</li>
+    <li>
+      <strong>書いてよい</strong
+      >：<code>api/domains/mcp/**</code>。ただし<code>contracts/**</code>は除く。
+    </li>
+    <li><strong>禁止</strong>：上記以外のすべて。</li>
+    <li>
+      <strong>テスト</strong
+      >：testの中で<code>new Hono()</code>に<code>registerMcp</code>を登録し、<code>app.request</code>で試す。<code>search</code>は偽の<code>SearchService</code>、<code>get_knowledge</code>は一時DBに種を入れたstore。401と<code>WWW-Authenticate</code>、Host違反403、Origin違反403、32
+      KiB超の413、429（bucketとconcurrency）、GET 405、未知method
+      -32601、<code>tools/list</code>が2つのtoolを5.6のschemaどおりに返す、未知のkeyや範囲外の値を拒否、<code>search_knowledge</code>の既定spaces（<code>general</code>、<code>eumenes</code>）とdegradedの付与、応答32
+      KiB以下と<code>truncated</code>、<code>get_knowledge</code>のnot_found（存在しない、retracted、repo
+      scope）、<code>agent_log</code>の抜粋を返さない、すべての応答本文に種の内部ID、uri、repo_key、metadataの文字列が現れない。
+    </li>
+    <li><strong>受入</strong>：<code>bun run test:domain -- mcp</code>が成功。</li>
+  </ul>
+
+  <h3>N1-D ベクトル検証・補充</h3>
+  <ul>
+    <li><strong>目的</strong>：旧ベクトルの検証commandと、embeddingの補充commandを実装する。</li>
+    <li>
+      <strong>書いてよい</strong
+      >：<code>api/domains/indexing/**</code>。ただし<code>contracts/**</code>は除く。
+    </li>
+    <li><strong>禁止</strong>：上記以外のすべて。live LARMへの接続（ownerが後で行う）。</li>
+  </ul>
+  <pre><code class="language-ts">// indexing/contracts（N0が書く）
+export interface IndexingDeps { store: SqliteStore; larm: LarmEmbeddingClient; spaceKey: string;
+  now: () =&gt; Date; log: (line: string) =&gt; void; sleep: (ms: number) =&gt; Promise&lt;void&gt;; }
+export interface VerifyLegacyArgs { sampleSize: number; thresholdMin: number; thresholdMean: number; dryRun: boolean; }
+export interface VerifyLegacyReport { runId: string; sampleSize: number; minCosine: number | null; meanCosine: number | null;
+  passed: boolean; prefixDiagnostic: { minCosine: number; meanCosine: number } | null; updatedRows: number; }
+export interface EmbedArgs { owner: VectorOwnerKind; mode: "missing" | "all"; batchSize: number; limit?: number; dryRun: boolean; }
+export interface EmbedReport { owner: VectorOwnerKind; candidates: number; embedded: number; skipped: number; failed: number; busyWaits: number; }
+export function embeddingText(kind: VectorOwnerKind, row: { title: string; body?: string; situation?: string;
+  action?: string; outcome?: string; lesson?: string }): string;
+//  knowledge: `${title}\n${body}`（旧版のfinalizeと同じ。旧content_hashの式と一致を確認済み）
+//  episode:   [title, situation, action, outcome, lesson] の空でないものを "\n" で連結
+export function verifyLegacyVectors(deps: IndexingDeps, args: VerifyLegacyArgs): Promise&lt;VerifyLegacyReport&gt;;
+export function embedMissing(deps: IndexingDeps, args: EmbedArgs): Promise&lt;EmbedReport&gt;;</code></pre>
+  <ul>
+    <li>
+      検証：<code>origin='legacy_import'</code>かつ<code>verification='unverified'</code>の知識（vectorの<code>content_digest</code>が知識の<code>content_digest</code>と一致するものに限る）から、<code>sha256Hex(id)</code>の昇順で<code>sampleSize</code>件を決定的に選び、<code>embeddingText</code>を<code>passage</code>で埋め込み、保存済みベクトルとのcosineを取る。最小値≥<code>thresholdMin</code>（0.995）かつ平均≥<code>thresholdMean</code>（0.999）で合格。合格なら1回の<code>store.write</code>で、標本を選んだ母集団に属する<code>unverified</code>の旧ベクトルを<code>verified</code>にし、不合格なら<code>mismatch</code>にする（孤児vector、標本選択後に入った行、本文が変わった行は巻き込まない。母集団か標本が0件なら何も更新しない）。どちらも<code>recordVerificationRun</code>する。不合格のときは同じ標本を<code>"passage: " + text</code>で埋め込んだcosineを<code>prefixDiagnostic</code>に入れ（前置きの二重・欠落の切り分け）、reportに<code>vectors:embed --owner knowledge --all</code>を勧める文言を出す。<code>--dry-run</code>は書かない。閾値は<strong>未検証</strong>の仮の値。
+    </li>
+    <li>
+      補充：<code>missing</code>は対象表のactive行のうち、このspaceのベクトルがないか、<code>content_digest</code>が違うか、<code>mismatch</code>／<code>stale</code>の行。<code>all</code>はすべてのactive行。<code>batchSize</code>件ずつembedし、batchごとに1回の<code>store.write</code>で<code>origin='larm'</code>、<code>verification='verified'</code>として保存。<code>larm_busy</code>は<code>retryAfterMs</code>だけ<code>sleep</code>して同じbatchを再試行（1
+      batchにつき最大5回、超えたら<code>failed</code>を数えて次へ）。<code>larm_provider_conflict</code>、<code>larm_embedding_space_mismatch</code>、<code>larm_not_configured</code>、<code>larm_token_missing</code>は即座に止める。3
+      batch連続で失敗したら、保存済みの分を残して<code>embed_aborted</code>で止める。commandは<code>failed &gt; 0</code>や停止のとき終了コード1を返し、<code>vectors:verify-legacy</code>は不合格のとき1を返す。閾値は(0,
+      1]の範囲だけを受け付ける。
+    </li>
+    <li>
+      <strong>テスト</strong
+      >：fixtureの<code>LarmEmbeddingClient</code>（決定的なベクトルを返す偽物）で、合格・不合格・prefix診断、標本の決定性、dry-run、補充のmissing判定、busyの再試行と上限、即時停止のcode。
+    </li>
+    <li><strong>受入</strong>：<code>bun run test:domain -- indexing</code>が成功。</li>
+  </ul>
+
+  <h3>N1-E 評価</h3>
+  <ul>
+    <li>
+      <strong>目的</strong
+      >：5.8の<code>runEvaluation</code>、旧採点器の移植、指標を実装し、評価集合の初版を作る。
+    </li>
+    <li>
+      <strong>書いてよい</strong
+      >：<code>api/domains/evaluation/**</code>（<code>contracts/**</code>を除く）、<code>eval/sets/coding-known-item-v1.jsonl</code>。
+    </li>
+    <li><strong>禁止</strong>：上記以外のすべて。</li>
+    <li>
+      <strong>評価集合の作り方</strong
+      >：snapshotを読み取り専用で開き、active知識からtype（rule／procedure）とpolarityで層別に60件を選ぶ。各件について、本文を読んで日本語の問いを1つ書く（<code
+        >paraphrase</code
+      >
+      30件：titleの3文字以上の連続部分を含まない言い換え、<code
+        >question</code
+      >
+      20件：作業中に出る自然な疑問文、<code>keyword</code>
+      10件：短い語の組）。その知識を<code>grade:3</code>とし、snapshotを<code>LIKE</code>で探して同じ主張の重複を見つけたら<code>grade:2</code>で足す。<code>labelSource</code>は<code>agent-draft</code>、<code>spaces</code>は<code>["coding"]</code>。問いにrepo名、path、人名、秘密に見える文字列を書かない。fileに知識の本文を書かない（refとqueryだけ）。
+    </li>
+    <li>
+      <strong>テスト</strong
+      >：schemaの受理と拒否、指標の手計算との一致、<code>legacyScoreText</code>の旧testの2例と、英語・記号・n-gram切り詰め（48個）の例、<code>dynamicScore</code>の加算、偽の<code>SearchService</code>を使った<code>runEvaluation</code>のreport形、未解決refの除外、<code>eval/sets/coding-known-item-v1.jsonl</code>の全行がschemaに通ること。
+    </li>
+    <li><strong>受入</strong>：<code>bun run test:domain -- evaluation</code>が成功。</li>
+  </ul>
+
+  <h2>8. 共有ファイルと統合手順（orchestratorが行う）</h2>
+  <ul>
+    <li>
+      共有ファイル：<code>package.json</code>、<code>bun.lock</code>、<code>bunfig.toml</code>、<code>tsconfig.json</code>、<code>.oxlintrc.json</code>、<code>.oxfmtrc.json</code>、<code>scripts/**</code>、<code>api/application/**</code>、<code>api/infrastructure/**</code>、各domainの<code>contracts/**</code>と<code>repository/migrations.ts</code>、<code>spec/docs/README.html</code>、<code>spec/docs/.archived/ARCHIVE.html</code>。N0のあとはorchestratorだけが編集する。N1のworkerが変更を必要としたら止まって報告する。
+    </li>
+    <li>
+      並行前：<code>git status --short</code>で汚れたfileを確認し、workerに渡さない。並行後：各workerの変更が自分の範囲だけにあることを<code>git status --short</code>で確かめる。
+    </li>
+  </ul>
+  <h3>I1 文書の整理（N0のあと、いつでも）</h3>
+  <ol>
+    <li>
+      <code>spec/docs/</code
+      >直下に残すもの：<code>README.html</code>、<code>contextstill-v2-n0-n1-implementation-plan.html</code>（本書）、<code>eumenes-knowledge-base-research-2026-10-29.html</code>、<code>eumenes-knowledge-map-proposal-2026-10-29.html</code>、<code>saaa-personal-episode-contract.html</code>、引き継ぐ契約の<code>llm-provider-busy-503-contract.html</code>、<code>larm-public-profile-discovery-contextstill.html</code>、<code>contextstill-typed-memory-mcp-design.html</code>、<code>settings-connections-contract-2026-10-04.html</code>、<code>codex-research-contract-2026-10-04.html</code>、<code>deepstill-v1-integration-design.html</code>、<code>wiki-cli-contract.html</code>、<code>context-compile-repository-isolation-improvement-plan.html</code>、<code>repository-isolation-first-product-hardening-plan.html</code>、<code>assets/</code>、<code>pub/</code>。
+    </li>
+    <li>
+      上記以外の<code>spec/docs/*.html</code>を<code>git mv</code>で<code>spec/docs/.archived/</code>へ移す（新しい3文書は未trackedなので対象外）。
+    </li>
+    <li>
+      移した文書から残した文書や<code>assets/</code>への相対linkに<code>../</code>を足し、<code>README.html</code>と<code>ARCHIVE.html</code>の索引を直し、本書の行を足す。<code>README.html</code>の既存の未commit変更は保つ。
+    </li>
+    <li>
+      <code>bun run spec:fix</code>、<code>bun run spec:check</code>。
+    </li>
+  </ol>
+  <h3>I2 統合（N1-AからN1-Eのあと）</h3>
+  <ol>
+    <li><code>bun run verify</code>（全体の唯一の通し実行）。</li>
+    <li>
+      既定のDB（<code>data/context-still.sqlite3</code>）へ<code>bun run import:legacy -- --snapshot ~/Code/contextStill-db-backup-20261029/context-still-core.sqlite</code>を2回実行し、2回目が変更0件であること、件数と由来の集計を記録する。
+    </li>
+    <li>
+      <code>bun run eval:search -- --set eval/sets/coding-known-item-v1.jsonl --systems legacy-lexical,legacy-query-first,v2-hybrid --lanes fts,short</code
+      >を実行し、reportのRecall@10、MRR@10、nDCG@10、勝敗を記録する。N1の「旧版より再現率が高い」は、この値とownerによるLARM込みの再測定で判断する（verifyの合否には含めない）。
+    </li>
+    <li>
+      ownerへ残す作業：<code>bun run settings:larm -- --base-url &lt;LARMのURL&gt;</code>、<code>LARM_API_TOKEN</code>を設定して<code>bun run vectors:verify-legacy</code>、不合格なら<code>bun run vectors:embed -- --owner knowledge --all</code>、Episodeは<code>bun run vectors:embed -- --owner episode</code>、<code>--lanes fts,short,vector</code>で再評価、<code>bun run start</code>での起動確認。
+    </li>
+  </ol>
+
+  <h2>9. N2以降へのhook</h2>
+  <ul>
+    <li>
+      <code>knowledge_items.layer</code
+      >と<code>status='superseded'</code>、<code>SearchRequest.layers</code>：正本ができたら既定を<code>["canonical"]</code>へ切り替え、atomは根拠に回す。
+    </li>
+    <li><code>knowledge_evidence.target_kind='atom'</code>：正本から原子知識への根拠。</li>
+    <li>
+      MCPの<code>themes</code>、<code>depth</code>、<code>theme</code>、<code>warnings</code>、<code>route.via</code>：N3でテーマ、展開、矛盾の注意を入れる。schemaは変えずに値を埋める。
+    </li>
+    <li>
+      <code>usage_events.channel='mcp'</code
+      >と<code>verdict='presented'</code>：N3の<code>co_used</code>と<code>knowledge_feedback</code>。
+    </li>
+    <li>
+      map表（<code>map_clusters</code>、<code>map_cluster_members</code>、<code>map_edges</code>、<code>map_facet_concepts</code>）はN2／N3で<code>map/0001-init</code>として足す。<code>facets_json</code>はN2のfacet正規化の入力になる。
+    </li>
+    <li>
+      <code>queue</code>は
+      handlerなしで置いてある。N2の再蒸留とN4の生成をここに載せる。
+    </li>
+  </ul>
+
+  <h2>10. リスク・未検証・ownerへの質問</h2>
+  <h3>リスクと未検証</h3>
+  <ul>
+    <li>
+      旧ベクトルが旧embedding
+      daemon（127.0.0.1:44512）で作られていた場合、LARMとrevisionや前置きの扱いが違い、検証が不合格になりうる。その場合は約1万件を埋め込み直す。<code>/v1/embed</code>がserver側で前置きを付けるか、1回の最大件数は未検証。
+    </li>
+    <li>
+      trigramは3文字未満を引けない。2文字語はshort
+      laneで補うが、1文字語は捨てる。日本語の分割は<code>Intl.Segmenter</code>に依存する。
+    </li>
+    <li>
+      原記録が消えたvibe
+      memoryに由来する知識が約4,300件ある（<code>source_missing</code>）。根拠を辿れない知識の扱いは、N2の再蒸留で決める必要がある。
+    </li>
+    <li>
+      評価集合はagentが書いた初版で、知識1件から問いを作る方式のため語彙一致に有利に偏る。ownerの見直しが必要。旧採点器の同点順は未検証。
+    </li>
+    <li>
+      <code>bun install</code
+      >はregistryへの接続か、Eumenesと同じ版のcacheを必要とする。<code>node_modules</code>は旧版の中身から入れ替わる（<code>legacy/v1</code>の<code>bun.lock</code>から復元できる）。<code>spec:check</code>は<code>bunx</code>でspec-htmlを使う。
+    </li>
+    <li>port 39181の空きは未確認。</li>
+    <li>
+      queueはEumenesのものを写すだけで、N1では使わない。Eumenes側のqueueの前提（loggerなど）を縮めたことで差が出うる。retention（<code>pruneInTransaction</code>）はどこからも呼ばれておらず、完了したjobも<code>dedupe_key</code>を持ち続ける。queueを使い始めるN2で、定期実行に繋ぐ。
+    </li>
+    <li>
+      テストの安全装置は<code>Bun.fetch</code>を塞げない（書き換え不可のproperty）。製品codeから<code>Bun.fetch</code>を呼ばないこと。<code>globalThis.fetch</code>、<code>node:http</code>／<code>https</code>／<code>http2</code>／<code>net</code>／<code>tls</code>／<code>dgram</code>、<code>Bun.serve</code>／<code>listen</code>／<code>connect</code>／<code>udpSocket</code>、<code>WebSocket</code>は塞いでいる。
+    </li>
+  </ul>
+  <h3>ownerへの質問（作業は止めない。既定で進める）</h3>
+  <ol>
+    <li>
+      MCPの既定spacesは方針どおり<code>general</code>と<code>eumenes</code>にした。N1のdataは<code>coding</code>だけなので、Eumenesは<code>spaces:["coding"]</code>を渡さない限り何も得られない。評価のあとで既定に<code>coding</code>を含めるか。
+    </li>
+    <li>
+      draft
+      428件をgate判定で<code>active</code>にした。人手の確認を挟むか。
+    </li>
+    <li>
+      旧<code>repo</code>
+      scopeで<code>repo_key</code>も<code>repo_path</code>もない行（分類器がrepoを決められなかった行：知識6,941件、Episode
+      843件）を<code>global</code>とした。repo固有の内容が混ざっていないかを確かめる手段はN2のクラスタリングまでない。一般知識として扱ってよいか（2026-10-30改訂。<code>repo_path</code>のある行はrepo
+      scopeにした）。
+    </li>
+    <li>
+      公開LP（<code>docs/</code>、<code>github-pages/</code>）は旧版の説明のまま残した。いつ書き換えるか。<code>SECURITY.md</code>なども旧版の記述が残る可能性がある。
+    </li>
+    <li>
+      評価集合（queryとrefだけ）をtrackedにした。公開repoに置きたくなければ<code>data/eval/</code>へ移す。
+    </li>
+  </ol>
+
+  <h2>11. 実施結果（2026-10-30）</h2>
+  <p>
+    N0、N1-AからN1-E、I1、I2を実施した。独立レビューを1回（security、取り込みとベクトル、検索と評価の3観点）行い、指摘を1回でまとめて直した。すべて未commit。serverの起動とlive
+    LARMへの接続はしていない。
+  </p>
+  <h3>検証</h3>
+  <ul>
+    <li>
+      <code>bun run verify</code>：format:check、lint、typecheck（160
+      files）、boundaries（153 files）、test（336件、失敗0）、spec:check、のすべてが成功。
+    </li>
+    <li>
+      既定のDB（<code>data/context-still.sqlite3</code>）への取り込み：1回目は全表の件数が5.7節と一致（vibe
+      19,730、sources 178、断片 2,260、Episode 14,160、知識 9,579、利用実績 87,180、ベクトル
+      9,579）。規則をv2に直した後の再取り込みで、知識、Episode、sourcesの全行が<code>updated</code>になり、続く実行は全表で<code>inserted=0, updated=0</code>。1回の取り込みは約20秒、変更なしの再実行は約10秒。
+    </li>
+    <li>
+      取り込み後の状態：知識はactive 9,530（draft 428はgateを全件通過）、retracted
+      49。scopeは知識がrepo 2,575・global 7,004、Episodeがrepo 13,317・global 843。由来はresolved
+      3,655、external 806、source_missing 5,062、unresolved
+      56。ベクトルは9,579件すべて<code>legacy_import</code>／<code>unverified</code>（stale・invalid
+      0）。
+    </li>
+  </ul>
+  <h3>評価（60問、k=10、vectorなし、<code>--lanes fts,short</code>）</h3>
+  <table>
+    <caption>
+      Table: 評価集合coding-known-item-v1での検索の比較
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">system</th>
+        <th scope="col">Recall@10</th>
+        <th scope="col">MRR@10</th>
+        <th scope="col">nDCG@10</th>
+        <th scope="col">正解なし</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <code>legacy-lexical</code
+          >（旧<code>native_knowledge</code>）
+        </td>
+        <td>0.021</td>
+        <td>0.025</td>
+        <td>0.020</td>
+        <td>58</td>
+      </tr>
+      <tr>
+        <td>
+          <code>legacy-query-first</code
+          >（旧<code>context_compile</code>の並べ方）
+        </td>
+        <td>0.321</td>
+        <td>0.245</td>
+        <td>0.264</td>
+        <td>39</td>
+      </tr>
+      <tr>
+        <td><code>v2-hybrid</code>（fts、short）</td>
+        <td>0.450</td>
+        <td>0.303</td>
+        <td>0.332</td>
+        <td>31</td>
+      </tr>
+      <tr>
+        <td><code>v2-hybrid</code>（ftsだけ）</td>
+        <td>0.429</td>
+        <td>0.298</td>
+        <td>0.325</td>
+        <td>33</td>
+      </tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>
+      <code>legacy-query-first</code
+      >に対する勝敗はv2の15勝7敗38分け。未解決のref・到達できないrefは0件。style別のRecall／MRRは、paraphraseでv2
+      0.46／0.33・旧0.24／0.19、keywordで0.50／0.50・0.50／0.42、questionで0.41／0.17・0.35／0.24（questionのMRRは旧版のほうが高い）。
+    </li>
+    <li>
+      レビュー前の構成（<code>ftsTerms</code>最大16、short
+      laneに網羅条件なし）は、同じ取り込みと旧評価集合でfts＋shortがRecall 0.408・MRR
+      0.208と、fts単独（0.444・0.363）より悪かった。5.5節の改訂（上限32、ひらがな2文字語の除外、網羅条件）で逆転した。
+    </li>
+    <li>
+      評価集合は、scope規則の改訂で正解がrepo
+      scopeになったrule/negativeの10問を選び直した。agentが書いた初版で、ownerの見直しは済んでいない。「旧版より再現率が高い」の最終判断は、ownerがLARMを接続した後の<code>--lanes fts,short,vector</code>での再測定で行う。reportは<code>data/eval/reports/2026-10-30-final-fts-short.json</code>。
+    </li>
+  </ul>
+  <h3>レビューで直したもの</h3>
+  <ul>
+    <li>
+      取り込み：repo固有の知識・Episodeがglobalになる規則（high）、wiki_fileの由来の誤結合、規則版をdigestへ入れる（<code>legacy-import.v2</code>）、LARM由来のベクトルを旧ベクトルで上書きしない、未取り込みsourceの断片のskip、非activeになったEpisodeの<code>retracted</code>化、非空の<code>-wal</code>を持つsnapshotの拒否、usageの変化の計数、取り込み先から消えた行の復元。
+    </li>
+    <li>
+      検索：<code>ftsTerms</code>の上限32、short
+      laneの雑音（ひらがな2文字語の除外と網羅条件）、vector
+      laneで<code>mismatch</code>／<code>stale</code>と本文の変わった行のベクトルを使わない、不要な<code>unverifiedCount</code>の計算をやめる。
+    </li>
+    <li>
+      ベクトル：検証の母集団と一括更新を本文の一致する母集団に限る、空の標本で何も更新しない、補充を3
+      batch連続の失敗で止める、commandの終了コードと閾値の範囲検査。
+    </li>
+    <li>
+      評価：<code>legacy-query-first</code>、<code>unreachableRefs</code>、<code>byStyle</code>、<code>winsVsQueryFirst</code>、旧版の同点順。
+    </li>
+    <li>
+      基盤・security：テストでの外部接続の遮断の拡大、LARMの設定変更時に接続を作り直す、接続の確立を呼び出し元のsignalから切り離す、LARMの応答のstream上限、AES-GCMのtag長とIV長の固定、鍵dirの権限を勝手に変えない、ISO時刻の暦日の検証、予約pathをrealpath後にも照合しlock名を正規化する、flockのerrnoの区別とfdの解放、ベクトルのbyte数の検査、boundaries検査の抜け（<code>require</code>、<code>import.meta.resolve</code>、test
+      dirの免除の範囲）。
+    </li>
+    <li>
+      MCP：search_knowledgeで出典の本文を読まない、同時実行の拒否でrate
+      limitのtokenを減らさない、evidenceのurlからuserinfo・query・hashを除く、<code>cutChars</code>の全文展開をやめる。
+    </li>
+  </ul>
+  <h3>ownerに残す作業</h3>
+  <ol>
+    <li>
+      <code>bun run settings:larm -- --base-url &lt;LARMのURL&gt;</code
+      >、<code>LARM_API_TOKEN</code>を設定して<code>bun run vectors:verify-legacy</code>。不合格なら<code>bun run vectors:embed -- --owner knowledge --all</code>。Episodeは<code>bun run vectors:embed -- --owner episode</code>。
+    </li>
+    <li><code>--systems legacy-lexical,legacy-query-first,v2-hybrid --lanes fts,short,vector</code>で再評価。</li>
+    <li>
+      <code>bun run start</code>での起動確認（port
+      39181）と、EumenesからのMCP接続。
+    </li>
+    <li>
+      評価集合60問の見直し（<code>labelSource</code>を<code>owner</code>へ）。
+    </li>
+  </ol>
+</article>

@@ -1,0 +1,219 @@
+<article lang="ja">
+  <h1>DeepStill手動調査画面の実装計画</h1>
+  <p>
+    作成日：2026-09-27。目的は、利用者がContextStillでテーマを入力し、DeepStillによる探索を開始して、途中経過と出典付きの調査結果を同じ画面で受け取れるようにすることである。最初の版は手動調査だけを扱い、既存Queueからの自動委託やKnowledge・Episodeとの連携を行わない。
+  </p>
+
+  <h2>1. 現状と今回の判断</h2>
+  <p>
+    ContextStillにはResearchEngine
+    V1のschema、port、相互fixtureがあるが、実行用adapter、Broker、調査記録、API、画面はない。DeepStillには単体画面と<code>/api/jobs</code>があるが、このAPIはContextStill所有のResearchEngine
+    V1
+    contractを実装していない。DeepStillの現行workerは設定されていればContextStillの<code>search_knowledge</code>を利用するため、今回の手動調査ではKnowledge参照を明示的に無効化する必要がある。
+  </p>
+  <p>
+    旧Decisionの位置に「調査」を主ナビゲーションとして置き、テーマ作成・履歴・結果閲覧を一つの画面にまとめる。利用者が調査指示を作成すること自体が今回の主操作なので、Queueの一部として隠さない。進捗の表示元はContextStillに永続化した調査記録とし、ブラウザーの一時状態を実行状態の正本にしない。
+  </p>
+  <p>
+    関連する既存資料は<a href="../deepstill-v1-integration-design.html">DeepStill V1統合設計</a>と<a
+      href="decision-removal-work-plan.html"
+      >Decision撤去方針</a
+    >。前者のQueue委託・Result Ingress案は後続段階であり、今回の手動調査に親Queueを作らない。
+  </p>
+
+  <h2>2. 範囲</h2>
+  <h3>今回行うこと</h3>
+  <ul>
+    <li>テーマ入力、調査開始、履歴一覧、実行状態、結果閲覧、進行中調査の取消しを提供する。</li>
+    <li>DeepStillとの認証付き手動調査接続、冪等なsubmit、status/result取得を実装する。</li>
+    <li>
+      調査テーマ、依頼hash、DeepStill job ID、状態、エラー、result
+      hash、表示用resultをContextStillへ永続化する。
+    </li>
+    <li>report、claim、evidence、source locator、制約、未解決点、利用量を結果に応じて表示する。</li>
+    <li>画面に接続不可、調査失敗、部分成果、根拠不足を区別して表示する。</li>
+  </ul>
+  <h3>今回行わないこと</h3>
+  <ul>
+    <li>
+      ContextStillのKnowledge検索・候補登録・自動採用、Episodeの読取・登録、context_compileとの連動。
+    </li>
+    <li>既存Queueからの自動委託、Queueのpause/resume、Finding/Coveringへの結果反映。</li>
+    <li>ContextStillのLLM Gateway、外部SourceConnector、DeepStillの全機能の画面移植。</li>
+    <li>調査結果からの自動再調査、会話型の追加質問、結果の編集・削除、複数利用者の共有。</li>
+  </ul>
+  <h3>禁止・境界</h3>
+  <ul>
+    <li>
+      既存のDecision機能や判断APIを別名で復活させない。調査結果は参考情報であり実行判断を返さない。
+    </li>
+    <li>
+      DeepStillの内部DB・型・migrationをContextStillへ取り込まない。DeepStillの単体<code>/api/jobs</code>をブラウザーへ直接公開しない。
+    </li>
+    <li>
+      外部通信中にSQLite writerのtransactionやQueue lockを保持しない。管理画面のBun
+      processからmanaged SQLiteへ直接書き込まない。
+    </li>
+    <li>
+      LLMや外部source由来のreport、URL、引用文を命令として実行しない。結果を自動でKnowledgeやEpisodeへ保存しない。
+    </li>
+  </ul>
+
+  <h2>3. 利用者の流れと画面</h2>
+  <ol>
+    <li>
+      「調査」を開く。左側に過去のテーマと状態、中央に新規テーマ入力と選択中の調査を表示する。
+    </li>
+    <li>
+      利用者がテーマを入力して「調査を開始」を押す。初版の必須入力はテーマだけとし、空白や長さ超過を送信前とAPI側の両方で拒否する。モードは実調査の<code>live</code>を明示し、mockを通常UIへ出さない。
+    </li>
+    <li>
+      作成直後にContextStillの調査IDへ遷移する。画面を閉じても調査は続き、再表示時は同じIDの永続化された状態を読む。
+    </li>
+    <li>
+      進行中は「送信待ち」「探索中」「結果取得中」を表示する。利用者には最終同期時刻と接続状態を示し、DeepStillへの一時的な接続不良を調査失敗と混同しない。
+    </li>
+    <li>
+      終了時は「完了」「部分成果」「失敗」「取消し」を区別する。利用可能な結果がある場合はreport本文、主張と引用、出典、制約、未解決点を表示する。引用を選ぶと対応するsource情報へ移動できる。
+    </li>
+    <li>
+      進行中の調査は取消しを要求できる。要求の受理とDeepStill側で停止が確定した状態を分けて表示する。
+    </li>
+  </ol>
+  <p>
+    結果の各主張には根拠の有無を示す。URLを持たないsourceも契約上あり得るため、URLがない場合はsource
+    IDとlocatorを表示する。DeepStillが検証したquote
+    hashと、ContextStillが原文全体を独立検証したかは分けて表現し、後者を実施していない引用を「原文確認済み」と表示しない。利用可能なreportがない失敗・取消しでは空のレポートを作らない。
+  </p>
+
+  <h2>4. 実行境界とデータの流れ</h2>
+  <pre><code>ContextStill 調査画面
+  → 管理API（既存admin sessionで認証）
+  → 手動調査recordをresident writerで保存
+  → BrokerがDeepStillのResearchEngine V1 adapterへsubmit / poll / result
+  → contract・hashを検証してresultを保存
+  → 管理APIの履歴・詳細を画面が読む</code></pre>
+  <p>
+    手動調査は既存Queueのjobではなく独立した調査recordとして保存する。最低限、ContextStill調査ID、テーマ、作成・更新時刻、request
+    hash、idempotency key、DeepStill job ID、DeepStillのterminal
+    status、同期状態、最終エラー、result
+    hash、検証済みresultを持つ。statusの正本はDeepStillの永続job、ContextStillのrecordは最後に確認できた状態と通信状況を保存する。UIはこのrecordだけから表示を組み立てる。
+  </p>
+  <p>
+    初版の依頼はテーマ、liveモード、strategy、budget、冪等keyと依頼hashからなる手動調査専用形式とする。DeepStillのKnowledgeProviderはこのjob種別では呼ばず、ContextStillのKnowledge・Episodeへ結果を書き込まない。テーマ以外のstrategyとbudgetはサーバーで上限付きの既定値を選び、UIには実行前に最大時間・検索回数・費用上限を示す。
+  </p>
+  <p>
+    ContextStill側は固定設定されたlocalhostのDeepStill接続先だけを使う。ユーザー入力を通信先URLにしない。ブラウザーはContextStillの管理APIだけを呼ぶ。DeepStill側には単体UI用APIとは別の薄いV1
+    adapterと専用認証境界を追加し、readiness、submit、detail、cancelを実装する。初版はACKを要求せず、ContextStillへ保存したresultを画面の閲覧元とする。後からDeepStillのjobが削除されても保存済みresultは読めるようにする。
+  </p>
+  <p>
+    作成の保存と外部submitは分ける。submitが成功してContextStillへの応答保存前に停止しても、同じidempotency
+    keyとrequest hashで再送して同じDeepStill
+    jobへ復帰する。取得した結果は手動調査の入力schema、source本文hash、引用範囲、source
+    URL、reportとclaim/evidenceの参照整合、応答サイズを確認してから保存する。保存成功が確認できるまで完了表示にしない。pollや保存が失敗したときは再起動後に再開できる状態を残す。
+  </p>
+
+  <h2>5. 公開APIと状態</h2>
+  <p>
+    ContextStill管理APIには調査作成、一覧、詳細、取消しの入口を追加する。すべて既存admin
+    sessionを要求し、作成には同一操作の二重送信を防ぐclient request
+    keyを使う。作成応答はContextStill調査IDを返し、処理完了を待たない。一覧・詳細はDeepStillへ同期アクセスせず、永続recordを読む。初版の画面更新は定期取得とし、SSEは必要になった場合に追加する。
+  </p>
+  <p>
+    実行状態は「作成済み→送信中→待機中／探索中→結果取得中→完了／部分成果／失敗／取消し」とする。接続障害は別の同期状態「接続待ち」で表現し、DeepStillのterminal
+    statusを書き換えない。DeepStillが未起動・protocol不一致・認証失敗なら新規作成を受け付けた後に無期限で放置せず、原因と再試行可能性をrecordへ保存する。最大待機時間を超えた場合は調査を終了扱いにする前にDeepStill側の状態を再確認し、不明なら「状態確認が必要」と表示する。
+  </p>
+  <p>
+    取消しは「要求中」と「停止済み」を区別し、DeepStillのterminal応答を確認してから停止済みにする。取消しと完了が競合した場合はDeepStillの確定状態と保存済みresultを優先し、結果を捨てない。同じresult
+    hashの再取得は重複保存せず、異なるhashで既存の確定resultを上書きしない。
+  </p>
+
+  <h2>6. 実装順序</h2>
+  <ol>
+    <li>
+      <strong>境界fixtureとベースライン。</strong
+      >現行DeepStillのjob作成・状態・reportと既存ResearchEngine V1
+      fixtureを照合し、差分を記録する。両repositoryのtypecheck・targeted
+      test・現行調査動作を記録する。
+    </li>
+    <li>
+      <strong>DeepStill側adapter。</strong
+      >手動調査専用のtransport、専用認証、冪等submit、detail/cancel、manual
+      jobでのKnowledge参照無効化を実装する。mockとliveを取り違えないfixtureを追加する。
+    </li>
+    <li>
+      <strong>ContextStill側の永続化とBroker。</strong>手動調査record、resident writer
+      command、DeepStill
+      client、poll/recovery、result検証と保存を実装する。既存Queueへの接続は行わない。
+    </li>
+    <li>
+      <strong>管理APIと画面。</strong
+      >作成・一覧・詳細・取消しAPI、調査ルート、ナビ、入力、履歴、状態、出典付き結果を追加する。画面は永続recordを再取得する。
+    </li>
+    <li>
+      <strong>結合確認。</strong
+      >DeepStillを別serviceとして起動し、実際のテーマ一件を開始して完了結果を閲覧する。再起動、接続断、取消し、部分成果も確認する。
+    </li>
+  </ol>
+
+  <h2>7. 検証と完了条件</h2>
+  <ul>
+    <li>
+      deterministic test：同じ作成key・request
+      hashの再送で一件だけ作られ、異なるhashは競合として拒否される。
+    </li>
+    <li>
+      deterministic test：認証失敗、通信断、malformed result、改変source
+      hash、参照切れ、上限超過を成功結果として保存しない。通信断から復帰したら同じjobを追跡する。
+    </li>
+    <li>
+      deterministic
+      test：completed、partial、failed、cancelledを区別して表示し、保存失敗時に完了表示しない。
+    </li>
+    <li>
+      deterministic test：手動調査ではContextStillのKnowledge
+      MCPを呼ばず、Knowledge・EpisodeのDBやQueueを更新しない。
+    </li>
+    <li>
+      画面確認：テーマ入力から結果まで到達し、リロードやContextStill再起動後も履歴・状態・report・引用を読める。出典不明と接続障害を誤って確定情報として表示しない。
+    </li>
+    <li>
+      検証コマンド：両repositoryのtargeted
+      testとtypecheck、ContextStillの<code>bun run verify</code>、SQLite writer
+      ownership検証、必要なRust testを実行する。live
+      providerを使う結合確認は別laneとし、credentialなしのdeterministic testを必須にする。
+    </li>
+  </ul>
+  <p>
+    完了条件は、利用者がContextStillの画面だけでテーマを一件開始し、実行状況を追い、DeepStillから得た結果と出典を再起動後も閲覧できることである。Knowledge・Episode・Queueに新しい書込みが発生しないことも同時に確認する。
+  </p>
+
+  <h2>8. 運用条件と後続判断</h2>
+  <p>
+    DeepStillとの接続はloopback
+    HTTPと32文字以上の共有secretに限定する。初版の保存済みresultは自動削除せず、履歴の削除・保持期間は利用状況を測って後続で定める。接続障害は同期エラーとして表示し、10秒以上間隔を空けて再試行する。新規の外部調査は15分・検索25回・費用1
+    USDを上限とする。追加ライブラリや全体的なQueue再設計は初版の前提にしない。
+  </p>
+  <h2>9. 初版実装の境界</h2>
+  <p>
+    手動調査のLLM呼び出しはContextStillのSettingsにある<code>DeepStill manual research</code>ルートを通す。初版は直接指定したLocal
+    LLM
+    endpointだけを許可し、Codexやfallbackへは切り替えない。DeepStillの単体画面用<code>LLM_PROVIDER</code>には依存せず、調査ジョブは<code
+      >contextstill</code
+    >
+    providerを固定する。検索はDeepStillのdirect searchを使う。Local
+    LLMの接続情報とsecretはContextStillに保持し、DeepStillのジョブDBには保存しない。
+  </p>
+  <p>
+    初版は利用者が手動で開始する調査に限定し、DeepStillに認証付きの<code>/api/integrations/contextstill/manual/v1</code>を追加した。ContextStillはこのtransportから受けたjobとsourceを検証し、画面用resultを永続化する。ResearchEngine
+    V1の汎用transportと、Queue委託向けのsubmit/status/result
+    bundleはこの初版には接続していない。この差分を曖昧にせず、汎用Brokerの実装時には既存のResearchEngine
+    contractへadapterを移す。
+  </p>
+  <p>
+    手動調査の既定上限は15分、検索25回、費用1
+    USDとした。DeepStillの単体jobは独自のSQLiteに残り、ContextStillは表示に必要なreport・引用・source識別子を別のmanual
+    research recordへ保存する。ContextStillの実装対象はmanaged
+    SQLiteであり、PostgreSQLでの手動調査APIは今回未対応とする。
+  </p>
+</article>

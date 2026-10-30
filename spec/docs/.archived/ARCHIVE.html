@@ -19,4 +19,291 @@
     </li>
   </ul>
   <p>Archived on 2026-08-15.</p>
+  <h2 id="v2-rebuild-2026-10-30">2026-10-30：v2の作り直しに伴う移動</h2>
+  <p>
+    ContextStillをTypeScriptで作り直す（v2）ため、旧版（Rust
+    daemon時代）の計画・調査・証拠67件を直下からここへ移した。旧版のcodeは<code>legacy/v1</code>ブランチと<code>v1-final</code>タグに残っており、これらの文書が指す実装はそこで読める。置換先は<a
+      href="../contextstill-v2-n0-n1-implementation-plan.html"
+      >ContextStill v2 N0・N1 実装計画</a
+    >と<a href="../eumenes-knowledge-map-proposal-2026-10-29.html">ContextStill 再構築の方針提案</a
+    >。個々の文書の冒頭には移動の理由を書き足していないので、この節を移動の記録とする。
+  </p>
+  <p>
+    文書が参照していた<code>spec/docs/pub/</code>の旧版のMarkdownは削除済みのため、linkを<code>legacy/v1</code>上のpathの表記に置き換えた。
+  </p>
+  <ul>
+    <li><a href="additional-five-improvements-results.html">追加5項目の改善結果</a></li>
+    <li>
+      <a href="codex-spark-queue-structure-2026-09-12.html"
+        >既存Codex SDKによるSpark・Muse・QwenのQueue分業：再調査と改訂案</a
+      >
+    </li>
+    <li>
+      <a href="context-compile-multifaceted-review.html"
+        >context compileの多角評価：検索・情報保持・運用信頼性</a
+      >
+    </li>
+    <li>
+      <a href="context-compile-repository-isolation-closeout-evidence.html"
+        >Context Compile Repository Isolation Closeout Evidence</a
+      >
+    </li>
+    <li>
+      <a href="context-compile-repository-isolation-t0-evidence.html"
+        >Context Compile Repository Isolation T0 Evidence</a
+      >
+    </li>
+    <li>
+      <a href="context-compile-v2-implementation-plan.html"
+        >context compile v2：根拠保持と共通SystemContextの実装計画</a
+      >
+    </li>
+    <li><a href="contextstill-utility-rag-concept.html">ContextStill Utility-RAG Concept</a></li>
+    <li>
+      <a href="contextstill-utility-rag-foundation-implementation-plan.html"
+        >ContextStill Utility-RAG Foundation Implementation Plan</a
+      >
+    </li>
+    <li>
+      <a href="contextstill-utility-rag-future-experiments.html"
+        >ContextStill Utility-RAG Future Experiments</a
+      >
+    </li>
+    <li>
+      <a href="covering-agentic-implementation-plan-2026-10-03.html"
+        >CoveringのAgentic実装計画：根拠の再利用・独立検証・採否確定</a
+      >
+    </li>
+    <li><a href="covering-logic-evaluation.html">Coveringロジック評価と改善候補</a></li>
+    <li><a href="covering-v2-implementation-plan.html">Covering v2 改善実装計画</a></li>
+    <li>
+      <a href="curation-identity-recovery-proposal-2026-09-11.html"
+        >Curationのidentity復元と再評価の改善案</a
+      >
+    </li>
+    <li>
+      <a href="curation-system-context-evaluation.html"
+        >Curation SystemContext評価：V1ベースラインとV2の判断契約</a
+      >
+    </li>
+    <li>
+      <a href="curation-v2-implementation-plan.html"
+        >Curation v2 実装計画：根拠を保持してLandscapeを自動整理する</a
+      >
+    </li>
+    <li><a href="decision-removal-work-plan.html">Decision全面撤去の作業手順書</a></li>
+    <li>
+      <a href="decision-responsibility-review-2026-09-20.html"
+        >Decisionの責務とSAAA連携の検討（2026-09-20）</a
+      >
+    </li>
+    <li><a href="deepstill-manual-research-v1-plan.html">DeepStill手動調査画面の実装計画</a></li>
+    <li>
+      <a href="episode-admin-list-investigation.html">Episode管理一覧の空表示と取得遅延の調査</a>
+    </li>
+    <li>
+      <a href="finalize-dynamic-embedding-resilience-design.html"
+        >finalizeDistille 動的Embedding耐障害化設計</a
+      >
+    </li>
+    <li>
+      <a href="finding-agentic-implementation-plan-2026-10-03.html"
+        >FindingのAgentic実装計画：共通実行層・根拠収集・候補引継ぎ</a
+      >
+    </li>
+    <li>
+      <a href="finding-agentic-replan-2026-10-03.html"
+        >Finding再設計案：32Kを目安に必要な情報を集め、成果が増えなければ終了する</a
+      >
+    </li>
+    <li>
+      <a href="finding-covering-agent-runtime-review-2026-10-04.html"
+        >Finding・Covering共通Agent実行層の実装レビュー</a
+      >
+    </li>
+    <li>
+      <a href="finding-covering-shared-agent-runtime-plan-2026-10-03.html"
+        >Finding・Covering共通実行層の設計とレガシー移行計画</a
+      >
+    </li>
+    <li><a href="finding-logic-review-2026-09-06.html">Findingロジックの評価と改善候補</a></li>
+    <li>
+      <a href="finding-v2-implementation-plan.html">Finding改善実装計画：候補の整合性と抽出品質</a>
+    </li>
+    <li>
+      <a href="improvement-backlog-validity-review-2026-09-12.html">改善案20件の妥当性評価</a>
+    </li>
+    <li>
+      <a href="improvements-completion-evidence-2026-09-13.html"
+        >改善実装の追加証拠と切替条件（2026-09-13）</a
+      >
+    </li>
+    <li>
+      <a href="keychain-read-failure-incident-2026-10-03.html"
+        >Keychain読込拒否による管理画面500の復旧</a
+      >
+    </li>
+    <li>
+      <a href="landscape-autonomous-curation-queue-evaluation.html"
+        >LANDSCAPE Autonomous Curation Queue Evaluation</a
+      >
+    </li>
+    <li>
+      <a href="landscape-curation-queue-high-level-spec.html"
+        >LANDSCAPE Curation Queue Implementation Specification</a
+      >
+    </li>
+    <li>
+      <a href="landscape-curation-queue-improvement-design.html"
+        >landscapeCuration Queue 改善設計</a
+      >
+    </li>
+    <li>
+      <a href="landscape-curation-queue-investigation-2026-09-09.html"
+        >landscapeCuration Queue 障害調査（2026-09-09）</a
+      >
+    </li>
+    <li>
+      <a href="larm-common-provider-adoption-2026-10-04.html">LARM共通手順へのProvider接続修正</a>
+    </li>
+    <li><a href="larm-consumer-canary-2026-09-11.html">LARM consumer Canary実行記録</a></li>
+    <li>
+      <a href="larm-dynamic-embedding-host-change-request.html"
+        >LARM 動的Embeddingホスト対応依頼書</a
+      >
+    </li>
+    <li>
+      <a href="larm-dynamic-provider-contextstill-implementation-plan.html"
+        >ContextStill LARM動的Provider実装計画</a
+      >
+    </li>
+    <li>
+      <a href="larm-e2e-verification-2026-09-21.html">修正版LARMのContextStillホストE2E検証</a>
+    </li>
+    <li>
+      <a href="larm-foreground-preemption-retry-design.html"
+        >LARM foreground preemptionを失敗にしないQueue再試行設計</a
+      >
+    </li>
+    <li>
+      <a href="larm-four-concurrent-queue-2026-10-03.html"
+        >LARM 接続を共有する4並列Queueの実装と反映状況</a
+      >
+    </li>
+    <li>
+      <a href="larm-queue-structured-output-integration-2026-09-11.html"
+        >LARM Queue構造化出力のContextStill側実装</a
+      >
+    </li>
+    <li>
+      <a href="larm-shared-connection-contract-audit.html"
+        >LARM共有connection統合：公開契約の照合と不足事項</a
+      >
+    </li>
+    <li>
+      <a href="larm-shared-connection-implementation-plan.html"
+        >LARM共有connection統合の実装計画：Terra引き継ぎ用</a
+      >
+    </li>
+    <li>
+      <a href="local-llm-harness-background-availability-change-request.html"
+        >local-LLM-harness Service Activity連携契約</a
+      >
+    </li>
+    <li>
+      <a href="local-llm-harness-contextstill-provider-live-activation-request.html"
+        >local-LLM-harness ContextStill Provider live配備・受入確認依頼書</a
+      >
+    </li>
+    <li>
+      <a href="maintainability-and-context-effectiveness-results.html"
+        >保守性とコンテキスト効果実証の改善結果</a
+      >
+    </li>
+    <li>
+      <a href="non-ci-follow-up-2026-09-13.html">CI・テストを除く残項目の修正（2026-09-13）</a>
+    </li>
+    <li>
+      <a href="positive-covering-rust-executor-closeout-evidence.html"
+        >Positive Covering Rust Executor Closeout Evidence</a
+      >
+    </li>
+    <li>
+      <a href="project-evaluation-2026-09-06.html"
+        >ContextStill 多角的プロジェクト評価 — 2026年9月6日</a
+      >
+    </li>
+    <li>
+      <a href="queue-context-window-investigation-2026-10-03.html"
+        >1回のQueue処理に必要なトークン予算（2026年10月3日）</a
+      >
+    </li>
+    <li><a href="queue-failure-audit-2026-09-09.html">Queue失敗残件調査（2026-09-09）</a></li>
+    <li>
+      <a href="queue-failure-incident-2026-09-20.html"
+        >Queue大量失敗インシデント調査（2026-09-20）</a
+      >
+    </li>
+    <li>
+      <a href="queue-failure-investigation-2026-10-04.html"
+        >全7Queueの失敗・停滞調査（2026年10月4日）</a
+      >
+    </li>
+    <li><a href="queue-larm-recovery-2026-09-11.html">LARM QwenへのQueue接続修正と稼働復旧</a></li>
+    <li>
+      <a href="queue-llm-token-usage-investigation-2026-10-03.html"
+        >全キューのLLMトークン使用量調査（2026年10月3日）</a
+      >
+    </li>
+    <li>
+      <a href="rust-runtime-closeout-implementation-plan.html"
+        >Rust Runtime Closeout Implementation Plan</a
+      >
+    </li>
+    <li>
+      <a href="secret-store-migration-contract-2026-09-12.html"
+        >秘密値保護の移行契約とconsumer調査</a
+      >
+    </li>
+    <li>
+      <a href="security-intelligence-integration-concept.html"
+        >Security Intelligence Integration Concept</a
+      >
+    </li>
+    <li>
+      <a href="settings-execution-concepts.html">設定の再整理：仕事の責務・実行先・Pool・LARM</a>
+    </li>
+    <li>
+      <a href="settings-larm-agentic-design-2026-10-04.html"
+        >LARM・Agentic処理に合わせた設定画面設計</a
+      >
+    </li>
+    <li>
+      <a href="shared-rust-build-environment-design.html"
+        >Tauri / Rust共通ビルド環境基盤：設計メモと段階的移行計画</a
+      >
+    </li>
+    <li>
+      <a href="sqlite-single-writer-external-io-isolation-implementation-plan.html"
+        >SQLite単一writer・外部I/O分離 実装計画</a
+      >
+    </li>
+    <li>
+      <a href="ui-refresh-remaining-proposals.html"
+        >残る4画面のUI案：Knowledge・Compile・Doctor・設定</a
+      >
+    </li>
+    <li><a href="ui-refresh-screen-plan.html">UI刷新の画面構成案：日常4画面と設定</a></li>
+    <li><a href="ui-screenshots.html">UIスクリーンショット一覧</a></li>
+    <li>
+      <a href="validated-improvements-first-implementation-evidence-2026-09-12.html"
+        >改善実装 第一段の変更と検証結果</a
+      >
+    </li>
+    <li>
+      <a href="validated-improvements-implementation-plan-2026-09-12.html"
+        >検証済み改善事項の実装計画</a
+      >
+    </li>
+  </ul>
 </article>

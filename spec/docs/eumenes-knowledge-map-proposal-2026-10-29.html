@@ -1,0 +1,683 @@
+<article lang="ja">
+  <h1>ContextStill 再構築の方針提案：知識マップとEumenes向け検索（2026-10-29）</h1>
+  <p>
+    ContextStillをTypeScriptで作り直し、Eumenesが検索して使う知識基盤にする方針を提案する。前提となる事実は<a
+      href="eumenes-knowledge-base-research-2026-10-29.html"
+      >現状調査</a
+    >にまとめた。本書は方針案であり、段階ごとの実装計画は別に作る。
+  </p>
+
+  <h2>決まっていること</h2>
+  <ul>
+    <li>Eumenesは、ContextStillの知識を<strong>検索して使う</strong>。</li>
+    <li>
+      Graphの目的は、<strong>検索で引いた知識に関連する知識を芋づる式に取ってくる</strong>ことにある。
+    </li>
+    <li>
+      <code>context_compile</code
+      >は、<strong>通常のコーディングエージェント向けの機能</strong>として残す。
+    </li>
+    <li>
+      重複と乱雑さは、<strong>良いクラスタリングと再蒸留</strong>で解消する。テーマに合わせた蒸留は残す。
+    </li>
+    <li>
+      <strong>コーディングエージェントの知識は残す。</strong>知識9,579件、Episode
+      14,160件、会話ログ19,730件を引き継ぐ。
+    </li>
+    <li>
+      <strong>TypeScriptで作り直し、Rustは排除する。</strong
+      >名前は<code>contextStill</code>のまま、同じリポジトリのmainで作り直す。
+    </li>
+    <li>
+      旧版はbranch <code>legacy/v1</code>とtag
+      <code>v1-final</code
+      >に退避済み（2026-10-29）。旧daemonは<code>~/Code/contextStill-legacy</code>から動き続けている。
+    </li>
+    <li>
+      <strong>Keychainは使わない。</strong>秘密情報の扱いを含め、必要な仕組みはEumenesを踏襲する。
+    </li>
+    <li>
+      旧版の384次元embeddingは、LARMが提供するembeddingと同じモデル（<code>intfloat/multilingual-e5-small</code>）である。
+    </li>
+  </ul>
+
+  <h2>提案の要約</h2>
+  <ol>
+    <li>
+      <strong>mainはEumenesと同じ構成で作り直す。</strong
+      >Bun、TypeScript、Hono、<code>bun:sqlite</code>、Zod
+      4、oxfmt／oxlint、<code>domains/&lt;name&gt;/{contracts,service,repository}</code>、依存境界の検査を使う。backendの単一processがSQLiteのwriterを持ち、Web・CLI・MCPはAPIを経由する。
+    </li>
+    <li>
+      <strong>秘密情報・LARM・ベクトル・queueはEumenesの方式に揃える。</strong>秘密はmaster
+      keyによるAES-256-GCMで暗号化してSQLiteに保存し、LARMのtokenは環境変数で受け取る。ベクトルはvector
+      spaceごとのFloat32 BLOBとして持ち、TSで内積を取る。
+    </li>
+    <li>
+      <strong>知識を3層に分ける。</strong
+      >旧版から引き継ぐ知識は<strong>原子知識</strong>として根拠に回し、クラスタ単位で再蒸留した<strong>正本知識</strong>と、それを束ねる<strong>テーマ</strong>を作る。検索とcompileの対象は正本とテーマにする。
+    </li>
+    <li>
+      <strong>知識マップはSQLiteのedge表1つで持つ。</strong
+      >正本知識、Episode、テーマをnodeとし、前提、支持、矛盾、置換、具体化、具体例、所属、共起の関係を、由来と確信度付きで保存する。
+    </li>
+    <li>
+      <strong>検索は「種を取る」と「芋づる式に広げる」の2段にする。</strong
+      >FTS5（trigram）、ベクトル、テーマ一致で種を取り、関係ごとの重みと深さ・予算の上限のもとで広げる。結果の1件ごとに、出てきた経路を返す。
+    </li>
+    <li>
+      <strong>移行は「先に取り込んで検索、後から生成」の順に進める。</strong
+      >まず旧DBを取り込み、整理して検索できるようにする。蒸留パイプラインとcompileはそのあとTSへ移植し、移植が済むまでは旧版が動き続ける。
+    </li>
+  </ol>
+
+  <h2>1. 全体像</h2>
+  <figure>
+    <pre class="mermaid">flowchart TB
+  subgraph LEG["旧版 legacy/v1（移行が済むまで稼働）"]
+    LDB["旧DB&lt;br/&gt;知識・Episode・会話ログ"]
+    LC["compile（コーディング向け）"]
+  end
+  subgraph NEW["新しい contextStill（main・TypeScript）"]
+    IMP["取り込み&lt;br/&gt;（旧DBのsnapshotから）"]
+    SRC["L0 根拠&lt;br/&gt;会話ログ・文書・Episode"]
+    ATOM["L1 原子知識"]
+    CAN["L2 正本知識"]
+    THEME["L3 テーマ + テーマ知識"]
+    MAP["知識マップ&lt;br/&gt;（edge表）"]
+    SEARCH["検索 + 芋づる展開"]
+    COMP["compile（後で移植）"]
+    PIPE["蒸留パイプライン（後で移植）"]
+  end
+  LDB --&gt; IMP
+  IMP --&gt; SRC
+  IMP --&gt; ATOM
+  PIPE --&gt; ATOM
+  SRC --&gt; PIPE
+  ATOM -- "クラスタリング + 再蒸留" --&gt; CAN
+  CAN --&gt; THEME
+  CAN --- MAP
+  THEME --- MAP
+  SRC --- MAP
+  MAP --&gt; SEARCH
+  CAN --&gt; COMP
+  SEARCH --&gt; EUM["Eumenes（MCP）"]
+  COMP --&gt; CODE["コーディングエージェント"]
+  LC --&gt; CODE
+</pre>
+    <figcaption>新旧の関係と、知識の3層、2つの利用経路</figcaption>
+  </figure>
+
+  <h2>2. 基盤：Eumenesと同じ形にする</h2>
+  <table>
+    <caption>
+      基盤の各要素と、踏襲するEumenesの実装
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">要素</th>
+        <th scope="col">方式</th>
+        <th scope="col">参考にするEumenesの実装</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">言語・道具</th>
+        <td>Bun 1.4.4、TypeScript、Hono、Zod 4.4.3、oxfmt 0.71.0／oxlint 1.86.0（タブ、80桁）</td>
+        <td><code>eumenes/package.json</code></td>
+      </tr>
+      <tr>
+        <th scope="row">構造</th>
+        <td>
+          <code>api/domains/&lt;name&gt;/{contracts,service,repository}</code>。domainごとの公開入口と、依存宣言の検査を置く
+        </td>
+        <td><code>eumenes/docs/domains.md</code></td>
+      </tr>
+      <tr>
+        <th scope="row">DB</th>
+        <td>
+          <code>bun:sqlite</code>。backendの単一processが、起動前のOS
+          lock、直列のwrite
+          queue、WAL、読み取り専用laneを持つ。Web・CLI・MCPはAPIだけを使い、DBを開かない
+        </td>
+        <td><code>eumenes/docs/domains.md</code>（SQLiteのwriter）</td>
+      </tr>
+      <tr>
+        <th scope="row">秘密情報</th>
+        <td>
+          master
+          keyは<code>CONTEXT_STILL_SECRET_KEY</code>（base64）か、<code>&lt;DBのディレクトリ&gt;/keys/settings.key</code>から読む（ディレクトリ0700、ファイル0600、排他的に作成）。暗号文があるのに鍵がない場合は作り直さず、エラーにする。資格情報は<code>settings_credentials</code>にAES-256-GCMで保存し、行ごとのAADで暗号文を行に結び付ける。APIは「あるかどうか」だけを返す。<strong
+            >Keychainは使わない</strong
+          >
+        </td>
+        <td>
+          <code>eumenes/api/domains/settings/service/index.ts</code>、<code>api/infrastructure/atomic-file.ts</code>
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">API認証</th>
+        <td>
+          <code>CONTEXT_STILL_API_TOKEN</code
+          >か、<code>keys/api.token</code>（64桁のhex、0600）
+        </td>
+        <td><code>eumenes/api/infrastructure/auth-config.ts</code></td>
+      </tr>
+      <tr>
+        <th scope="row">LARM</th>
+        <td>
+          tokenは<code>LARM_API_TOKEN</code>（または<code>LARM_CONTROL_TOKEN</code>）。profileの発見、Connection、claim、lease、renew、再接続
+        </td>
+        <td>
+          <code>eumenes/docs/larm.md</code>、<code>api/domains/larm</code>
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">ベクトル</th>
+        <td>
+          LARMが<code>larm-embedding.v1</code>で公開するembedding（<code>intfloat/multilingual-e5-small</code>、384次元、L2正規化）を使う。検索語には<code>query: </code>、文書には<code>passage: </code>を、LARMが公開する前置きのとおりに付ける。vector
+          space（modelId、revision、artifactDigest、dimension）の鍵ごとに、Float32のBLOBで保存する。検索は、範囲を絞り込んでから全件と内積を取る。sqlite-vecは使わない
+        </td>
+        <td><code>eumenes/api/infrastructure/vector.ts</code></td>
+      </tr>
+      <tr>
+        <th scope="row">queue</th>
+        <td>上限付きのjob、資源枠、取消、再起動からの復旧</td>
+        <td>
+          <code>eumenes/api/domains/queue</code>
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">prompt</th>
+        <td>
+          s11tnextのcatalogを使う。旧版の<code>contexts/*.toml</code>を引き継ぐ
+        </td>
+        <td><code>eumenes/s11tnext.config.toml</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    旧版と同時に動かすため、新版は旧版の資源と重ならない既定値を持つ。DBの場所、keysの場所、port（旧版は39171と39172）、app
+    dataのディレクトリ（旧版は<code>~/Library/Application Support/contextStill</code>）である。環境変数も、旧版の<code>CONTEXT_STILL_SQLITE_CORE_PATH</code>や<code>CONTEXT_STILL_APP_DATA_DIR</code>は読まない。
+  </p>
+
+  <h2>3. データモデル</h2>
+  <h3>3.1 知識の層</h3>
+  <table>
+    <caption>
+      知識の層
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">層</th>
+        <th scope="col">中身</th>
+        <th scope="col">検索に出すか</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">L0 根拠</th>
+        <td>会話ログ、文書、調査結果、Episode</td>
+        <td>Episodeは経験として出す。原文は根拠を深掘りするときだけ</td>
+      </tr>
+      <tr>
+        <th scope="row">L1 原子知識</th>
+        <td>1会話・1文書から作った知識。旧版の9,579件はここに入る。言い換えの重複を含む</td>
+        <td>出さない。正本の根拠として扱う</td>
+      </tr>
+      <tr>
+        <th scope="row">L2 正本知識</th>
+        <td>同じ主張の原子知識をまとめて再蒸留したもの。条件、例外、手順、根拠の一覧を持つ</td>
+        <td>出す（検索とcompileの主対象）</td>
+      </tr>
+      <tr>
+        <th scope="row">L3 テーマ</th>
+        <td>正本知識とEpisodeのまとまり。階層と、概要をまとめたテーマ知識を持つ</td>
+        <td>出す（入口と、芋づるの中継点）</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>3.2 domainとテーブル</h3>
+  <table>
+    <caption>
+      新しいスキーマの案
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">domain</th>
+        <th scope="col">テーブル</th>
+        <th scope="col">主な列と役割</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">sources</th>
+        <td>
+          <code>source_records</code>、<code>source_fragments</code>
+        </td>
+        <td>
+          会話ログ・文書・調査結果の原記録。kind、uri、space、scope、digest、revision、記録時刻。断片はUTF-8のbyte範囲で特定する
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">experience</th>
+        <td><code>episodes</code></td>
+        <td>
+          状況、意図、判断、行動、結果、教訓、未解決事項、結果の種別、出来事の時刻と精度、space、scope、由来
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">knowledge</th>
+        <td>
+          <code>knowledge_items</code>、<code>knowledge_evidence</code>
+        </td>
+        <td>
+          layer（atom／canonical）、type（rule／procedure）、極性、題名、本文、適用する条件・しない条件、手順、確信度、重要度、状態（candidate／active／superseded／retracted）、space、scope、外部向けのhandle、revision、有効期間。根拠表は、原子知識・断片・Episodeへの参照と役割（支持／反証）、引用を持つ
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">map</th>
+        <td>
+          <code>map_clusters</code
+          >、<code>map_cluster_members</code>、<code>map_edges</code>、<code
+            >map_facet_concepts</code
+          >
+        </td>
+        <td>
+          claimクラスタとテーマ（階層、名前、alias、説明）、所属、型付きの関係、散らばったfacet語彙からテーマへの対応表
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">vectors</th>
+        <td><code>vectors</code></td>
+        <td>owner（種類とID）、vector space、本文のdigest、Float32のBLOB</td>
+      </tr>
+      <tr>
+        <th scope="row">usage</th>
+        <td><code>usage_events</code></td>
+        <td>
+          検索とcompileでの提示・採用・不採用・誤り。<code>co_used</code>の関係と順位付けに使う
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">settings</th>
+        <td>
+          <code>settings_document</code>、<code>settings_credentials</code>
+        </td>
+        <td>Eumenesと同じ形。資格情報は暗号文だけを保存する</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    <code>space</code
+    >は知識の大きな区分で、<code>coding</code>（コーディングエージェント由来）、<code>general</code>、<code>eumenes</code>、<code>personal</code>とする。<code>scope</code>は、codingの中のrepo／globalを表す。時刻はすべてUTCのISO形式に揃え、旧版の<code>unix-ms:</code>形式は取り込み時に変換する。
+  </p>
+
+  <h3>3.3 関係の種類</h3>
+  <table>
+    <caption>
+      map_edgesのrelationと、芋づる展開での扱い
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">relation</th>
+        <th scope="col">意味</th>
+        <th scope="col">主な作り方</th>
+        <th scope="col">展開での扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">
+          <code>about</code>／<code>broader</code>
+        </th>
+        <td>テーマへの所属／テーマの上位・下位</td>
+        <td>クラスタリング</td>
+        <td>テーマを中継して、要となる知識へ広げる。結果が少なければ上位テーマへ</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>requires</code></th>
+        <td>Aを使う前にBが必要</td>
+        <td>LLMによる関係判定</td>
+        <td>強く広げる（前提として添える）</td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>supports</code>／<code>refines</code>
+        </th>
+        <td>補足・根拠付け／特定の条件への具体化</td>
+        <td>LLMによる関係判定</td>
+        <td>中程度に広げる</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>contradicts</code></th>
+        <td>同じ条件のもとで両立しない</td>
+        <td>LLMによる関係判定、極性の対立</td>
+        <td>点数に関係なく、必ず注意として添える</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>supersedes</code></th>
+        <td>AがBを置き換える</td>
+        <td>再蒸留、統合</td>
+        <td>Bを出さずにAへ差し替える</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>example_of</code></th>
+        <td>EpisodeがAの具体例・根拠になる</td>
+        <td>同じ会話由来（旧データで3,069組）＋近さ＋LLMの確認</td>
+        <td>経験として添える</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>co_used</code></th>
+        <td>一緒に使われ、有用とされた</td>
+        <td>usage eventの集計</td>
+        <td>弱く広げる。単独では表示しない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    すべてのedgeに、由来（<code>deterministic</code>、<code>clustering</code>、<code>llm</code>、<code>behavioral</code>、<code>human</code>）と確信度、根拠、extractorの版を付ける。LLMが作った関係は、根拠の確認か利用実績があるまで<code>candidate</code>とし、展開での重みを下げる。WorldModelの関係（因果、相関、依存）は外界についての主張なので、ここでは持たない。
+  </p>
+  <p>
+    外部のgraph
+    DBは使わない。nodeは数万、edgeは数十万の規模で、SQLiteの索引と、メモリに載せた隣接リストで足りる。同じDB、同じwriter
+    transactionに置くことで、忘却、backup、rollbackの整合も保てる。
+  </p>
+
+  <h2>4. 旧版からの取り込み</h2>
+  <ul>
+    <li>
+      旧DBは直接開かず、SQLiteのbackup
+      APIで作ったsnapshotから読む。旧daemonが動いていても安全に読め、旧DBは変更しない。取り込みは何度実行しても同じ結果になるようにし、移行が終わるまで差分を追いかける。
+    </li>
+    <li>
+      取り込む中身：会話ログ（<code>vibe_memories</code>）、wiki・web文書（<code>sources</code>）を根拠に、Episode（<code>episode_cards</code>）を経験に、知識（<code>knowledge_items</code>）を原子知識に入れる。spaceはcodingとし、利用実績（<code>knowledge_usage_events</code>）も持ち込む。
+    </li>
+    <li>
+      取り込むときに直すもの：
+      <ul>
+        <li>
+          由来の固定文字列（3,033件）は、<code>foundCandidateId</code>から<code>found_candidates</code>、<code>finding_candidate_queue</code>と辿って、本当の原記録に結び直す。
+        </li>
+        <li>時刻はUTCのISO形式に揃える。</li>
+        <li>draftの知識は、gateの判定を見たうえで原子知識の候補として入れる。</li>
+      </ul>
+    </li>
+    <li>
+      ベクトル：旧版の384次元embeddingはLARMと同じ<code>intfloat/multilingual-e5-small</code>なので、知識の9,579件は引き継げる見込みである。ただし、同じモデルでも<code>passage: </code>の前置きの有無や版が違えばベクトルは一致しない。そこで数十件をLARMで<code>passage</code>として埋め込み直し、元のベクトルとほぼ一致する（cosineが1に近い）ことを確かめてから、LARMのvector
+      spaceの鍵で登録する。一致しなければ、全件を埋め込み直す（約1万件）。Episodeには旧版のembeddingがないので、新しく作る。
+    </li>
+    <li>
+      秘密情報は旧版から移さない。旧版のKeychainは読まず、必要な資格情報は新版の設定から入れ直す。
+    </li>
+  </ul>
+
+  <h2>5. クラスタリングと再蒸留</h2>
+  <p>
+    旧版のcurationは、知識を1件ずつ近い5件と組にして判定していた。17,851件のうち15,376件が見送りで、廃止まで進んだのは数件だった。組ごとの判定では、まとまりとしての重複を片付けられない。そこで判定の単位をクラスタへ変える。
+  </p>
+  <ol>
+    <li>
+      <strong>近傍グラフを作る。</strong
+      >embeddingで、type、極性、space、scopeが同じものどうしのk近傍グラフを作る。1万件規模なので、TSの総当たりで足りる。
+    </li>
+    <li>
+      <strong>claimクラスタを作る。</strong>類似度の高いedgeだけを残し、graph
+      clusteringで「同じ主張」の候補群に分ける。閾値は、人手で同じ／違うを付けた組のサンプルで決める。
+    </li>
+    <li>
+      <strong>クラスタごとにLLMで確かめる。</strong
+      >候補群をまとめて渡し、同じ主張の部分集合に分けさせる。plannerとverifierの2段にする。
+    </li>
+    <li>
+      <strong>再蒸留する。</strong
+      >確かめたクラスタごとに正本知識を作る。中身は、統一した主張、適用する条件としない条件、手順、例外、矛盾の指摘、根拠にした原子知識の一覧である。根拠に挙げたIDが実在してクラスタに属しているか、原子知識にない主張を足していないかを、ホスト側で照合する。
+    </li>
+    <li>
+      <strong>置換を記録する。</strong
+      >原子知識を<code>supersedes</code>で正本へつなぎ、検索から外す。利用実績と確信度は正本へ集計する。
+    </li>
+    <li>
+      <strong>テーマを作る。</strong
+      >正本知識とEpisodeを粗い粒度で階層的にクラスタリングし、LLMで名前、説明、aliasを付ける。旧版で散らばったfacet語彙（domainsだけで3,084種）は、テーマへ対応付けて正規化する。
+    </li>
+    <li>
+      <strong>テーマ知識を蒸留する。</strong
+      >テーマごとに、概要、要となる正本知識、代表的な経験、注意点、未解決の点をまとめる。これが「テーマに合わせて知識を蒸留する機能」の新しい形になる。
+    </li>
+  </ol>
+  <p>
+    継続的な運用では、新しい原子知識を最も近いclaimクラスタへ加え、そのクラスタに作り直しの印を付けて、背景のqueueで正本を作り直す。テーマは一定の量が変わったときか定期的に組み直す。組み直しの前後は構成員の重なりで対応付け、IDとhandleを保つ。
+  </p>
+
+  <h2>6. 検索と芋づる展開</h2>
+  <figure>
+    <pre class="mermaid">flowchart LR
+  Q["質問 + space / scope"] --&gt; F["FTS5 trigram&lt;br/&gt;（日本語の部分一致）"]
+  Q --&gt; V["ベクトル&lt;br/&gt;（範囲を絞ってから内積）"]
+  Q --&gt; T["テーマ一致&lt;br/&gt;（alias・facet対応表）"]
+  F --&gt; R["RRFで統合 → 種"]
+  V --&gt; R
+  T --&gt; R
+  R --&gt; X["芋づる展開&lt;br/&gt;関係ごとの重み・hop減衰&lt;br/&gt;深さ2・fan-out・予算の上限"]
+  X --&gt; O["結果 + 経路 + 矛盾の注意"]
+</pre>
+    <figcaption>種の取得と芋づる展開</figcaption>
+  </figure>
+  <ul>
+    <li>
+      <strong>種を取る。</strong>FTS5はtrigram
+      tokenizerで日本語の部分一致を効かせる。ベクトルは、spaceとscopeで絞ってから内積を取る。3つの経路の順位はRRFで統合する。
+    </li>
+    <li>
+      <strong>芋づる式に広げる。</strong
+      >種から、関係ごとの重みとhopごとの減衰をかけて点数を伝える（範囲を限ったpersonalized
+      PageRankに近い）。深さは既定で2とし、nodeごとのfan-out、全体の件数、token予算に上限を設ける。
+    </li>
+    <li>
+      <strong>経路を返す。</strong
+      >展開で出た知識には「種Xの前提」「テーマYの要」のように経路を付け、Eumenesが採否を判断できるようにする。
+    </li>
+    <li>
+      <strong>劣化しても止まらない。</strong
+      >embeddingかmapが使えないときは、FTSとテーマ一致だけで返し、そのことを結果に明示する。
+    </li>
+  </ul>
+  <table>
+    <caption>
+      Eumenes向けMCP toolの案
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">tool</th>
+        <th scope="col">入力</th>
+        <th scope="col">出力</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row"><code>search_knowledge</code></th>
+        <td>query、種類、テーマ、space、件数、展開の深さ</td>
+        <td>
+          種と展開結果。各件にhandle、種類、題名、要約、テーマ、確信度、根拠の要約、経路を付ける。矛盾の注意も返す
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>related_knowledge</code></th>
+        <td>handle、関係の種類、深さ、件数</td>
+        <td>指定した知識から辿れる関係先</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>get_knowledge</code></th>
+        <td>handle</td>
+        <td>本文の全体、条件、手順、根拠の一覧（原文は上限付きの抜粋）</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>browse_theme</code></th>
+        <td>テーマのhandle、または名前</td>
+        <td>テーマ知識、下位テーマ、要となる知識、代表的な経験</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>knowledge_feedback</code></th>
+        <td>handle、判定（used／not_used／wrong）</td>
+        <td>利用実績として記録する</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    MCPはbearer
+    token、loopback限定、要求と応答の大きさの上限を持つ。handleは不透明な値とし、内部ID、path、repoの識別子は返さない。Eumenesに返す手順は実行権限を持たない参考知識であり、SKILLやpipelineとして採用するかどうかはEumenesが決める。
+  </p>
+
+  <h2>7. compileとコーディングエージェント</h2>
+  <p>
+    <code>context_compile</code
+    >は、コーディングエージェント向けの機能としてTSへ移植する。repo
+    scopeの分離（identityが不明なら取り違えを起こさないよう安全側に倒す）、facet、composer、利用評価の仕組みは旧版の契約を引き継ぐ。変えるのは、候補を正本知識にすることと、種の取得に6章の経路を使うことの2点である。移植が済むまでは、旧版のcompile（<code>127.0.0.1:39172/mcp</code>）を使い続ける。
+  </p>
+
+  <h2>8. 旧版から持ち込むもの・持ち込まないもの</h2>
+  <table>
+    <caption>
+      持ち込みの区分
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">区分</th>
+        <th scope="col">対象</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">データとして取り込む</th>
+        <td>会話ログ、wiki・web文書、Episode、知識、利用実績、embedding</td>
+      </tr>
+      <tr>
+        <th scope="row">内容を移植する</th>
+        <td>
+          蒸留のprompt（<code>contexts/*.toml</code>）、品質gateの規則（rule／procedureの品質、findingの解析規則、Episodeの価値判定）、agent
+          logの解析（Codex、Claude、Antigravity）
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">契約として引き継ぐ</th>
+        <td>
+          LARMのbusy
+          503とprovider_conflictの扱い、agent-connection.v3、repository分離のfail-closed、SAAA個人Episode契約、typed
+          memoryの境界、manual research（DeepStill／Codex）
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">持ち込まない</th>
+        <td>
+          Rust
+          daemonとsqlite-vec、Keychainの秘密保存、PostgreSQL／drizzle、Landscape／Graphの診断画面、ペア単位のcuration、context-decisionの残骸、Biome、Zod
+          3
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>9. 段階と、次へ進む条件</h2>
+  <table>
+    <caption>
+      段階ごとの内容と完了の条件
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">段階</th>
+        <th scope="col">内容</th>
+        <th scope="col">次へ進む条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">N0 骨組み</th>
+        <td>
+          mainから旧コードを外し、Eumenes形式の骨組みを置く。backendの単一writer、settings、秘密情報、LARM、queue、vectorsのdomainを作る
+        </td>
+        <td>verifyが通る。新版が旧版と重ならない場所とportで起動し、LARMに接続できる</td>
+      </tr>
+      <tr>
+        <th scope="row">N1 取り込みと検索</th>
+        <td>
+          旧DBの取り込み、FTS5
+          trigram、ベクトル、hybrid検索、Eumenes向けMCPの最小版（<code>search_knowledge</code>、<code>get_knowledge</code>）を作る。日本語の質問と正解の知識を組にした評価集合を作り、基準線を測る
+        </td>
+        <td>件数と由来が旧DBと一致する。評価集合で、旧版の検索より再現率が高い</td>
+      </tr>
+      <tr>
+        <th scope="row">N2 クラスタリングと再蒸留</th>
+        <td>正本知識、テーマ、テーマ知識、facetの正規化を作る</td>
+        <td>
+          人手のサンプルでクラスタの純度を確かめる。正本の引用照合が通る。検索上位の重複率が下がる
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">N3 知識マップと芋づる展開</th>
+        <td>
+          決定的な関係（所属、置換、同じ会話由来）と、LLMによる型付き関係を作る。展開、<code>related_knowledge</code>、<code>browse_theme</code>を作る
+        </td>
+        <td>
+          関係のサンプルの正解率が型ごとの基準を超える。評価集合で「種だけ」より「種＋展開」の方が有用な知識を多く拾い、応答が予算内に収まる
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">N4 生成の移植</th>
+        <td>
+          agent
+          logの同期、finding、covering、finalize、Episodeの蒸留をTSへ移し、新しい原子知識をクラスタへ加える流れを作る。旧版の蒸留queueは止める
+        </td>
+        <td>無人で1週間回して、queueの失敗と知識の滞留が基準内に収まる</td>
+      </tr>
+      <tr>
+        <th scope="row">N5 compileの移植と旧版の退役</th>
+        <td>
+          compileをTSへ移し、コーディングエージェントの接続先を新版へ切り替える。旧daemonを止め、旧DBは保管する
+        </td>
+        <td>旧版のcompileと同じ評価で同等以上の結果が出る</td>
+      </tr>
+      <tr>
+        <th scope="row">N6 Eumenesの経験の取り込み</th>
+        <td>
+          Pursuitの照合済み所見と教訓、toolchainの実行結果、会話のEpisodeを、Eumenesの中継APIから受け取る。忘却は<code>ExternalDependent</code>で受ける
+        </td>
+        <td>別に契約を作り、両側で検証する</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>10. 推奨案で進めること（変更があれば指示してほしい）</h2>
+  <ol>
+    <li>原子知識は、正本ができたら検索から外し、根拠としてだけ残す。</li>
+    <li>原子知識はgateを通れば自動でactiveにする。人手の承認は、確信度の低い正本知識に限る。</li>
+    <li>
+      Eumenesの検索は、既定でgeneralとeumenesのspaceを対象にし、codingは指定したときに含める。この点は、N1の評価集合でcodingを含めた場合の効果を見てから決め直してもよい。
+    </li>
+    <li>個人の原記録からrule／procedureを作らない方針（SAAA契約と同じ）は、N6まで保つ。</li>
+  </ol>
+
+  <h2>付録：採らなかった案</h2>
+  <ul>
+    <li>
+      <strong>別リポジトリでの新規作成</strong
+      >：名前を<code>contextStill</code>のまま残すため、同じリポジトリのmainで作り直し、旧版はbranchに退避した。
+    </li>
+    <li>
+      <strong>旧版を少しずつ置き換える</strong
+      >：中核（writer、MCP、queue、ログ同期、LARM接続）がRustにしかなく、TSの書き込みもRustのwriterを経由している。データモデルも中心から変わるので、置き換えではなく作り直しになる。
+    </li>
+    <li>
+      <strong>汎用のKnowledge Graph（entity抽出によるGraphRAG）</strong
+      >：人物や組織といった外界のentityはWorldModelの領分になる。ContextStillのnodeは知識、経験、テーマに限る。
+    </li>
+    <li>
+      <strong>graphだけで候補を作る</strong
+      >：種がない状態からの探索は誤りが広がりやすいので、展開は必ず検索で取った種から始める。
+    </li>
+    <li>
+      <strong>sqlite-vec</strong
+      >：<code>bun:sqlite</code>への拡張の読み込みが要るうえ、範囲の絞り込みとtop-Kの順序の問題があった。数万件規模なら、範囲を絞ってからTSで内積を取れば足りる。
+    </li>
+  </ul>
+</article>

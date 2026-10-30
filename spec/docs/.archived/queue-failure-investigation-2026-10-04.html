@@ -1,0 +1,356 @@
+<article lang="ja">
+  <h1>全7Queueの失敗・停滞調査（2026年10月4日）</h1>
+  <p>
+    2026年10月4日23:32:31
+    JSTのSQLite読取専用transactionを基準とする。直近24時間は10月3日23:32:31〜10月4日23:32:31
+    JST。Queue状態、実行台帳、イベント、daemonログ、LARM公開接続・healthを照合した。調査では実装、設定、Queueの再投入、daemonの再起動を変更していない。
+  </p>
+
+  <h2>結論</h2>
+  <ol>
+    <li>
+      最も深刻なのはFindingで、新規33ジョブから正常完了したジョブは0件。23件が出力打ち切り、2件が形式不正、1件が入力予算超過、1件が通信結果不明で保留、6件がタイムアウトでskippedになった。候補が後段へ出ず、CoveringとFinalizeへの供給が止まっている。
+    </li>
+    <li>
+      LARMの共通接続には断続的な更新・準備待ちがある。23:10:30のclaim後、次のclaimは23:29:52まで約19分空いた。23:29:45にはLARMがready・推論受付可能・4枠空きを返す一方、ローカル接続状態はready_timeoutだった。調査中に同じ接続で復旧したため、現在も全Queueが停止中とは判断しない。
+    </li>
+    <li>
+      EpisodeとCurationは処理できている。直近24時間のEpisode完了は27件、失敗は6件。Curation完了は88件、再試行は39件。全Queue一律の停止やDB障害ではない。
+    </li>
+    <li>
+      過去の未解消failedは合計12,812件、pausedは2,716件。laneの停止は全7種類とも解除済みだが、ジョブ単位のfailed・再実行日時なしのpausedは通常claimされない。接続復旧だけで過去の残件が消えることはない。
+    </li>
+  </ol>
+
+  <h2>追加ダブルチェック：ContextStill側にも問題がある</h2>
+  <p>
+    「このプロジェクト側では問題が起きていない」という認識は成立しない。LARM側の応答・接続契約を調べる必要はあるが、以下の2点はContextStill側のソースと実データから確認できる。
+  </p>
+  <ol>
+    <li>
+      Curationの401分類が誤っている。既存のCurationFailureKind、classify_curation_error、Embedding判定関数を変更せず抽出してコンパイルし、実際に記録された期限切れtokenの401文面を渡したところ、MODEL_CONTRACT_INVALID、retryable=falseになった。保存処理はこの結果でattemptを消費する。認証の復旧が必要な障害を出力契約違反として扱っている。
+    </li>
+    <li>
+      Findingの形式修復履歴が入力予算を使い切る。context_limitとなったrunの保存履歴から、原資料・出力契約・候補等をすべて省き、現行system
+      promptとhistoryだけでリクエストを再構成しても、Consumerの推定入力は21,913。32,768のwindowから出力8,192と余裕4,096を引いた入力予算20,480を超える。engine.rsは資料chunkだけを縮小し、修復応答の全文履歴を縮小しないため、このケースは原資料を削っても修復要求を送れない。これは実tokenizerの入力超過を証明するものではなく、Consumer自身の送信前判定で必ず拒否されることを示す。
+    </li>
+  </ol>
+  <p>
+    ほかに、Findingの実応答にはcandidateContractが要求するcandidate/evidence/unresolvedQuestionsの入れ子ではなく、type/polarity/title/contentを直接candidates配列へ置く形式が複数あった。これを拒否する検証自体は正常である。一方、修復指示は具体的な型・根拠の検証エラーをinvalid_agent_outputへまとめており、修復後にも同じ構造違反が残っている。出力契約の伝達と修復手順はConsumer側でも改善対象となる。
+  </p>
+  <p>
+    接続更新のclaimable判定はConsumer側の候補原因だが、renew応答を採取していないためLARMとConsumerのどちらの契約違反かは未確定。LARM側だけが原因という前提で調査依頼を行わず、公開契約との照合として扱う。
+  </p>
+  <p>
+    既存テストはprovider_connectionが49件成功・1件ignored、agent_runtimeの直列実行が42件成功、curationが22件成功・3件ignored。agent_runtimeの2並列実行では41件成功、1件がfixture作成時のfinding_candidate_queue.id重複で失敗し、直列再実行で成功した。並列失敗の原因は未確定で、本番Queue障害と同じ原因とは判断していない。既存テストの成功だけで上記2件を問題なしと扱うことはできない。
+  </p>
+  <p>
+    追加の根拠は<a href="../assets/queue-failure-2026-10-04/consumer-double-check.json"
+      >401分類の実行結果と、修復履歴による入力予算超過の下限計算</a
+    >に保存した。実装・設定・Queue状態の変更は行っていない。
+  </p>
+
+  <h2>Queue別の状況</h2>
+  <table>
+    <caption>
+      読取スナップショット時点の残件と直近24時間の結果。failed・pausedは全期間の残件。
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Queue</th>
+        <th scope="col">現在の残件</th>
+        <th scope="col">直近24時間</th>
+        <th scope="col">原因・解釈</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">findingCandidate</th>
+        <td>failed 4,487、paused 166、pending/running 0</td>
+        <td>新規33件、正常完了0、paused 27、timeout/skipped 6</td>
+        <td>
+          8,192 tokenでも応答が完結しない。形式不正の修復、共通接続待ち、ジョブ期限にも問題がある。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">coveringEvidence</th>
+        <td>failed 6,033、pending/running 0</td>
+        <td>実行イベント0</td>
+        <td>
+          新しい処理対象がない。過去のfailedには認証401が2,114件、接続・timeout系が2,387件。現在の実機成功は確認できない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">episodeDistiller</th>
+        <td>failed 2,273、paused 2,550、pending/running 0</td>
+        <td>completed 27、failed 6、retried 8</td>
+        <td>
+          直近6失敗はすべて全segmentの出力打ち切り。過去のpaused
+          2,549件はprovider_unavailable_exhausted。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">landscapeCuration</th>
+        <td>failed 19、pending 316、running 1</td>
+        <td>completed 88、skipped 45、retried 39、failed 0</td>
+        <td>
+          処理は継続。完了88件はすべてkeep_separateで、知識の統合・更新成功数を意味しない。モデル出力の契約違反が再試行の主因。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">deadZoneMergeReview</th>
+        <td>残件0、累計completed 4</td>
+        <td>実行イベント0</td>
+        <td>失敗残件なし。最終完了は6月14日02:42:30 JST。現在のLARM routeでの実行は未検証。</td>
+      </tr>
+      <tr>
+        <th scope="row">finalizeDistille</th>
+        <td>残件0、累計completed 8,647、skipped 23</td>
+        <td>実行イベント0</td>
+        <td>
+          Coveringからの新しい投入がない。最終完了は10月3日15:18:36 JST。現行の失敗残件はない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">mergeActivationFinalize</th>
+        <td>残件0、累計completed 4</td>
+        <td>実行イベント0</td>
+        <td>失敗残件なし。最終完了は6月14日02:43:28 JST。現在のLARM routeでの実行は未検証。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    completed、skipped、pausedは別の意味を持つ。Coveringのcompletedにも根拠不足によるinsufficientが含まれ、Findingのagent_runs.completedにも候補なしのtimeoutが含まれる。正常な候補生成・知識保存の判断にはQueueのoutcomeと後段投入を合わせて確認する必要がある。
+  </p>
+
+  <h2>Findingの直接原因</h2>
+  <ul>
+    <li>
+      直近のLLM応答38件のうち23件がfinish_reason=length。2件は出力4,096 token、21件は8,192
+      tokenを使い切っていた。単純に4,096から8,192へ増やすだけでは解消していない。
+    </li>
+    <li>
+      finish_reason=stopの15応答のうち、4件はMarkdownコードフェンス付き、1件はJSONとして解析できない本文。残り10件がJSONとして解析できることは、envelopeの契約・根拠検証が成功したことを意味しない。
+    </li>
+    <li>
+      engine.rsのapply_responseはserde_json::from_strで本文全体をenvelopeへ変換する。実応答にはコードフェンスの後に候補件数を説明する文章が付いていた。形式修復は1回だけ許すが、修復後も契約違反が残り、invalid_agent_outputの2件はともに2回呼び出し後の保留だった。
+    </li>
+    <li>
+      context_limitの1件は形式修復後に発生し、原資料chunkを縮小しても送信できなかった。修復履歴に不正応答の本文全体を保持する実装が入力を膨らませる可能性がある。正確な超過要素の内訳は今回未採取。
+    </li>
+    <li>
+      timeoutの6件はすべてformatRepaired=true、LLM呼び出しは1回だけだった。修復を待つ間に期限が切れ、候補なしでskippedへ投影された。共通接続待ち・再claim待ちが期限を消費することが悪化要因と考えられる。
+    </li>
+    <li>
+      length応答は使用量を保存したあと、不完全な本文を候補として適用せずpausedにする。安全な保留だが、自動再開日時を設定しないため、出力契約を修正しても残件の明示的な復旧が必要。
+    </li>
+  </ul>
+  <p>
+    打ち切り応答の途中本文は保存されず、contentは空、usageとterminalErrorが残る。そのため、思考部分が長いのか、候補を出しすぎたのか、出力反復なのかは現在の台帳だけでは断定できない。
+  </p>
+
+  <h2>共通接続の停滞</h2>
+  <p>
+    全LLM
+    routeはcontextstill-backgroundを共有する。23:29:45の公開応答は接続status=ready、llm.readiness=ready、claimable=false。healthはready=true、acceptingRequests=true、activeRequests=0、maxConcurrentRequests=4だった。通信不能・モデル未起動・4枠占有という説明とは一致しない。ローカル永続状態とdaemonログにはready_timeoutが残っていた。
+  </p>
+  <p>
+    現在のソースではprovider_connection/manager.rsのrenew_and_reclaimがrenew後にservice.rsのwait_until_readyを呼び、この関数はreadiness=readyに加えてclaimable=trueを要求する。既存接続の公開claimable=falseと更新後の待機条件の不整合が停滞の有力な原因であり、初回claimと更新後の再claimの契約を照合する必要がある。ただし、今回renew応答そのものは採取しておらず、サーバー側でclaimable=falseになった内部理由は未確認。
+  </p>
+  <p>
+    23:29:52〜53には同じConnection
+    IDでFinding、Episode、Curationのclaimが再開した。23:32:36のhealthでは1リクエストが実行中で、公開claimableは引き続きfalseだった。従って、claimable=falseだけで全実行が不可能と判断してはならない。観測結果は断続的な接続更新待ちを示す。
+  </p>
+  <p>
+    daemonのPID
+    77149は18:33:17に起動し、ディスク上のバイナリ更新は23:24:32だった。調査時点のソースと稼働imageが一致する保証はない。修正確認ではビルド済みファイルの更新に加えて、稼働imageの反映と少なくとも1回の接続更新を含む実機検証が必要。
+  </p>
+
+  <h2>EpisodeとCurationの失敗理由</h2>
+  <p>
+    Episodeの直近6
+    failedはすべて「全segment失敗・finish_reason=length」。現行実装のsegment_budgetは8,000文字以下のsegmentに4,096
+    token、それ以上に8,192
+    tokenを割り当てる。同じ出力予算での再試行では同じ打ち切りが起こり得る。ただし、今回6件の実送信上限とusageは個別に記録されていないため、各失敗が4,096か8,192かは断定しない。
+  </p>
+  <p>
+    Curationの39 retriedは、decision/rationale不正23件、出力打ち切り12件、期限切れProvider
+    tokenによる401が2件、source group
+    coverage不正1件、接続失敗1件だった。decision/rationale検証はschemaVersion=2、許可action、空でない1,200文字以下のrationale、1〜8件のreasonCodesを確認するが、現行エラーは違反した条件を区別していない。
+  </p>
+  <p>
+    401の2件はMODEL_CONTRACT_INVALID、attemptConsumed=trueとして記録されている。curation_executor.rsのclassify_curation_errorは401をProvider系に分類せず、既定のModelContractへ落とす。認証の期限切れをモデル出力不正として数えるため、接続再取得で回復できる失敗にも試行回数を消費している。
+  </p>
+  <p>
+    Curationのfailed
+    19件は9月8日の古い残件で、説明文のschema上限違反16件とEmbedding接続失敗3件。現在の39回の再試行とは別である。
+  </p>
+
+  <h2>過去の残件と復旧順序</h2>
+  <p>
+    failed残件の主な分類は、FindingのMuse/session系3,112件・出力打ち切り916件、Coveringの接続/timeout系2,387件・401が2,114件、EpisodeのMuse/session系1,489件・401が321件。これらは複数月の履歴であり、現在のornith-contextstillの不具合件数として扱わない。分類は最終last_errorの文字列による概算で、各分類の具体的な規則は集計JSONのfailedErrorCategoryRulesを参照する。
+  </p>
+  <ol>
+    <li>
+      共通接続の初回claim・renew・再claimの意味を照合し、断続的なready_timeoutを解消する。期限切れtokenの401を接続回復へ分類する。少なくとも1更新周期を観測し、claimと正常完了が続くことを確認する。
+    </li>
+    <li>
+      FindingのJSON出力契約を実モデルで満たすようにする。候補数・本文量を抑えた短い実入力で完了を確認し、修復履歴と期限処理を見直す。出力上限の増加だけで完了としない。
+    </li>
+    <li>
+      FindingからCovering、Finalizeまで同じ実候補で通し検証する。今回Covering/Finalizeに新規ジョブがなかったため、現行の後段経路が正常という証拠は得られていない。
+    </li>
+    <li>
+      Episodeのsegment/出力予算、Curationのdecision・rationale・coverage制約を個別に検証する。Curationのkeep_separate完了と知識変更の成功を分けて測る。
+    </li>
+    <li>
+      原因修正後に、失敗種類とinput
+      generationを確認して少数の残件から復旧する。Provider障害残件、形式違反残件、結果不明のジョブを一括で再投入しない。結果不明では二重適用を防ぐ照合が先に必要。
+    </li>
+  </ol>
+
+  <h2>調査根拠と限界</h2>
+  <ul>
+    <li>
+      <a href="../assets/queue-failure-2026-10-04/summary.json"
+        >同一transactionで採取したQueue・実行台帳・イベント集計と、認証情報を除外したLARM公開応答</a
+      >。本文の主な件数はこのスナップショットに対応する。
+    </li>
+    <li>
+      実装確認対象はRustのprovider_connection/manager.rs、service.rs、agent_runtime/engine.rs、ledger.rs、projection.rs、queue_lifecycle/provider_lease.rs、curation_executor.rs、episode_executor/distillation.rs。ログはlogs/context-stilld.log。
+    </li>
+    <li>
+      日付はISO形式、SQLite日時、unix-ms形式が混在するため、集計ではUTC秒へ正規化した。文字列のMAXや単純な日時比較で最新順を判断していない。
+    </li>
+    <li>
+      agent_runtimeのyield_queueはQueueとagent_runsを更新する一方、その都度のpaused/retriedイベントを追加しない。イベントだけを見るとFindingの27保留を見落とす。agent_steps.succeededも応答受領済みを意味し、出力の契約適合・候補採用成功を保証しない。
+    </li>
+    <li>
+      調査中もdaemonは稼働し、接続待ちの解消とEpisodeの追加完了を観測した。採取前後で件数は変わる。途中本文やrenewの生応答、別サービスの内部ログは未採取。
+    </li>
+  </ul>
+  <h2>2026年10月5日のConsumer改修</h2>
+  <p>
+    LARM側調査で、claimableは10秒間の成功probeキャッシュを表し、readyでも期限切れ後にfalseとなることが確認された。GETの反復はprobeを実行しない。Consumerの待機は接続とproviderのreadinessを確認して直接claimへ進む。claimの409/503は待機として扱う。19分停止の全時系列と過去2件の401の個別原因は引き続き未確定であり、当時の因果関係を確定したとは扱わない。
+  </p>
+  <ul>
+    <li>
+      Finding/Coveringのversion=1
+      envelopeを非空json_schemaで送信する。CandidateDraftのcandidate/evidence/unresolvedQuestionsを明示し、文章長を制限する。型付きaction、引用位置、trusted
+      identity、独立した最終検証は従来のhost判定を維持する。
+    </li>
+    <li>
+      LARMへの有限な判断処理は公開リクエストのchat_template_kwargs.enable_thinking=falseを明示する。最大出力token数は増やさない。lengthと空本文は成功にせず、usageとrequest
+      IDを保存する。
+    </li>
+    <li>
+      形式修復は一度のみ。生の失敗応答を再投入せず、診断・元応答のhash・byte数を渡す。旧履歴に残った全文も入力構築時に縮約する。成功したreceiptや原資料snapshotは変更しない。
+    </li>
+    <li>
+      LARM HTTP
+      401をprovider_credential_rejectedへ分類する。受理されなかった要求はrejectedとして記録し、予算予約と呼出回数を戻して再開待ちへ移す。認証情報のキャッシュを無効にし、旧情報の全リクエストが終了してから再claimする。失効の個別理由はHTTP
+      401から推測しない。
+    </li>
+    <li>
+      CurationのHTTP
+      401は接続障害として扱い、モデル契約の試行回数を消費しない。通信結果が未確定の要求は引き続きresult_unknownとして隔離し、再送や世代更新で消さない。
+    </li>
+    <li>
+      renewの再試行は保存済みの同じIdempotency-Keyを使い、再起動をまたいでも重複更新を避ける。新しい論理更新には新しいkeyを使う。更新は全リクエストのdrain後にのみ実行する。
+    </li>
+    <li>
+      形式修復や接続待機などのQueue待機時間を10分の実行期限から除く。Research自身の期限と呼出回数・token上限は維持する。全体の経過時間を最大24時間に制限し、期限切れはagent_deadline_exceededとして停止する。
+    </li>
+    <li>
+      Queueの再開待ち・停止理由をrun IDとclaim
+      epoch付きイベントへ保存する。再起動後にもlength等の保存済みエラーを維持し、包括的な契約違反へ置き換えない。
+    </li>
+    <li>
+      smokeとSettings接続テストは非空JSON schemaと厳密なstop・本文検査を使う。live
+      smokeはrenew、旧認証情報の401、新認証情報での継続も検証する。並列テストの一時ディレクトリ名にプロセス内連番を加え、衝突を防ぐ。
+    </li>
+  </ul>
+  <p>
+    LARM側サービス・モデル・配備は変更しない。Consumerのテストと隔離接続で検証する。既存の不明要求の復旧には、providerで実行されなかったことの確認が必要である。
+  </p>
+  <h3>実推論で追加確認した契約の問題</h3>
+  <p>
+    隔離した小入力でも、非空json_schemaだけでは候補の入れ子、必須questions、assessmentの階層、引用の余分なtoByteを防げなかった。backendが全schema条件を保証するとは扱わない。runtimeの出力構造例と選択中のpolarityを明示し、入力の引用を出力用の4項目に揃えた。assessmentの型違反も一度だけ形式修復できるようにした。
+  </p>
+  <p>
+    最終検証で固定本文の再出力が書き換わる事例を再現した。最終検証のresultはnullを出力する契約へ変更し、hostが固定artifactを結び付ける。旧方式の完全一致echoは受け入れるが、変更されたechoは拒否する。検証者は原資料に基づく支持・反証と重要主張のquoteだけを返し、本文を生成し直さない。
+  </p>
+  <p>
+    実LARMを使う隔離DBの回帰試験はFinding完了、Covering完了、独立最終検証後のFinalize投入まで成功した。単純probeの成功だけで業務処理の合格としない。別のlive
+    smokeでは構造化stop、renew、旧tokenの401、新tokenの推論継続を確認した。一般入力の品質やbackend全keyword対応を保証する結果ではない。
+  </p>
+  <p>
+    renewは要求・公開HTTP応答・再claim完了を時刻、接続ID、operation hash、公開request
+    ID、期限で記録する。tokenとIdempotency-Keyの生値は記録しない。推論結果が不明な場合も、安全なHTTP
+    status・公開error code・request IDをreceiptに残し、予約は維持する。再処理は新しいinput
+    generationで行い、旧receiptを保存したまま監査イベントをtransaction内に残す。
+  </p>
+  <h3>常駐処理への反映と限定した再処理</h3>
+  <p>
+    最終のRust回帰試験は601件中590件成功、live環境を要する11件は通常実行では除外した。型検査、Clippy、managed
+    promptの整合・境界検査、文書検査を通過した。別実行のlive試験でrenew・旧認証の401・新認証の構造化stopと、隔離DBでのFinding→Covering→Finalize投入を確認した。
+  </p>
+  <p>
+    全7Queueの新規受付だけを一時停止して既存の実行をdrainし、active
+    leaseが0であることを確認した。常駐処理停止中にSQLiteのバックアップを作成し、更新版を起動した。受付設定は変更前の状態に戻した。再投入は既知のlength・形式・context制限・待機を含むtimeoutに限り、Finding
+    34件とEpisode 6件に適用した。Findingはinput
+    generationを1つ進めて旧receiptを保存した。result_unknownの5件と原因未確定の過去大量失敗は再送しない。
+  </p>
+  <p>
+    最終ビルド中に空き容量が不足し、常駐処理の起動時にも書込失敗が発生した。このプロジェクトの再生成できるincremental
+    build
+    cacheを削除してビルド・writer起動を復旧した。バックアップは保持した。また開発用実行ファイルの更新でOS秘密ストアの既存参照を読めなくなり、許可済みのLARM認証を新実行ファイルから保存・読戻しした。plistには新しい参照のみを置き、生値をファイルに保存していない。
+  </p>
+  <p>
+    <a href="../assets/queue-failure-2026-10-04/consumer-recovery-2026-10-05.json"
+      >再処理の監査一覧</a
+    >と<a href="../assets/queue-failure-2026-10-04/consumer-runtime-after-fix-2026-10-05.json"
+      >更新後の実Queueスナップショット</a
+    >に投入件数と状態を保存する。常駐処理の接続・実ジョブ進行を確認中であり、再投入済みであることだけを復旧完了の根拠にしない。
+  </p>
+  <h3>常駐接続の残る阻害要因</h3>
+  <p>
+    2026-10-05 01:09 JST時点で、更新版の常駐処理によるLARM
+    activity要求はtimeout=false、connect=true、macOSのos_error=65（No route to
+    host）で失敗している。同じMac上の操作環境からの隔離live接続と推論は成功しているため、backend全体の停止とは判定しない。起動環境ごとのネットワーク許可の差を疑っているが、macOSの設定画面での確認前であり原因確定ではない。
+  </p>
+  <p>
+    GUI確認を試みたがMacがロック中であり、操作用toolからロック解除不能と返された。利用者へ解除を依頼した。Queue受付設定は元の状態、再投入40件はpending、active
+    leaseは0。不明な5要求の予約・旧receiptは保持している。実Queueの完了と継続稼働を確認するまでは復旧完了とは扱わない。LARM側のサービス・モデル・配備は変更していない。
+  </p>
+  <h3>2026年10月5日07:40 JSTの最終確認</h3>
+  <p>
+    Macのロック解除とGUIアクセスを確認した。システム設定のローカルネットワークにはcontext-stilldの複数の項目があり、表示された全項目がonだった。設定は変更していない。常駐処理は約6時間継続し、renewはHTTP
+    200と再claimを反復している。直近の07:35
+    JSTにも成功した。前回の接続エラーは現在のブロッカーではないが、当時のos_error=65の原因を確定したとは扱わない。
+  </p>
+  <p>
+    再投入したEpisode 6件は全件completed / episodes_distilled。Finding
+    34件は3件skipped（抽出対象なし）、31件pausedで、停止理由は引用不一致15件、形式・必須項目・questionの契約違反9件、結果不明7件である。Finding→Covering→Finalizeの実資料による本番完了は確認できていない。隔離した短い入力の成功を一般入力への合格とした前提は成立しない。
+  </p>
+  <p>
+    引用不一致の保存応答を調べると、原文に完全一致する引用でもfromByteを誤ったものと、引用文を原文から書き換えたものがあった。既読範囲の外にある正しい引用だけが原因という説明ではない。出力schemaを送信しても余分なtoByte、必須evidence/unresolvedQuestionsの欠落、action/questionの形式違反が残る。Consumerとモデルの出力契約・引用位置の受渡しには追加対応が必要であり、検証を弱めて成功にしてはいけない。
+  </p>
+  <p>
+    結果不明は全体で14要求（旧5件、新9件）。新9件の保存receiptにはLARM公開HTTP 500とrequest
+    IDがあり、うち7件は再投入34件に含まれる。公開応答だけではbackendでの推論完了・usage・失敗原因を確定できず、旧予約を保持している。request
+    IDを用いたLARM側照合が必要である。
+  </p>
+  <p>
+    現在のCovering
+    2件はclaim_requires_primary_supportで停止している。保存されたsourceはprovided_candidateだけであり、モデルは候補本文をsupportsとして引用していた。候補自身を一次資料の証明に使わないgateが停止させている。一次資料を取得・接続する必要がある。Finalizeに新しい合格成果物は流れていない。Curationはkeep_separate/needs_evidence/stale_subjectで処理を継続しており、通信停止ではない。Merge系Queueには新規処理対象がなく、継続完了を確認したとは扱わない。
+  </p>
+  <p>
+    ディスク空きは約650
+    MiBで、現在のwriterは動作しているが再度の容量不足は稼働上のリスクとして残る。再生成可能なこのプロジェクトのincremental
+    cacheを整理した。DBバックアップと利用者資料は保持した。<a
+      href="../assets/queue-failure-2026-10-04/consumer-final-check-2026-10-05.json"
+      >最終確認の分類、引用診断、HTTP 500のrequest IDを含む根拠</a
+    >を保存した。Consumerの追加対応とLARM照合が必要なため、全体の復旧は未完了である。
+  </p>
+</article>

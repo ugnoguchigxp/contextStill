@@ -1,0 +1,1081 @@
+<article lang="ja">
+  <h1>ContextStill 現状調査：Eumenesの経験・知識基盤への転用に向けて（2026-10-29）</h1>
+  <p>
+    ContextStillを、Eumenesの経験と再利用できる知識の基盤へ転用する方針を考えるための調査結果である。テーマに合わせて知識を蒸留する機能は残し、データの持ち方を知識マップへ改める前提で、ContextStillとEumenes系プロジェクトの現状を事実として整理した。方針の提案は別文書で扱い、本書では提案の前に決めるべき論点までを記す。
+  </p>
+  <p>
+    対象はmainの<code>18fcb52</code>と、調査時点の未コミット変更（SAAA個人Episode、29
+    files、+290/−14）。アプリケーションコードとデータは変更していない。実データは<code>data/context-still-core.sqlite</code>（約2.5
+    GB）を<code>sqlite3 -readonly</code>で集計した値で、2026-10-29夜の時点のもの。
+  </p>
+
+  <h2>要約</h2>
+  <ol>
+    <li>
+      <strong>ContextStillはAIコーディングエージェント専用の作りになっている。</strong
+      >知識の型は<code>rule</code>と<code>procedure</code>の2種類で、適用範囲は<code>repo</code>／<code>global</code>、分類軸は<code>technologies</code>・<code>changeTypes</code>・<code>domains</code>である。原記録の98%がCodexのログで、どれもコード作業を前提にしている。
+    </li>
+    <li>
+      <strong>Eumenes系の設計書は、経験と手順の担当をすでにContextStillに割り当てている。</strong
+      >Pursuit、WorldModel、SAAAロードマップに明記がある。eumenes_memoryは手順を対象外とし、Eumenes本体も手順候補を保留している。ただしEumenes本体のコードにはContextStillへの接続がない。
+    </li>
+    <li>
+      <strong>「テーマ」に当たる実体がない。</strong>自動パイプラインはソース単位（会話ログ1件、wiki
+      1ファイル）で蒸留し、テーマはManual
+      Researchの<code>topic</code>入力にしかない。分類語彙も正規化されていない。active知識の<code>domains</code>は3,084種類あり、そのうち1,894種類は1件にしか使われていない。
+    </li>
+    <li>
+      <strong>知識同士の関係を保存するテーブルがない。</strong
+      >Graph画面は要求のたびに関係を計算しており、SQLiteではsemantic
+      edgeが常に空である。Utility-RAG構想では型付きのUtility
+      Graphが設計済みだが未実装で、「汎用Knowledge
+      Graphをretrievalの中核にしない」という判断が記録されている。
+    </li>
+    <li>
+      <strong>量に比べて使われている知識が少ない。</strong
+      >active知識9,102件のうち7,018件（77%）は、一度もcompileで選ばれていない。重複整理のcuration
+      jobは17,851件実行されたが、廃止まで進んだのは数件で、置換記録（<code>knowledge_supersessions</code>）は0件である。
+    </li>
+    <li>
+      <strong>2026-09-25以降の新しい知識は利用者に届いていない。</strong
+      >finalizeはRust版もTS版も知識を<code>draft</code>で保存し、active化は人手でしか行えない。8月19日と9月22日にまとめてactive化された形跡があるが、それ以降は止まっている。9月25日以降に作られた428件はすべてdraftのままで、compileにもrecallにも出てこない。
+    </li>
+    <li>
+      <strong>個人データの取り込みはSAAA向けに作り込み中である（未コミット）。</strong
+      >読み取り専用のfeed、引用照合、<code>personal</code>
+      scope、失効時の除去、バックアップからの除去を備える。一方で、個人の原記録からruleやprocedureを作ることは意図的に禁止している。
+    </li>
+    <li>
+      <strong>実装規模は約22.5万行で、Rust移行前の旧経路が多く残っている。</strong>内訳はTS
+      <code>src</code> 11.3万行、Rust 7.8万行、web 2.5万行、api
+      0.9万行。PostgreSQL系の経路、TSのfallback、context-decisionの残骸などが残っている。
+    </li>
+  </ol>
+
+  <h2>調査範囲と方法</h2>
+  <table>
+    <caption>
+      調査対象と方法
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">方法</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">ContextStillのコード</th>
+        <td>
+          <code>crates/context-stilld</code
+          >、<code>src/</code>、<code>api/</code>、<code>web/</code>を、symbol検索、grep、範囲を絞った読み取りで確認した
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">ContextStillの設計書</th>
+        <td>
+          <code>spec/docs/</code>のうち、typed
+          memory、SAAA個人Episode契約、Utility-RAG構想、Landscape、2026-09-06のプロジェクト評価を読んだ
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">実データ</th>
+        <td>主要テーブルの件数、状態の分布、語彙の種類、利用実績を読み取り専用で集計した</td>
+      </tr>
+      <tr>
+        <th scope="row">Eumenes系</th>
+        <td>
+          <code>eumenes</code
+          >、<code>eumenes_memory</code>、<code>eumenes_world_model</code>、<code>eumenes_agency</code>、<code>eumenes_pursuit</code>、<code>SAAA</code>、<code>deepStill</code>のREADME、AGENTS.md、spec、関係するコードを読んだ
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    サーバの起動、実LLMによる品質評価、実行時の挙動確認は行っていない。調査の一部は読み取り専用の補助agentに分担させた。補助agentの報告のうち、本書の結論を左右する主張（draft保存、ベクトル検索の無効化、semantic
+    edgeが空であること、個人ソースからの知識化禁止、Eumenes系の役割分担の記述）は、コードと文書を直接読んで確認した。
+  </p>
+
+  <h2>1. ContextStillの現在の姿</h2>
+  <h3>1.1 目的と実行構成</h3>
+  <p>
+    READMEはContextStillを「AIコーディングエージェントのためのlocal-first knowledge control
+    plane」と定義している。基本のループは「evidenceを集める → knowledgeに蒸留する → task
+    contextをcompileする → 有用性を評価する → 新しい学びをcandidateとして登録する」である。
+  </p>
+  <table>
+    <caption>
+      実行時の構成要素
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">要素</th>
+        <th scope="col">責務</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Rust daemon <code>context-stilld</code></th>
+        <td>
+          SQLiteの単一writer、MCP
+          endpoint（<code>127.0.0.1:39172</code>）、queueの実行、agent
+          logの同期、backup、doctor。常駐processの所有者
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Hono API</th>
+        <td>管理UI向けのfacade。UIを開いているときだけ必要</td>
+      </tr>
+      <tr>
+        <th scope="row">Web UI（React）</th>
+        <td>Knowledgeの管理、review、Graph／Landscape、settings、診断</td>
+      </tr>
+      <tr>
+        <th scope="row">TS CLI</th>
+        <td>import、手動のqueue実行、検証用コマンド</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    外部に依存するもの：LARM（local LLM resource
+    manager。agent-connection.v3）、local-llm／azure-openai／openaiの各provider、embedding
+    daemon（<code>127.0.0.1:44512</code>、384次元。<strong>finalizeに必須</strong>）、web検索（DuckDuckGo／Brave／Exa）、DeepStill（<code>127.0.0.1:4310</code>）。
+  </p>
+
+  <h3>1.2 知識の生成パイプライン</h3>
+  <figure>
+    <pre class="mermaid">flowchart LR
+  subgraph IN["取り込み"]
+    LOG["Agent logs&lt;br/&gt;Codex / Claude / Antigravity"]
+    SAAA["SAAA原記録&lt;br/&gt;（未コミット）"]
+    WIKI["wiki / web URL"]
+    MR["Manual Research&lt;br/&gt;（topic入力）"]
+    REG["register_candidates"]
+  end
+  LOG --&gt; VM["vibe_memories"]
+  SAAA --&gt; VM
+  WIKI --&gt; SRC["sources / source_fragments"]
+  VM --&gt; FIND["finding&lt;br/&gt;候補抽出 LLM"]
+  SRC --&gt; FIND
+  FIND --&gt; FC["found_candidates"]
+  MR --&gt; REG
+  REG --&gt; FC
+  FC --&gt; COV["covering&lt;br/&gt;根拠・適用範囲 LLM"]
+  COV --&gt; FIN["finalize&lt;br/&gt;品質gate・embedding"]
+  FIN --&gt; KD["knowledge_items&lt;br/&gt;status=draft"]
+  KD -- "人手でactive化" --&gt; KA["knowledge_items&lt;br/&gt;status=active"]
+  KA --&gt; CUR["landscapeCuration&lt;br/&gt;重複判定 LLM"]
+  CUR --&gt; KA
+  VM --&gt; EPI["episodeDistiller LLM"]
+  EPI --&gt; EC["episode_cards"]
+  KA --&gt; USE["context_compile / recall_*"]
+  EC --&gt; USE
+</pre>
+    <figcaption>知識とEpisodeの生成経路</figcaption>
+  </figure>
+  <table>
+    <caption>
+      queue stageごとの入力、処理、出力、実装の所有
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">stage</th>
+        <th scope="col">入力</th>
+        <th scope="col">処理</th>
+        <th scope="col">出力</th>
+        <th scope="col">現行の所有</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">findingCandidate</th>
+        <td>vibe memory（filter・伏せ字処理済み）、wiki／webのsource</td>
+        <td>
+          再利用できるrule／procedure候補をpositive／negativeの極性付きで抽出する。procedureには<code>Use when / Workflow / Verification / Avoid</code>と2段以上の手順を要求する
+        </td>
+        <td><code>found_candidates</code>、covering job</td>
+        <td>
+          Rust <code>queue_lifecycle/finding_executor.rs</code>、agentic経路は<code
+            >agent_runtime/engine.rs</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">coveringEvidence</th>
+        <td>候補とそのsource</td>
+        <td>
+          支持・反証、適用範囲（appliesTo）、価値、手順の品質を判定する。bigram類似度0.62以上は重複とみなす。外部検索による裏取りも行う
+        </td>
+        <td><code>evidence_coverage_results</code>、finalize job</td>
+        <td>
+          Rust
+          <code>queue_lifecycle/covering_executor/*</code
+          >（<code>CONTEXT_STILL_RUST_COVERING_MODE</code>）
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">finalizeDistille</th>
+        <td>knowledge_readyの判定結果</td>
+        <td>
+          LLMは使わない。importance、候補の品質、適用範囲、embeddingの各gateを通し、repo識別子を匿名化してscopeを決める
+        </td>
+        <td>
+          <code>knowledge_items</code
+          >（<code>status='draft'</code>）
+        </td>
+        <td>Rust <code>queue_lifecycle/finalize_executor.rs</code>（786行目でdraftとして挿入）</td>
+      </tr>
+      <tr>
+        <th scope="row">episodeDistiller</th>
+        <td>vibe memoryの区間</td>
+        <td>
+          task episode、failure episode、decision episode（加えて未コミットのpersonal
+          episode）を、状況・判断・行動・結果・教訓・未解決事項の形で作る。価値・重要度・確信度などのgateがある
+        </td>
+        <td>
+          <code>episode_cards</code
+          >、<code>episode_refs</code>、FTS
+        </td>
+        <td>Rust <code>queue_lifecycle/episode_executor/*</code></td>
+      </tr>
+      <tr>
+        <th scope="row">landscapeCuration</th>
+        <td>active知識と、近いもの最大5件（cosine 0.20以上）</td>
+        <td>
+          plannerとverifierが<code>merge / deprecate_duplicate / keep_separate / needs_evidence</code>を決め、範囲を限った自律的な変更を行う
+        </td>
+        <td><code>curation_mutations</code>、rollback snapshot</td>
+        <td>Rust <code>curation_executor.rs</code></td>
+      </tr>
+      <tr>
+        <th scope="row">deadZoneMergeReview、mergeActivationFinalize</th>
+        <td>到達しにくい知識と、統合先の候補</td>
+        <td>統合の可否をLLMで判定し、承認された統合を反映する</td>
+        <td>review結果、廃止・統合</td>
+        <td>TSのみ（<code>src/modules/queue/core/worker.ts</code>、manual one-shot扱い）</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    promptはTOMLで<code>contexts/**</code>に置かれ、<code>.s11tnext/catalog.json</code>を経由してRustに埋め込まれる。stageごとのprovider
+    routingは<code>src/modules/settings/settings.defaults.ts</code>の<code>taskRouting</code>で決まる。
+  </p>
+
+  <h3>1.3 「テーマ」の扱い</h3>
+  <ul>
+    <li>
+      <code>distillation_target_states</code
+      >はテーマではなく、ソースを単位とする蒸留対象である。kindは<code>wiki_file</code>、<code>vibe_memory</code>、<code>knowledge_candidate</code>、<code>web_ingest</code>の4つ。
+    </li>
+    <li>
+      利用者が指定するテーマは、Manual
+      Researchの<code>topic</code>（2〜400文字）だけである。DeepStillかCodexで調べ、利用者が選んだ主張を<code>registerCandidate</code>経由でcoveringへ送る。調査結果を直接知識にはしない。実データの<code>manual_research_runs</code>は0件で、まだ使われていない。
+    </li>
+    <li>
+      自動的な分類の軸は4つある：<code>appliesTo</code>（technologies／changeTypes／domains／general）、intent
+      tag（guidance、guardrail、failure_patternなど16種）、scope、Graphのcommunity（要求時のunion-find）。community
+      labelの保存先<code>knowledge_community_labels</code>は0件である。
+    </li>
+    <li>
+      語彙の定義<code>knowledge_tag_definitions</code>は52件（change_type 12、domain
+      10、intent 16、technology
+      14）しかない。一方、LLMは定義外の値を自由に書き込んでいる。active知識に現れる値の種類は、domainsが3,084、technologiesが3,952、changeTypesが3,126。同じ概念の表記揺れが多い（例：<code
+        >frontend</code
+      >
+      375件と<code>frontend-development</code> 141件、<code
+        >testing</code
+      >
+      304件と<code>quality-assurance</code> 135件）。
+    </li>
+  </ul>
+  <p>
+    テーマを指定してログ全体から蒸留する（「Xについて分かっていることを全部まとめる」）stageは存在しない。テーマ単位の蒸留を残すには、テーマを入力に取るproducerを新しく作る必要がある。
+  </p>
+
+  <h3>1.4 データモデル</h3>
+  <table>
+    <caption>
+      主要テーブル、件数、役割
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">テーブル</th>
+        <th scope="col">件数</th>
+        <th scope="col">役割と特徴</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row"><code>vibe_memories</code></th>
+        <td>19,728</td>
+        <td>
+          会話ログの原記録（Codex 19,393、Antigravity 174、capsule
+          161）。subject、intent、wants、refsの列を持つ
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>sources</code>／<code
+            >source_fragments</code
+          >
+        </th>
+        <td>178／2,260</td>
+        <td>wiki文書（178件すべてwiki）と、その断片</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>found_candidates</code></th>
+        <td>21,352</td>
+        <td>findingが抽出した知識候補</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>knowledge_items</code></th>
+        <td>9,579</td>
+        <td>
+          蒸留済みの知識。rule 7,632、procedure
+          1,947。status、scope、polarity、intent_tags、title、body、applies_to（JSON）、confidence、importance、利用回数、dynamic_score、metadata（由来の連鎖をJSONで保持）
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>knowledge_source_links</code>／<code
+            >knowledge_origin_links</code
+          >
+        </th>
+        <td>646／1,790</td>
+        <td>
+          知識からsource断片・由来（vibe_memory 1,589、agent_candidate 199など）への片方向リンク
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>knowledge_supersessions</code></th>
+        <td>0</td>
+        <td>置換関係。テーブルはあるが記録がない</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>knowledge_usage_events</code></th>
+        <td>87,156</td>
+        <td>compileでの利用判定（used 66,025、not_used 21,129など）</td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>episode_cards</code>／<code
+            >episode_refs</code
+          >
+        </th>
+        <td>14,160／14,160</td>
+        <td>
+          経験の記録。situation、observations、action、outcome、lesson、applicability、anti_applicability、domains、technologies、tools、outcome_kind。すべてvibe_memory由来
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>landscape_curation_queue</code></th>
+        <td>17,851</td>
+        <td>重複整理のjob。判定、方針、変更計画、rollbackをJSON列で持つ</td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>context_compile_runs</code>／<code
+            >context_compile_evals</code
+          >
+        </th>
+        <td>12,162／10,473</td>
+        <td>compileの実行記録と、実行ごとの評価</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>llm_usage_logs</code></th>
+        <td>56,565</td>
+        <td>LLM呼び出しの記録（gemma-4-e4b 27,619、gpt-5-4-mini 13,882、Qwen系など）</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>データの持ち方として次の特徴がある。</p>
+  <ul>
+    <li>
+      関係はほとんどがJSONの中にあるか、知識からsource／originへの片方向リンクである。知識と知識、知識とEpisode、知識と概念の間に型付きの関係はない。
+    </li>
+    <li>
+      <code>knowledge_items</code
+      >と<code>episode_cards</code>は、ほぼ同じ分類列（domains／technologies／changeTypes）を別々の形式で持っている。knowledgeはJSON
+      objectの<code>applies_to</code>、episodeは個別のJSON配列列である。
+    </li>
+    <li>
+      scopeは<code>repo</code>が9,516件と大半を占めるが、active知識9,102件のうち9,033件は<code>repo_key</code>がnullである。finalizeの匿名化でrepo識別子を外した結果で、実質的には一般的な知識として扱われている。
+    </li>
+    <li>
+      時刻の表記が混在している。<code>created_at</code>にISO形式と<code>unix-ms:&lt;数値&gt;</code>形式が混ざっている（knowledge
+      37件、compile run 9,380件、vibe memory
+      14,967件）。未コミット変更で<code>shared/event_time.rs</code>が追加されている。
+    </li>
+    <li>
+      知識の有効期間（valid
+      from／until）や「いつ時点の知識か」を表す列はない。古さは<code>last_verified_at</code>とcurationの<code>stale_knowledge</code>判定でしか扱っていない（Episodeには<code>stale_at</code>がある）。
+    </li>
+  </ul>
+
+  <h3>1.5 利用側</h3>
+  <ul>
+    <li>
+      <strong>context_compile</strong>（Rust
+      <code>mcp_lifecycle/native_compile/</code
+      >）：候補はactive、classified、scope適格の知識に限る。facetで絞り込み、語彙一致の点数（クエリ全体が部分一致すれば+4、2文字以上のtokenごとに+1）に<code>dynamic_score</code>を加えて順位を付ける。foundation
+      modeではimportanceも加える。その後、LLM composerで選び、予算内に収める。
+    </li>
+    <li>
+      <strong>ベクトル検索はSQLiteでは意図的に無効</strong
+      >にしている。<code>vectorSearchKnowledgeSqlite</code>は常に空を返す。sqlite-vecのtop-Kはscope条件より先に切られるため、repositoryの分離を守れないことが理由である。embeddingはcurationの類似度計算にだけ使われる。同梱のsqlite-vec（0.1.10-alpha.4）はpartition
+      keyとmetadata列に対応しているが、<code>knowledge_items_vec</code>はembedding列だけで定義されている。
+    </li>
+    <li>
+      <strong>検索は全件を読んで部分一致で採点する</strong
+      >（<code>native_common.rs::score_text</code>）。クエリは英数字・<code>_</code>・<code>-</code>以外の文字で区切って語に分けるので、日本語の文は1つの長い語として扱われ、ほぼ完全な部分一致でしか当たらない。FTS5の索引（<code>knowledge_items_fts</code>、<code>episode_cards_fts</code>。既定のunicode61
+      tokenizer）は書き込まれているが、検索には使われていない。
+    </li>
+    <li>
+      <strong>MCPの既定tool</strong
+      >：<code>initial_instructions</code>、<code>context_compile</code>、<code>compile_eval</code>、<code>search_knowledge</code>、<code>register_candidates</code>、<code>search_memory</code>、<code>fetch_memory</code>、<code>search_episodes</code>、<code>fetch_episode</code>、<code>doctor</code>。
+    </li>
+    <li>
+      <strong>typed-memory profile</strong
+      >（<code>CONTEXT_STILL_MCP_TOOL_PROFILE=typed-memory</code>）：個人秘書AI向けに、<code>recall_experience</code>（EpisodeCard）、<code>recall_rule</code>、<code>recall_skill</code>（procedure）の3つだけを公開する。read-only、bearer
+      token、1回8
+      KiBまで、内部IDやpathは返さない。2026-08-29にserver側の実装と検証を終え、SAAA側の昇格gateが残っている。
+    </li>
+    <li>
+      <strong>Graph／Landscape</strong>（TS
+      <code>src/modules/graph</code
+      >、<code>src/modules/landscape</code>、約1.7万行。UIの<code>graph.page.tsx</code>は2,887行）：nodeはknowledgeとsource、edgeはrelation／evidence／communityで、要求のたびに計算する。semantic
+      edgeはpgvector前提のため、SQLiteでは空配列である（<code>graph.repository.ts:1020</code>）。
+    </li>
+  </ul>
+
+  <h3>1.6 実データから見える状態</h3>
+  <table>
+    <caption>
+      実データの主要な指標
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">指標</th>
+        <th scope="col">値</th>
+        <th scope="col">読み取り</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">active知識のcompile選択回数</th>
+        <td>0回：7,018件／1〜4回：1,498件／5回以上：586件</td>
+        <td>77%は一度も使われていない。利用が少数の知識に集中している</td>
+      </tr>
+      <tr>
+        <th scope="row">月別の知識作成数</th>
+        <td>
+          5月 2,397／6月 4,314／7月 479／8月 777／9月 1,202（うちdraft 55）／10月 373（すべてdraft）
+        </td>
+        <td>
+          active化は8月19日（628件）と9月22日（1,061件）の一括更新にまとまっている。9月25日以降に作られた知識は1件もactiveになっていない
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">重複整理の判定結果</th>
+        <td>observeで見送り 15,376／証拠不足 1,323／分けたまま 1,110／廃止の実行 2／失敗 19</td>
+        <td>ほとんど見送りで終わっている。重複は残り続け、置換の記録も残らない</td>
+      </tr>
+      <tr>
+        <th scope="row">queueの失敗率</th>
+        <td>
+          finding 4,487／21,184（21%）、covering 6,033／21,321（28%）、episode 2,267／18,353（12%）
+        </td>
+        <td>失敗が生成量を大きく削っている。失敗の理由の内訳は未分析</td>
+      </tr>
+      <tr>
+        <th scope="row">未処理の原記録</th>
+        <td>vibe_memoryのtarget 3,937件がpending</td>
+        <td>ログの取り込み量に蒸留が追いついていない</td>
+      </tr>
+      <tr>
+        <th scope="row">Episodeの結果種別</th>
+        <td>成功 10,698／混在 2,374／失敗 619／不明 469</td>
+        <td>失敗から学ぶ記録が少ない。最新の作成は2026-10-10</td>
+      </tr>
+      <tr>
+        <th scope="row">完全に同じtitleの重複</th>
+        <td>24グループ、111件</td>
+        <td>
+          完全一致は少ない。言い換えによる重複は、curationの判定を見る限り多いと推測される（未測定）
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">由来の直接参照</th>
+        <td>
+          知識3,033件の<code>metadata.targetKey</code>が<code>the source target</code>、<code>sourceDocumentUri</code>が<code>the source document</code>という固定文字列（2026-06以降の作成分）
+        </td>
+        <td>
+          由来を直接は辿れない。ただし<code>foundCandidateId</code>から<code>found_candidates</code>、<code>finding_candidate_queue</code>と辿れば、active知識の由来はすべて特定できる（vibe_memory
+          7,426件、knowledge_candidate 547件、web 162件、wiki 50件）
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">embedding</th>
+        <td>知識はJSONのfallbackに9,579件すべて（384次元）、vec0には2,331件。Episodeは0件</td>
+        <td>
+          知識は既存のembeddingでそのままクラスタリングできる。Episodeは新たにembeddingを作る必要がある。モデル名は外部daemon側にあり、ContextStillからは分からない
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">知識とEpisodeの対応</th>
+        <td>同じ会話から作られた知識とEpisodeの組が3,069組（知識1,887件、Episode 1,699件）</td>
+        <td>
+          両者が対応するのは一部だけである。Episodeは10,038件の会話、知識は3,828件の会話から作られていて、大部分は互いに別の会話から来ている
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>1.7 進行中の変更：SAAA個人Episode（未コミット）</h3>
+  <p>
+    契約は<code>spec/docs/saaa-personal-episode-contract.html</code>にある。コードの中心は<code>agent_log_sync/saaa.rs</code>（436行）と<code>queue_lifecycle/episode_executor/*</code>。
+  </p>
+  <ol>
+    <li>
+      <code>SAAA_MEMORY_SQLITE_PATH</code
+      >で指定されたSAAAのSQLiteを読み取り専用で開き、公開viewの<code>memory_episode_source_v1</code>と変更feedの<code>memory_episode_changes</code>（1回128件）、許可の<code>memory_episode_grants</code>を読む。scopeと本人の組ごとにまとめて<code>vibe_memories</code>へ保存し、episode
+      queueにだけ投入する。
+    </li>
+    <li>
+      保存済みの記録を巡回して版、digest、許可の世代を照合する。失効したものは、Episode、FTS、参照、job、eventまでまとめて除去する。
+    </li>
+    <li>
+      <code>personal_episode</code
+      >を作るときは、本人の発話からの正確な引用（<code>evidenceQuotes</code>）を必須にし、LLM実行前、保存前、検索時、詳細取得時に照合する。<code>eventStart</code>／<code>eventEnd</code>／<code>timePrecision</code>は、原文が示す精度でだけ保持する。
+    </li>
+    <li>
+      分離を徹底している。findingは個人ソースを拒否し（<code>saaa::deny_knowledge_source</code>）、個人の原記録からrule／procedureは作らない。compileの対象scopeはglobalとrepoだけである。
+    </li>
+    <li>
+      新しい管理バックアップからは、個人の原記録とEpisodeを除去してVACUUMする（<code>sqlite_writer/personal_backup.rs</code>）。
+    </li>
+  </ol>
+  <p>
+    この変更は、外部の個人アシスタントから経験を受け取る仕組みのひな形になる。ただし、相手のDBを直接読む方式は、後述するEumenesの規約（Web／CLIはDBを開かない）とは合わない。
+  </p>
+
+  <h3>1.8 規模と旧経路</h3>
+  <table>
+    <caption>
+      領域ごとの行数（テストを含む）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">行数</th>
+        <th scope="col">内訳の主なもの</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Rust <code>crates/context-stilld/src</code></th>
+        <td>約7.8万</td>
+        <td>
+          queue_lifecycle 3.2万、mcp_lifecycle 2.0万、agent_runtime 0.6万、provider_connection
+          0.5万。テストは約1.7万
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">TS <code>src/</code></th>
+        <td>約11.3万</td>
+        <td>
+          landscape 1.5万、context-compiler 1.2万、knowledge 0.6万、settings 0.5万、distillation
+          0.5万、coverEvidence 0.5万
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>web/src</code>／<code>api</code>
+        </th>
+        <td>約2.5万／約0.9万</td>
+        <td>admin UIが2.1万</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    旧経路として残っているもの：PostgreSQL／drizzle系（<code>src/db/schema-*.ts</code>、<code>drizzle/</code>、<code>runLegacyPostgresFinding</code>、<code>coverEvidence/llm-runner.ts</code>、<code>context-compiler.legacy.ts</code>）、Rustが所有する処理のTS複製（<code>queue/core/worker.ts</code>、<code>agent-log-sync</code>、<code>episodeDistiller/worker.ts</code>、<code>finalizeDistille</code>）、context-decisionの残骸（promptのTOML、設定のkeyspace）、空のdirectory（<code>src/modules/session-memo</code>、<code>src/modules/evidence</code>など）。
+  </p>
+  <p>
+    文書とコードの食い違いも1件ある。<code>wiki-cli-contract.html</code>は「Rust
+    findingは<code>wiki_file</code>に未対応」としているが、<code>dynamic_provider.rs</code>はLARM接続時にwiki／webも処理する。どちらが現行の事実かは未確認である。
+  </p>
+
+  <h2>2. Eumenes系プロジェクトの現在の姿</h2>
+  <h3>2.1 各プロジェクトの役割と成熟度</h3>
+  <table>
+    <caption>
+      Eumenes系の各プロジェクト
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">プロジェクト</th>
+        <th scope="col">役割</th>
+        <th scope="col">成熟度（各READMEの記載）</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">eumenes</th>
+        <td>
+          利用者を継続的に理解し、任された仕事を進める専属の常駐アシスタント。SAAAの目的を継承する。TS／Bun／Hono／React／SQLite
+        </td>
+        <td>
+          多くの機能が実装済みでfixture検証済み、一部はlive確認済み。全体の受入は未完了。WorldModelは既定で無効、ハーネスの自己改善は未実装
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">eumenes_memory</th>
+        <td>
+          State台帳、再生成できる資料（Records）、忘却を扱うライブラリ。World、Consolidation、Procedureは対象外
+        </td>
+        <td>中核機能はホストとの結合まで済み。Eumenesが0.0.2をvendorしている</td>
+      </tr>
+      <tr>
+        <th scope="row">eumenes_world_model</th>
+        <td>Personal World。対象、状態、条件、因果、相関、依存を根拠付きで管理する</td>
+        <td>P0〜P2は実装済み。ホストとの結合はfixture検証まで。実モデルでの受入はまだ</td>
+      </tr>
+      <tr>
+        <th scope="row">eumenes_agency</th>
+        <td>経験から関心・欲求・意図を持ち、発言や行動の機会を選ぶ</td>
+        <td>
+          Eumenesが0.0.1をvendorし、唯一の会話エージェントとして使っている。信念などの永続化は未登録とみられる
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">eumenes_pursuit</th>
+        <td>
+          自律的な試行（方針、仮説、予測、道具の使用、観測、判定）。メタ認知を構造の外側に置く
+        </td>
+        <td>live評価を実施中。Eumenesへの取り込み（P4／P5）は未着手</td>
+      </tr>
+      <tr>
+        <th scope="row">SAAA</th>
+        <td>Eumenesの前身（Rust／Tauri）。現在も開発が続いている</td>
+        <td>EumenesはSAAAを参照専用として扱う</td>
+      </tr>
+      <tr>
+        <th scope="row">deepStill</th>
+        <td>ローカルの調査エンジン</td>
+        <td>
+          ContextStillを読み取り専用で参照する。ContextStill側からは<code>contextstill-research.v1</code>で調査を依頼する
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>2.2 Eumenesの部品の取り込み方</h3>
+  <ul>
+    <li>
+      部品は、build済みのJSと型宣言を版付きtgzにして<code>vendor/</code>へ置き、sha256のmanifestで固定する（<code>eumenes/package.json:55-57</code>）。
+    </li>
+    <li>
+      SQLiteの単一writerはホストが所有する。部品はホストから借りた接続に対する同期関数だけを公開し、DBを開かず、transactionも制御しない。migrationはホストの一覧に追記し、テーブル名に<code>memory_</code>、<code>world_</code>、<code>pursuit_</code>の接頭辞を付ける。
+    </li>
+    <li>
+      Web／CLIはHTTP
+      APIを使い、DBを開かない（<code>eumenes/AGENTS.md:12</code>）。複数のdomainにまたがる変更は1つのwriter
+      transactionで行う。
+    </li>
+    <li>
+      推論はLARMへの保存済み接続を基本とする。ContextStillは、同じLARMを使う別のconsumerとして扱われている。
+    </li>
+  </ul>
+  <p>
+    ContextStillは独自のRust daemonと独自のSQLite
+    writerを持つ外部processである。そのため、Eumenes流の「部品をホストのwriterに載せる」方式とは構造が異なる。
+  </p>
+
+  <h3>2.3 Eumenesの手順知識の置き場所</h3>
+  <table>
+    <caption>
+      Eumenes本体にある手順系のデータ
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">置き場所</th>
+        <th scope="col">内容</th>
+        <th scope="col">ライフサイクル</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">capabilities</th>
+        <td>package、profile、skill、tool、requirement、toolchainなどの定義。SKILLはMarkdown</td>
+        <td>変更は新しいrevisionとして作り、publishの指し先で切り替える。rollbackできる</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>toolchain_recipes</code></th>
+        <td>web取得の手順（signature、URL、読み方のヒント、成功・失敗の回数）</td>
+        <td>3回続けて失敗すると自動で停止する</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>toolchain_selections</code></th>
+        <td>実行ごとの候補、判断、結果</td>
+        <td>30日間保持する</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>browser_histories</code></th>
+        <td>Playwrightの操作手順と実行・失敗の回数</td>
+        <td>回数で管理する</td>
+      </tr>
+      <tr>
+        <th scope="row">pipelines</th>
+        <td>版付きのJSON手順</td>
+        <td>check、fixture、publishの順に進める</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>空いているところ：</p>
+  <ul>
+    <li>
+      eumenes_memoryは「Procedureは指示の権限を持つのでホストが扱う」として、手順を対象外にしている（<code>eumenes_memory/spec/full-system-design.md:241</code>）。
+    </li>
+    <li>
+      Eumenesは、記憶から作った手順候補（<code>host_procedure</code>）を「記憶から実行指示へ昇格させない。採用するなら別途、指示・Skill・ツールとして設計する」として保留している（<code>eumenes/docs/memory.md:31</code>）。seedに18件ある。
+    </li>
+    <li>
+      手順系のデータはdomainごとに分かれていて、成功・失敗の回数でしか検証されていない。「この条件ならこうする、根拠はこれ」という条件付きの知識や、仕事をまたいで使う教訓を、由来付きで候補→検証→退役まで管理する場所がない。
+    </li>
+    <li>ハーネスの自己改善は未実装である。</li>
+  </ul>
+
+  <h3>2.4 Eumenes系がContextStillに割り当てている役割</h3>
+  <table>
+    <caption>
+      ContextStillへの言及
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">場所</th>
+        <th scope="col">記述</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">
+          <code>eumenes_world_model/spec/plan/next-stage.md:254</code>
+        </th>
+        <td>
+          「役割はContextStillが経験・手順、Worldが条件付きの根拠と見通し、Agencyが目標と選択とする」
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>eumenes_pursuit/spec/findings-design.md:71-75</code>
+        </th>
+        <td>「追求の中の知見はpursuitが持ち、追求をまたぐ蒸留はContextStillが行う」</td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>eumenes_pursuit/spec/lessons-design.md:30</code>
+        </th>
+        <td>教訓は評価側のデータで、ホストが取り込むときは「ContextStillの経験として渡す想定」</td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>eumenes_pursuit/spec/host-contract-v1.md:60-63,77</code>
+        </th>
+        <td>
+          受け渡すもの：目標、受入条件、試行ごとの「条件・道具・予測・観測・判断」、照合済みの知見。ContextStillが取り込みを確認するまで台帳を消さない
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">SAAA</th>
+        <td>
+          ロードマップに「ContextStillは再利用可能な知識・経験を担当」とある。typed
+          recall（experience／rule／skill）の接続コードがあり、未送付の<code>world_evidence_v1</code>依頼も残っている
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">eumenes本体</th>
+        <td>
+          コード（<code>api/</code>、<code>web/</code>、<code>cli/</code>）からの参照はない。文書には、monitorにContextStillを表示する構想と、LARMを取り合うconsumerとしての言及がある
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">ContextStill</th>
+        <td>「eumenes」への言及はない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Pursuitの所見は種類（lemma、counterexample、observation、dead_end）と、保証の強さ（exact、numeric、model、unverified）を持つ。教訓は<code>cue / operation / evidence</code>の形で、効果の判定（helped、hurt、no_effect、confounded）を伴う。そして<code>StartInput.experience</code>（5件以内、各300文字以内）で注入される。どちらも、ContextStillが受け取る経験の単位の具体的な候補になる。
+  </p>
+
+  <h3>2.5 知識マップの参照になるWorldModelのデータモデル</h3>
+  <ul>
+    <li>
+      <strong>Entity</strong
+      >：id、scope、revision、表示名、alias、外部参照、状態（active／merged）を持ち、可逆的に統合・分割できる。想定する種類はProject、Actor、Service、Resource、Artifact、Metric、Concept、Action、GoalRef。名前だけでは統合しない。
+    </li>
+    <li>
+      <strong>Assertion</strong
+      >：subject、predicate、値またはobjectとの関係を持つ。由来は観測、本人の報告、文書の主張、モデルの仮説の4種。状態はcandidate、active、disputed、superseded、retracted、invalidated。観測時刻、記録時刻、有効期間、条件、置換、矛盾も持つ。activeは「真である」ではなく「使うことにした」を意味する。
+    </li>
+    <li>
+      <strong>Evidence</strong
+      >：種類（本人の発言、文書、実行時の計測、アシスタントの要約。要約を強い種類へ格上げしない）、立場（支持／反証）、root
+      evidence（転載や要約を1つの根へまとめる）。
+    </li>
+    <li>
+      <strong>関係</strong
+      >：因果（increases、decreases、causes、enables、inhibits）、相関（対称で、因果としては伝播させない）、<code>depends_on</code>、<code>serves_goal</code>、補助の<code>part_of</code>／<code>related_to</code>。探索は深さ3〜4、30
+      node、60 edge、8 KiBまでに抑える。
+    </li>
+    <li>
+      <strong>条件</strong
+      >：比較と論理結合を3値（満たす／満たさない／不明）で評価する。条件がなければ不明として扱い、明示的に無条件とするには採用の根拠が必要である。
+    </li>
+    <li>
+      <strong>WorldSlice</strong
+      >：as-of時点、目標、状態、各種epoch、予算、完全性を固定した切り出し。ホストは回答に採用する前に、receiptで再検証する。
+    </li>
+    <li>
+      責務の分担：本人についての主張はMemory、外界についての主張はWorldが持つ。複数の独立した経験から条件付き規則を作る段階（L1）が計画されている。
+    </li>
+  </ul>
+
+  <h3>2.6 忘却と変更feed（eumenes_memory）</h3>
+  <ul>
+    <li>
+      <code>listMemoryChanges</code
+      >は、seq、時刻、scope、対象（record／state_item／source）、revision、状態、forgetIdを返す。本文は含まないので、本文はIDとrevisionで別に読む。
+    </li>
+    <li>
+      <code>ExternalDependent</code
+      >は、外部の派生物（<code>providerRef</code>、<code>externalId</code>、依存先32件まで）を登録する仕組みである。忘却がその依存先に及ぶとpendingになり、ホストが削除を確認したときに忘却が完了する。
+    </li>
+    <li>
+      通常の会話の追加や訂正は、Memoryのfeedではなく、ホストの<code>conversation_outbox</code>（追加／訂正／撤回。本文なし）で知らされる。
+    </li>
+    <li>
+      これらのAPIはどれも、ホストのDB接続とtransactionの中で呼ぶ前提である。外部processのContextStillは直接呼べない。EumenesにはSAAAの<code>memory_episode_*</code>に相当する外部向けのexport
+      viewや許可の仕組みがなく、ContextStillへ渡すにはEumenes側にHTTPの中継APIが要る。
+    </li>
+  </ul>
+
+  <h3>2.7 共通の規約と、ContextStillとの差</h3>
+  <table>
+    <caption>
+      Eumenes系とContextStillの技術規約の差
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">Eumenes系</th>
+        <th scope="col">ContextStill</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">runtime</th>
+        <td>Bun 1.4.4</td>
+        <td>Bun 1.4.4 ＋ Rust daemon</td>
+      </tr>
+      <tr>
+        <th scope="row">整形・lint</th>
+        <td>oxfmt 0.71.0／oxlint 1.86.0（タブ、80桁）</td>
+        <td>Biome 1.9.4</td>
+      </tr>
+      <tr>
+        <th scope="row">Zod</th>
+        <td>4.4.3</td>
+        <td>3.25.76</td>
+      </tr>
+      <tr>
+        <th scope="row">構造</th>
+        <td>
+          <code>src/domains/&lt;name&gt;/{contracts,service,repository,test}</code
+          >。純粋層では時計、乱数、ネットワーク、DBを使わない。依存境界をscriptで検査する
+        </td>
+        <td>
+          Rustは<code>domains/*</code>、TSは<code>src/modules/*</code>。純粋層の分離はない
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">検証段階の語彙</th>
+        <td>実装／fixture／実SQL／ホスト結合／live／実機受入を厳密に分ける</td>
+        <td>canary、closeout evidenceなど文書ごとに異なる</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3. 転用から見たギャップ</h2>
+  <table>
+    <caption>
+      Eumenesの経験・知識基盤として見たときの差分
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">観点</th>
+        <th scope="col">現状</th>
+        <th scope="col">Eumenesで必要になること</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">知識の対象</th>
+        <td>コード作業のruleとprocedure。repo／globalのscope</td>
+        <td>
+          仕事の進め方、道具の使い方の教訓、判断の前例、失敗と行き止まり、利用者ごと・目標ごとの経験
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">テーマ</th>
+        <td>実体がない。蒸留はソース単位</td>
+        <td>テーマを単位に蒸留し、集約、俯瞰、訂正ができること</td>
+      </tr>
+      <tr>
+        <th scope="row">分類語彙</th>
+        <td>LLMの自由記述で発散している（domains 3,084種）</td>
+        <td>正規化された概念（alias、上位・下位、統合の履歴）</td>
+      </tr>
+      <tr>
+        <th scope="row">関係</th>
+        <td>型付きの関係がない。Graphは要求時の計算で、SQLiteではsemantic edgeが空</td>
+        <td>知識、経験、概念、根拠の間の型付き関係（前提、支持、矛盾、置換、具体例など）</td>
+      </tr>
+      <tr>
+        <th scope="row">重複と置換</th>
+        <td>curationはほぼ見送りで終わる。置換記録は0件</td>
+        <td>統合・置換・撤回を、履歴を残しながら確実に進められること</td>
+      </tr>
+      <tr>
+        <th scope="row">有効化</th>
+        <td>Rust finalize以降、draftのまま止まる。active化は人手</td>
+        <td>無人でも回る昇格の基準、またはEumenes側の採用操作との接続</td>
+      </tr>
+      <tr>
+        <th scope="row">時間</th>
+        <td>有効期間、as-ofがない。時刻の表記も混在</td>
+        <td>いつ時点で成り立つ知識か、いつ古くなったか（WorldModelのvalidTimeと揃える）</td>
+      </tr>
+      <tr>
+        <th scope="row">取り込み口</th>
+        <td>ローカルのagent logを走査し、SAAAのDBを直接読む</td>
+        <td>
+          EumenesのHTTP API経由。Eumenes側は「Web／CLIはDBを開かない」規約のため、中継APIが要る
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">忘却</th>
+        <td>SAAA向けの巡回照合と除去</td>
+        <td>
+          eumenes_memoryの忘却に<code>ExternalDependent</code>として加わり、削除の確認を返すこと
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">返し方</th>
+        <td>context_compile（coding task向け）、typed-memory recall（SAAA向け）</td>
+        <td>
+          Eumenesのホスト契約に沿った返却（<code>StartInput.experience</code>、SKILLのrevision案など）。実行権限を持つcapabilityとしてではなく、候補として返す
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">個人データからの知識化</th>
+        <td>禁止（Episodeまでは作る）</td>
+        <td>個人の経験から手順・教訓を作るかどうかを、方針として決め直す</td>
+      </tr>
+      <tr>
+        <th scope="row">技術規約</th>
+        <td>Biome、Zod 3、独自daemon</td>
+        <td>Eumenes系（oxfmt／oxlint、Zod 4、domain構造）に合わせるかどうか</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>4. 方針を決める前の論点</h2>
+  <p>以下は提案ではなく、提案を作る前に決めるべき問いである。</p>
+  <p>
+    調査のあとで利用者の意図を確認した。Eumenesは知識を検索して使う。Graphは、引いた知識に関連する知識を芋づる式に取ってくるためのもの。compileは通常のコーディングエージェント向けに残す。重複の整理には良いクラスタリングと再蒸留が要る。さらに、TypeScriptで作り直してRustを排除すること、名前はcontextStillのまま旧版をbranch
+    <code>legacy/v1</code
+    >へ退避すること、コーディングエージェントの知識は引き継ぐこと、Keychainを使わずEumenesの方式に揃えることが決まった。これで論点1、3、7、8、9に答えが出た。これらを前提にした方針案は<a
+      href="eumenes-knowledge-map-proposal-2026-10-29.html"
+      >ContextStill 再構築の方針提案</a
+    >にまとめた。
+  </p>
+  <ol>
+    <li>
+      <strong>配置</strong
+      >：ContextStillは、外部processのままEumenesとAPIでつなぐのか。それともEumenes系の流儀（版付きtgz、ホストの単一writer、純粋層と同期SQLite
+      API）に合わせて、蒸留と知識マップをライブラリにするのか。
+    </li>
+    <li>
+      <strong>WorldModelとの境界</strong>：World
+      next-stageは「ContextStillが経験・手順、Worldが条件付きの根拠と見通し」と分けている。知識マップの概念node（Concept、Project、GoalRefなど）を両者で共有するのか、別に持つのか。同じ主張を二重に持たない方法が要る。
+    </li>
+    <li>
+      <strong>Utility-RAGの判断の見直し</strong>：「汎用Knowledge
+      Graphをretrievalの中核にしない」という判断は、coding taskのcontext
+      compileを前提にしていた。Eumenesでは、テーマごとに知識を俯瞰し、訂正し、忘れられることが求められるので、前提が変わる。retrievalの中核と、知識の正本としての地図を分けて考える必要がある。
+    </li>
+    <li>
+      <strong>テーマの出どころ</strong
+      >：利用者が与えるのか、Eumenesの目標・プロジェクト（GoalRef）から決まるのか、既存知識のクラスタから自動で作るのか。テーマを入力に取るproducerの設計がこれで決まる。
+    </li>
+    <li>
+      <strong>経験の単位</strong
+      >：何を受け取るのか。Pursuitの試行と照合済み所見、Agencyの意図の結末、toolchainやbrowserの実行結果、会話のEpisodeなどがあり、それぞれの由来と保証の強さを何で表すか。
+    </li>
+    <li>
+      <strong>個人データからの知識化</strong
+      >：SAAA契約が禁止している「個人の原記録からrule／procedureを作る」を、Eumenesで許可するか。許可するなら、忘却がどこまで及ぶか。
+    </li>
+    <li>
+      <strong>既存データ</strong>：知識9,579件とEpisode
+      14,160件（ほぼコード作業）を、移行するか、別scopeで凍結するか、捨てるか。
+    </li>
+    <li>
+      <strong>コーディング用途</strong
+      >：Codex／Claudeのログ同期とcontext_compileを残すか。残すなら、Eumenes向けの用途と同じ地図に載せるか、分けるか。
+    </li>
+    <li>
+      <strong>旧経路の整理</strong
+      >：PostgreSQL系、TSのfallback、Landscape／Graphの診断系（約2万行）のうち、何を残すか。
+    </li>
+    <li>
+      <strong>無人運用</strong
+      >：draftの滞留、queueの失敗率21〜28%、finalizeのembedding必須を、常駐アシスタントの裏側で回せる水準にどう直すか。
+    </li>
+  </ol>
+
+  <h2>付録：主な根拠</h2>
+  <ul>
+    <li>ContextStillのpipeline：<code>crates/context-stilld/src/domains/queue_lifecycle/{finding_executor.rs,covering_executor/,finalize_executor.rs,episode_executor/,curation_executor.rs,executor.rs}</code></li>
+    <li>
+      ContextStillの利用側：<code>crates/context-stilld/src/domains/mcp_lifecycle/{native_compile/,native_tools.rs,memory_profile.rs,native_memory_recall.rs}</code>、<code>src/modules/knowledge/knowledge.repository.sqlite.ts:349</code>、<code
+        >src/modules/graph/graph.repository.ts:1020</code
+      >
+    </li>
+    <li>
+      SAAA連携（未コミット）：<code>crates/context-stilld/src/domains/agent_log_sync/saaa.rs</code>、<code>crates/context-stilld/src/domains/sqlite_writer/personal_backup.rs</code>、<a
+        href="saaa-personal-episode-contract.html"
+        >SAAA個人Episode契約</a
+      >
+    </li>
+    <li>
+      ContextStillの設計判断：<a href=".archived/contextstill-utility-rag-concept.html"
+        >Utility-RAG Concept</a
+      >（Executive Decision、14. Utility Graph）、<a
+        href="contextstill-typed-memory-mcp-design.html"
+        >Typed Memory MCP Design</a
+      >、<a href=".archived/project-evaluation-2026-09-06.html">2026-09-06 プロジェクト評価</a>
+    </li>
+    <li>
+      Eumenes：<code>eumenes/README.md</code>、<code>eumenes/AGENTS.md</code>、<code>eumenes/docs/memory.md</code>、<code>eumenes/docs/toolchain.md</code>、<code
+        >eumenes/api/domains/capabilities/</code
+      >
+    </li>
+    <li>
+      Eumenesの部品：<code>eumenes_memory/spec/full-system-design.md</code>、<code>eumenes_memory/src/contracts/external.ts</code>、<code>eumenes_world_model/spec/world-model-design.md</code>、<code>eumenes_world_model/spec/schema-v1.md</code>、<code>eumenes_world_model/spec/plan/next-stage.md</code>、<code>eumenes_pursuit/spec/{findings-design.md,lessons-design.md,host-contract-v1.md}</code>、<code
+        >eumenes_agency/plan.md</code
+      >
+    </li>
+  </ul>
+</article>

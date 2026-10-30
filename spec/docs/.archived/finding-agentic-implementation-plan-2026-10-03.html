@@ -1,0 +1,733 @@
+<article lang="ja">
+  <h1>FindingのAgentic実装計画：共通実行層・根拠収集・候補引継ぎ</h1>
+  <p>
+    2026年10月4日の接続修正は<a href="larm-common-provider-adoption-2026-10-04.html"
+      >LARM共通手順へのProvider接続修正</a
+    >を現行仕様とする。以下にある計測APIや固定runtimeを必須とする当時の記述は撤回済み。実tokenizer計測の未達は、公開Providerの受入れと分けて記録する。
+  </p>
+  <p>
+    2026年10月3日作成、10月4日更新。状態は実装中。本書は承認済みの<a
+      href="finding-agentic-replan-2026-10-03.html"
+      >Finding再設計案</a
+    >と<a href="finding-covering-shared-agent-runtime-plan-2026-10-03.html"
+      >Finding・Covering共通実行層の設計</a
+    >を実装単位へ分解する。<a href="covering-agentic-implementation-plan-2026-10-03.html"
+      >Covering実装計画</a
+    >と一組で適用する。共通基盤の作業S0〜S5は本書だけで定義し、Coveringは同じ成果物を利用する。共通transport・実行台帳・実測context制御・Finding/Coveringのresident接続を実装した。DeepStill自動委託Broker/Gatewayとmanaged
+    SQLiteのnative
+    CLI/API移行を実装した。稼働設定を更新し、更新済みdaemonと自動調査用DeepStillを起動した。サーバー設定変更の依頼は撤回済み。Finding/Coveringの本番有効化は提示されたLARM共通接続手順へのConsumer適合と実接続の確認を要する。実装済み範囲と残る公開gateは<a
+      href="finding-covering-agent-runtime-review-2026-10-04.html"
+      >実装レビュー記録</a
+    >を参照する。
+  </p>
+  <h2 id="goal">1. 完了時の動作と対象範囲</h2>
+  <p>
+    Findingは原資料を不変snapshotへ固定し、信号のある範囲から候補と具体的な疑問を作る。必要に応じて未読範囲、同scopeのKnowledge、DeepStillの調査結果を使う。根拠が揃った候補は確定し、情報が増えない探索は打ち切る。短い明確な入力は1回の抽出と決定的な引用検証で完了できる。候補の採用とKnowledge登録はCovering・Finalizeが所有する。
+  </p>
+  <p>
+    実装の正本はmanaged SQLiteのRust
+    resident。Queue固有policyを共通Agent実行層から呼ぶ。新しい汎用worker、任意tool実行基盤、TypeScriptの別Agentループは作らない。PostgreSQL経路は対応能力を明示して既存動作を維持し、新protocolを渡さない。モデルの選定・入替、採用閾値の全面変更、他QueueのAgent化は本計画の対象外。
+  </p>
+  <p>
+    基準commitはContextStill fee405c。計画作成時のRust
+    Findingはsource_target/vibe_memoryの単発抽出と32,000文字の中央切り詰めを使い、response
+    usageを実行予算へ反映していない。4枠のscheduler実装は存在するが、調査時のLARM広告はcapacity
+    1。計画作成時はtoken計測、36K契約、Agent実行台帳、DeepStill自動委託が未実装だった。2026年10月4日の実装状況は冒頭のレビュー記録を参照する。
+  </p>
+  <h2 id="files">2. 変更箇所と責務</h2>
+  <table>
+    <caption>
+      現在の接続点と新設予定のモジュール。予定名はS0で確定する
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">変更内容</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row"><code>crates/context-stilld/src/domains/agent_runtime/</code>（新設）</th>
+        <td>
+          型、context構成・計測、source/evidence、台帳、budget、停止制御、Research
+          Broker。小さい責務別ファイルに分け、Finding/Coveringの業務判断を入れない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>crates/context-stilld/src/domains/queue_lifecycle/finding_executor.rs</code></th>
+        <td>
+          入力解決・FindingPolicy・候補projectionへ分割。HTTP送信、独自truncate、共有可能なreader処理を移す。既存parserの公開出力契約を維持する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>queue_lifecycle/{executor,provider_execution,provider_lease,dynamic_provider,types}.rs</code></th>
+        <td>
+          この表のRustパスはdomains配下。Queue runの所有権と1
+          requestのleaseを分離し、待機時の解放・再開・旧実行との共存を接続する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>domains/provider_connection/</code>、<code>domains/sqlite_writer/</code>
+        </th>
+        <td>
+          接続正本と唯一のWriterを再利用する。新しい独立Semaphoreや別SQLite writerを追加しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>src/db/sqlite/core-schema.ts</code></th>
+        <td>
+          実行台帳、snapshot/evidence、Finding入力世代とprotocol、候補世代・bundle参照を追加。Rust側のschema適用・検証も同じrevisionへ更新する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>contexts/findCandidate/*.context.toml</code></th>
+        <td>
+          安定した抽出指示と、型付き行動・終了出力を管理する。予算・scope・retryの強制はruntimeへ置く。現在値と外部資料は実行時データとして分離する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>src/modules/manual-research/deepstill-client.ts</code>、<code>api/modules/manual-research/manual-research-llm.routes.ts</code>
+        </th>
+        <td>
+          手動ResearchのUIと成果projectionを維持しながら共通Broker/Gatewayへ接続できるadapter境界を切る。現在の手動固定budgetをFindingへ流用しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <code>src/cli/find-candidate.ts</code
+          >、<code>src/modules/findCandidate/domain.ts</code>、<code
+            >src/modules/queue/core/worker.ts</code
+          >
+        </th>
+        <td>
+          managed SQLiteはnative enqueue/preview/wait
+          clientへ移す。PostgreSQLの既存呼出しを分離してから重複実装を整理する。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="shared">3. 共通基盤の実装順序</h2>
+  <p>
+    各段階は検証を通してから次へ進める。S1の共通transportへの移行時点では既存の業務判断を変えず、基盤変更とAgent化の不具合を切り分ける。S4はDeepStill側の契約変更を含む独立した有効化gateとする。
+  </p>
+  <table>
+    <caption>
+      FindingとCoveringが共有する作業ID、依存関係、完了gate
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID・依存</th>
+        <th scope="col">成果物</th>
+        <th scope="col">完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr id="s0">
+        <th scope="row">S0：開始点</th>
+        <td>
+          入口・backend・input
+          kind・protocolの能力表、固定fixture、旧出力baseline、schema移行案、実行時設定の型。LARMのモデルID、template/tokenizer版、計測手段、最大context、capacityを確認する。
+        </td>
+        <td>
+          未対応入力と経路が列挙され、既存Finding/Covering/Finalize契約を固定。旧世代へのrollback条件とtoken計測の契約が決まる。テストS-T01のfixtureを保存。
+        </td>
+      </tr>
+      <tr id="s1">
+        <th scope="row">S1：S0後</th>
+        <td>
+          共通LLM sender、型付きエラー/usage、最終request計測、context
+          builder、SourceReaderと引用検証。既存Finding/CoveringのHTTPを同じsenderへ接続する。
+        </td>
+        <td>
+          業務出力の互換性、32K/36K境界、Unicode locator、secret/path/URL
+          guardをS-T02〜04で検証。計測未対応routeは新protocolを開始しない。
+        </td>
+      </tr>
+      <tr id="s2">
+        <th scope="row">S2：S1後</th>
+        <td>
+          共通run/step台帳、input generation、claim
+          fence、request単位lease、budget予約・精算・復帰。既存job単位leaseとの移行adapter。
+        </td>
+        <td>
+          待機中lease 0、全体capacity超過0、stale
+          owner書込み0、再起動時の二重確定0。S-T05〜07を通す。
+        </td>
+      </tr>
+      <tr id="s3">
+        <th scope="row">S3：S2後</th>
+        <td>
+          型付き行動の許可、疑問・進捗・重複receipt、scope付きKnowledge、終了理由、候補/evidence
+          bundleの共通型とlineage予算。
+        </td>
+        <td>
+          S-T08〜10で無進捗停止、取得失敗停止、scope分離、予算継承・引用受渡しを保証。F2とC2のAgentループはここへ接続する。
+        </td>
+      </tr>
+      <tr id="s4">
+        <th scope="row">S4：S3後</th>
+        <td>
+          非同期Research Broker、host管理LLM
+          Gateway、DeepStillの型付き入出力・予約・取消し・usage契約。手動Researchからのadapter。
+        </td>
+        <td>
+          S-T11〜13とDeepStill接続contract試験を通す。親・子・既存Queueが同じ4枠を使用し、未確認委託を再送しない。live有効化は両サービスの対応確認後。
+        </td>
+      </tr>
+      <tr id="s5">
+        <th scope="row">S5：S3とF/Cの互換検証後。自動Research有効化にはS4も必須</th>
+        <td>native入口、実行時診断、protocol切替、canary/rollback手順、旧コードの削除。</td>
+        <td>
+          F-T/C-T、全体回帰、参照箇所一覧を確認。新jobを旧workerへ渡さず、明示的な運用切替までQueue停止状態を維持する。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="ledger">4. 永続化・所有権・復帰のcontract</h2>
+  <p>
+    新しい最小台帳を次の論理単位で用意する。物理table名はmigrationレビューで確定するが、必要な制約は変更しない。保存はsqlite_writer経由、外部IOはtransactionの外で行う。既存Evidence
+    input/revisionを共通台帳へ置換しない。
+  </p>
+  <table>
+    <caption>
+      共通台帳の保存単位と一意性
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">単位</th>
+        <th scope="col">保存内容・制約</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">run</th>
+        <td>
+          owner Queue/job、input generation/hash、protocol・policy・runtime版、信頼済みrepository
+          identity、claim
+          epoch、状態、停止理由、開始/期限。ownerと入力世代とprotocolで一意。既存runは版を固定して完了する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">step / action receipt</th>
+        <td>
+          step番号、operation key、入力hash、期待する差分、request
+          ID、結果hash、usage、開始/終了。runとstep番号・operation
+          keyを一意にし、成功結果は不変。予定・送信中・成功・失敗・結果未確認を区別する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">snapshot / evidence</th>
+        <td>
+          秘匿化済みの原文、source identity/version/hash、取得時刻・scope・locatorの単位、quote
+          hash、出典種別。UTF-8
+          byte範囲とhashを検証する。snapshotの存在だけで主張の支持済みとしない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">question / acquisition</th>
+        <td>
+          候補との関係、必要条件、解消状態、scope・鮮度・source hash、取得履歴、negative
+          result。共有取得keyはWriter一意制約で競合を防ぎ、実行ownerと参照consumerを分ける。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">reservation / delegation</th>
+        <td>
+          root run・lineage、操作ID、予約上限、実usage、未知usage、子job
+          ID、cancel要求/確認。親子の物理usageはrootへ一度だけ計上し、Coveringで再利用しても取得費用を再計上しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">candidate generation / bundle</th>
+        <td>
+          入力世代、候補fingerprint、確定候補と出典参照、未解決事項、read/acquisition
+          receipt、予算owner。世代確定とCovering
+          enqueueを同じtransactionで保存する。既存候補IDを上書きしない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    LLM送信はrequest直前に同じcapacity registryからleaseを取り、終了・中断で解放する。run
+    ownershipはleaseに依存させず、全書込みをjob claimとrun/step
+    epochでfenceする。DeepStill待機、source
+    fetch、Knowledge読取り中はLLM枠を保持しない。run/子delegation当たり同時LLMは1件、全体は広告capacity以内で最大4件。既存Episode/Curation等のleaseも同じ枠に数え、runnableな別Queueを優先し、空きがあればFinding/Coveringを並列化する。
+  </p>
+  <p>
+    外部操作の前にreceiptと予約を保存する。送信後crashで結果が不明なら、idempotency
+    key・status・request
+    IDで照合する。冪等性や取得APIがないLLMは自動再送せず、結果未確認として停止・精算待ちにする。preemptionはProviderが無効化を確認できた場合に限り次のattemptへ進める。retry、restart、pause/resumeで使用量・noGain・探索履歴をリセットしない。取消し要求だけで子jobの枠や予約を解放しない。
+  </p>
+  <h2 id="budgets">5. tokenと探索の初期設定</h2>
+  <p>
+    以下は新protocolの共通既定値。1回のContextWindowと複数回の合計usageを別々に保存・表示する。64K ×
+    4 sessionの設備容量は、LARMの公開context契約を超える許可として使わない。
+  </p>
+  <table>
+    <caption>
+      Finding/Covering共通の初期予算。値は測定して調整できる設定にする
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">値・強制条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">1 request</th>
+        <td>
+          soft 32,768、consumer hard 36,864。inputは最終messages・tools/schema・chat
+          template込み。input + max(要求output予約, advertised outputReserveTokens) + max(1,024,
+          advertised safetyMarginTokens) ≤ min(36,864, advertised
+          maxTokens)。soft超過は必要な根拠と理由を記録する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">生成予約</th>
+        <td>
+          行動だけは1,536、抽出・候補差分・最終判定は4,096。対応するmax
+          outputを要求する。必要な引用は切断せず、低優先資料を外し、残るgapを保存する。重要部分が収まらなければtyped
+          context_limit。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">原資料中心のrun</th>
+        <td>
+          実input+output合計target 98,304、hard 131,072。host
+          LLM最大8回、形式repairはその内最大1回。最終確定用1 request分32,768を探索前に確保する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">DeepStillを含むrun</th>
+        <td>
+          親子合計target 262,144、hard
+          393,216。委託時は既消費を持ったままこのmodeへ移し、予算を再起算しない。子の提案上限はinput
+          196,608・output 65,536・合計262,144だが、owner残枠と最終予約を差し引いて縮める。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">lineageの外部取得</th>
+        <td>
+          1 FindingとそのCovering候補群でexternal token合計393,216、search 6、document 8、URL
+          16、delegation
+          2。Finding委託最大1件、Covering群は新しい重要gapに最大1件。各runの判定予算とは別に、同じ取得を繰り返さないため共有する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">行動・時間</th>
+        <td>
+          Knowledge最大2回。Finding委託にmaterial question最大3件。子jobはsearch 4・document 6・URL
+          12・depth 2・LLM 12回・5分、親runは10分以内。親とlineageの残枠によりさらに縮める。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    target到達後は新しい探索を開始せず、許可済みの行動と最終確定だけを残枠で行う。hard
+    admissionは予約を含めて判定し、残枠に収まらない操作を開始しない。usage欠落時は予約を未精算のまま保持し、0扱いしない。cached
+    inputはinputの内数として保存し、KV節約と料金集計を二重計上しない。各runにrequestごとのestimated/actual
+    input・output、output予約、最大計測window、cached
+    input、model/tokenizer/template版、親子usageを記録する。
+  </p>
+  <p>
+    計測は実送信されるrequestと同じtokenizer/templateを正本とする。最終request
+    hashを計測結果に結び付ける。LARMの計測APIまたは版が一致する検証済みlocal
+    tokenizerを採用し、推定文字数をhard判定へ使わない。調査時のOrnith候補広告は32,768なので、36K利用は公開契約変更後に有効化する。広告32Kの間は32K以内。capacity
+    1の間も1件以内に留める。
+  </p>
+  <h2 id="finding-tasks">6. Finding固有の実装単位</h2>
+  <table>
+    <caption>
+      Findingの作業、依存関係、検証
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID・依存</th>
+        <th scope="col">実装内容</th>
+        <th scope="col">完了gate</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr id="f1">
+        <th scope="row">F1：S0〜S2</th>
+        <td>
+          input resolverを分割し、Queue
+          claim後・LLM前に本文/diff/検証をsnapshot固定。source_target/vibe_memoryから導入し、wiki/web等は型とguardを明示して追加。provided
+          candidateは型・identityを検証するLLMなし経路として残す。
+        </td>
+        <td>
+          F-T01〜03。能力表で非対応inputをpaused
+          worker_capability_missingへ写像し、Provider枠を取らない。秘匿化後の正本hashと原資料locatorが一致。
+        </td>
+      </tr>
+      <tr id="f2">
+        <th scope="row">F2：F1・S3</th>
+        <td>
+          初期抽出、candidate
+          deltaと疑問、read_source/lookup_knowledge/delegate_research/finishの型付き行動を実装。候補・証拠台帳から毎回contextを組み、生の会話全履歴を増やさない。delegateはS4前は能力不足として別行動か保留へ進む。
+        </td>
+        <td>
+          F-T04〜07。短入力は追加探索なしで完了。未読の重要な検証・条件を読み、signalなしで外部一般知識を探索しない。prompt・schema
+          boundary検証を通す。
+        </td>
+      </tr>
+      <tr id="f3">
+        <th scope="row">F3：F2・共通bundle型</th>
+        <td>
+          候補確定、input
+          generation/fingerprintによる不変候補、引用・未解決事項・receipt・lineage付きbundle、Covering
+          enqueueをWriterで原子的に保存。候補は既存type/polarity/title/contentの出力形を保つ。
+        </td>
+        <td>
+          F-T08〜10とCovering C-T01。replayで二重候補・二重enqueueなし。旧index-based
+          IDの別世代上書きなし。採否・Knowledge登録を行わない。
+        </td>
+      </tr>
+      <tr id="f4">
+        <th scope="row">F4：F2〜F3・S4</th>
+        <td>
+          条件付きDeepStill委託をFindingPolicyへ接続。問い、解消条件、既知証拠・失敗履歴、許可scope、期限・残予算を渡す。返却結果は原文/locatorと支持関係を検証してから使う。
+        </td>
+        <td>
+          F-T11〜12。資料で解ける問いは委託しない。委託1回・問い3件以内、親wait中lease
+          0、同じ疑問を再委託しない。
+        </td>
+      </tr>
+      <tr id="f5">
+        <th scope="row">F5：F3・S5。自動Research公開にはF4</th>
+        <td>
+          managed SQLite
+          CLI/APIをnativeに揃え、previewは外部IOと保存を実行しない。診断とrun単位usageを出す。baseline比較、canary、旧Findingの削除。
+        </td>
+        <td>
+          公開候補形と終了理由の互換性、全F-Tと回帰、運用gateを通す。PostgreSQLに新protocolが流れない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="policy">7. 行動・進捗・終了の判定</h2>
+  <p>
+    行動出力はaction kind、対象snapshot/rangeまたはquery、question ID、期待する情報差分、candidate
+    deltaを持つversion付きenvelope。final候補配列とは別schemaにする。許可される行動はpolicyごとに固定し、任意shell、任意MCP、scope拡大、モデルroute変更をLLMへ渡さない。未知kind・未知参照・上限超過はIO前に拒否する。形式repairは1回までで、失敗はtyped
+    invalid_outputとして保存する。
+  </p>
+  <p>
+    追加読解は未読範囲または新しい問いと関係する既読範囲に限る。source
+    hash・locator・question・scope・鮮度でreceiptを照合し、同じ条件の再取得を抑える。queryの表記変更だけを新探索とみなさない。Knowledgeは同repository
+    identityと許可scopeで検索し、Knowledge本文を新しい原資料の証明に昇格させない。
+  </p>
+  <p>
+    進捗は検証済みの新引用、適用条件、反証、material
+    gapの解消で判定する。言い換え、自己採点、同じ引用の追加は進捗ではない。結果のある取得行動で2回連続情報増分がなければ停止する。未充足でfinishを選んだ場合、独立した未試行の経路と予算があれば1回だけ再検討できる。自動で最低探索回数を課さない。実取得失敗3回連続で停止し、一時IO
+    retryは1回まで。これらのcounterは台帳に残す。
+  </p>
+  <p>
+    十分な候補は部分確定できる。未解決候補はgapと保留理由を残し、支持済みとしてCoveringへ渡さない。候補0件はno_signal、no_candidate_after_review、insufficient_evidence、budget_exhausted、retrieval_failed、context_limitなどを区別する。runtimeの停止理由を無条件にQueue
+    completedへ写像しない。FindingPolicyの業務結果と既存Queue状態を別々に確定し、preempted/waitingはterminal成果を作らない。
+  </p>
+  <table>
+    <caption>
+      Findingの停止理由を既存Queue状態へ写像する初期contract
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">条件</th>
+        <th scope="col">Queue・下流処理</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">支持された候補の確定</th>
+        <td>
+          completed。部分確定の場合は未確定候補のgapを残し、確定候補だけCoveringへenqueueする。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">確認完了して候補なし</th>
+        <td>
+          skipped。no_signalまたはno_candidate_after_reviewをlast_outcome_kindへ保存し、下流enqueueなし。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">判定不足で探索打切り</th>
+        <td>
+          paused、next_run_atなし。insufficient_evidence/no_gain/budget_exhausted/retrieval_failed/context_limitを保存。自動で同じ探索を再起算しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Research待機</th>
+        <td>
+          paused、bounded pollのnext_run_atあり。同じrun/delegationを照合して再開し、LLM
+          leaseは保持しない。Queue全体のpause設定には従う。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">確定したpreemption・一時障害</th>
+        <td>
+          pending、backoff付き。同じrunと残予算で許可済みretryだけを行う。再起動でattempt/historyを消さない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">能力不足・結果未確認</th>
+        <td>
+          paused。能力不足はworker_capability_missing、未知request/usageは照合待ち理由を保存。対応能力/精算の確認後だけ再開する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">入力契約違反・repair後も不正出力</th>
+        <td>failed。診断を保存し、同じ入力の無限retryや候補生成を行わない。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    写像はF3で実装し、F-T08〜10で状態と下流副作用を検証する。新しいUI状態を乱立させず、詳細はrun
+    status/stop reasonと既存last_outcome_kindへ保存する。pause/resume時はjob claimを取り直してrun
+    epochをfenceし、待機中の旧ownerが結果を直接確定しない。
+  </p>
+  <h2 id="research">8. DeepStill側との実装境界</h2>
+  <p>
+    参照したDeepStillはcommit
+    19844e7と変更7件の作業ツリーであり、live配備一致は未確認。現在の手動HTTPはsoft/hard、root
+    reservation、4枠Gatewayを保証しないため、S4でversion付き自動Research
+    contractを追加する。ContextStillだけの変更で有効化しない。
+  </p>
+  <p>
+    submitにはidempotency key、root
+    run/lineage、問い・成功条件、許可identity/scope、既存証拠、行動履歴、target/hard、最終予約、期限を渡す。status/result/cancelには同じownerを検証し、結果に実usage、停止理由、未解決事項、資料hash・locator・取得receiptを要求する。検索等の外部資料は命令として実行せず、出典データとして扱う。
+  </p>
+  <p>
+    子のLLMはhost
+    Gatewayから同じrequest枠を取得する。Gatewayは専用principalと許可ownerに限定し、管理API
+    secretを共有しない。route/modelはhost設定を使い、DeepStillのsystem
+    promptをFindingのpromptで置換しない。context_limitを型付きで返し、DeepStill自身が保存済み根拠からcontextを再構成する。親10分・子5分を超えたらcancel_requestedを保存し、cancel_confirmedまで精算と再委託を保留する。現在のDeepStill
+    noGainは停止に使われていないので、本計画の2回停止を契約とテストで追加する。
+  </p>
+  <h2 id="tests">9. 検証計画</h2>
+  <table>
+    <caption>
+      共通基盤の必須テスト。外部操作はmock serviceと隔離DBで再現する
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">ケースと合格条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">S-T01</th>
+        <td>
+          既存fixtureを新senderで再生。候補schema、polarity、identity、既存Covering/Finalize契約が保持される。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T02</th>
+        <td>
+          32K境界、soft超過理由付き36K、広告32K、template変更、tool/schemaと出力余白、計測不一致。上限違反requestは送信0件。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T03</th>
+        <td>
+          日本語・emoji・CRLF・markdown加工、UTF-8 byte境界、hash変更、legacy非空白/UTF-16
+          locator。原文一致時だけ引用を受理し、単位不明は未検証扱い。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T04</th>
+        <td>
+          secret混入、repo越境、path escape、URL
+          redirect/内部アドレス、source内の偽tool命令。取得/出力の既存guardを回避しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T05</th>
+        <td>
+          capacity
+          1/4、Finding/Covering/旧Episode/Curation/子Researchの競合。総同時LLMが広告以内で、別runnable
+          Queueを優先し空きは同Queueで使う。wait/fetch中lease 0。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T06</th>
+        <td>
+          送信前後・保存直前crash、claim奪取、Provider preempt。stale結果は書込まず、成功step
+          replayで新送信なし。結果不明の非冪等requestを自動再送しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T07</th>
+        <td>
+          target/hardと最終予約、usage欠落、retry/resume、子精算、cached
+          input。上限超過開始0件、未知usageを0にせず、同じ物理requestの二重計上0件。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T08</th>
+        <td>
+          同じquery/範囲、言い換えのみ、2
+          noGain、1回の独立再検討、3取得失敗。規定通り停止し、新しい引用/反証がある場合のみprogressを更新。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T09</th>
+        <td>
+          異なるrepo・scope・source hash・鮮度のcache。誤reuse
+          0件。同条件の並列consumerは一度取得し、negative resultも期限内で共有。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T10</th>
+        <td>
+          Finding/Coveringのlineage競合。外部予算の過剰予約0件、再利用費用の再請求0件、判定runは個別予算を維持。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T11</th>
+        <td>
+          DeepStill
+          submit応答喪失・親再起動・子完了遅延。冪等keyで同じ子に復帰し、親をwaitから同じrunへ戻す。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T12</th>
+        <td>
+          取消し要求未確認・期限・部分成果。次の子を開始せず、成果と未知usageを保存。確認後だけ残予算を確定。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">S-T13</th>
+        <td>
+          Gateway principal越境、model指定、広告capacity変化、context超過。host
+          routeを維持し、契約違反を拒否。子system promptを改変しない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>
+      Findingの振る舞いと候補確定テスト
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">ケースと合格条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">F-T01〜03</th>
+        <td>
+          入力能力表、provided candidateのLLM
+          0件、snapshot固定後に原資料更新。非対応は能力不足、対応は固定した入力世代のみで処理し、秘匿情報を候補へ出さない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">F-T04</th>
+        <td>短い修正・検証済み入力。1抽出で引用付き候補を確定し、Knowledge/DeepStill要求0件。</td>
+      </tr>
+      <tr>
+        <th scope="row">F-T05</th>
+        <td>
+          長文の後半に反証・検証・適用条件。中央truncateを使わず必要範囲を読み、先頭だけの一般化を避ける。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">F-T06〜07</th>
+        <td>
+          signalなし、repo内Knowledgeに回答あり、sourceのtool誘導、未知action。不要な外部探索0件、scope越境0件、invalid
+          output repairは最大1回。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">F-T08〜10</th>
+        <td>
+          一部候補のみ支持、0件で未読あり、再実行と入力世代更新。保留と確定を分け、不変候補/bundle、Covering
+          enqueueの一意性、旧候補参照を保持。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">F-T11〜12</th>
+        <td>
+          重要gapだけを子へ渡すケースと不要調査。問い3件/委託1件以内、原文なし返却を支持証拠とせず、再開後も予算・receiptが継続。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    品質評価はS0で固定した原資料と正解観点で、旧版と新版の候補を比較する。出典追跡、事実の捏造、条件落ち、重要候補の取りこぼし、無意味な探索、call数・最大window・総usage・所要時間を記録する。必須ケースの捏造・scope越境・証拠なし支持は0件。品質の採点基準は実行前に固定し、必須候補・反証条件のケースがすべて通り、比較レビューで説明できない品質低下がないことを公開条件とする。高いusage自体を成功指標にしない。
+  </p>
+  <p>
+    実装時は変更単位のRust/TypeScriptテストから開始し、最終gateで<code>cargo test -p context-stilld</code>、<code>bun run lint:rust</code>、<code>bun run typecheck</code>、<code>bun run test:unit</code>、<code>bun run test:sqlite-core</code>、<code>bun run verify:sqlite-writer-ownership</code>を通す。prompt変更は<code>bun run system-context:lint</code>、<code>bun run system-context:build</code>、<code>bun run system-context:check</code>、<code>bun run system-context:boundary</code>で検証。Queue
+    smokeは隔離DB・mock
+    Providerで実施し、停止中の実Queueをテストのために動かさない。文書は<code>bun run spec:fix</code>と<code>bun run spec:check</code>を通す。
+  </p>
+  <h2 id="migration">10. 移行・削除・公開gate</h2>
+  <p>
+    既存の<a href="finding-v2-implementation-plan.html">Finding v2計画</a
+    >の入力能力、秘匿化、候補世代、parser診断は継承し、本書のAgent化部分が単発抽出と専用台帳案を置き換える。<a
+      href="sqlite-single-writer-external-io-isolation-implementation-plan.html"
+      >単一Writer・外部IO分離</a
+    >と<a href="../deepstill-v1-integration-design.html">DeepStill統合境界</a
+    >を維持する。旧計画全体は他の未完項目が残るため一括archiveしない。
+  </p>
+  <table>
+    <caption>
+      レガシー整理の順序と削除条件
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">整理時期・削除条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Rust独自HTTP・文字truncate</th>
+        <td>
+          S1で共通sender/readerへ接続。旧protocolの互換adapterを別にし、全call
+          site移行とbaseline通過後に重複実装を削除。単位不明の古いlocatorは検証済みへ昇格しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Finding index由来の候補ID更新</th>
+        <td>
+          F3で新世代へ不変IDを発行し、既存下流参照を維持。新protocolから旧update経路への参照0件になれば旧生成経路を削除。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">TS managed SQLite業務実行</th>
+        <td>
+          F5でenqueue/preview/waitへ変更。CLI/API結果・取消し・診断の互換性を確認後に削除。PG経路は能力を明示して分離し、移行未完の関数を消さない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">TS distillation-runtime</th>
+        <td>
+          Finding/Covering固有の重複だけを移す。他domainが利用するためファイル全体を削除しない。残るcallerと責務を記録する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">手動DeepStill client/Gateway</th>
+        <td>
+          S4の共通adapterと手動contract試験通過後、重複送信・固定budget分岐を整理。UI/projectionは維持し、live自動接続が未対応なら旧手動経路を隔離して残す。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    切替はoff → 共通基盤の互換実行 → Agentic原資料処理 →
+    DeepStill付き処理の順。QueueごとにprotocolとResearch利用を固定し、許可input/jobだけでcanaryする。比較は保存済みsnapshot/resultのreplayで行い、shadowのための追加LLM送信やResearch
+    jobは作らない。旧running jobをdrainし、新jobのみ新protocolにする。
+  </p>
+  <p>
+    公開gateは共通/固有テスト、回帰、品質比較、移行前backup/復元試験、Provider計測契約、必要capacityの広告確認。DeepStill有効化にはS4の両サービスcontractも必要。fence違反、scope越境、重複外部操作、予算超過開始が1件でもあれば新規開始を止める。rollbackは新protocolのenqueueを止め、進行runを版固定で完了・保留し、旧workerへ新jobを送らない。不可逆に旧世代へDBを戻さず、追加schema・履歴は保持する。実Queueの再開は実装完了後の運用切替として扱う。
+  </p>
+  <p>
+    Finding完了はF1〜F5と関連S作業のgateを満たし、Coveringへ渡すbundleのcontract試験が通り、削除可能な重複call
+    siteが残っていない状態。外部契約未対応のため有効化できない機能は、実装済みと稼働確認済みを区別して報告する。
+  </p>
+</article>

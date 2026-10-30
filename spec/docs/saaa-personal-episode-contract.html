@@ -1,0 +1,73 @@
+<article lang="ja">
+  <h1>SAAAの原記録から個人Episodeを作る契約</h1>
+  <p>
+    SAAAは会話の原記録と本人・Projectの現在状態を保持する。ContextStillは許可された原記録をvibe
+    memoryへ差分取得し、既存EpisodeDistillerで蒸留する。SAAAは完成Episodeを作成・送信しない。
+  </p>
+  <section id="source-permission">
+    <h2>取得と権限</h2>
+    <p>
+      ContextStillの実行環境にSAAA_MEMORY_SQLITE_PATHとしてSAAAのSQLiteの絶対パスを指定する。通常のagent-log-syncとepisodeDistillerの常駐処理を使う。SAAAの「出来事の記憶」で本人またはProjectごとの許可を有効にする。初期値は不許可。互いのDBへ直接書き込まず、SAAAの公開viewを読取専用で参照し、ContextStillの保存は既存Writerを通す。
+    </p>
+    <p>
+      memory_episode_source_v1とmemory_episode_changesを取得契約とする。原典ID、版、順序、発話者、記録時刻、発話時刻、principal、Scope、取得許可revision、Scopeの権限revision、所属revision、全文digest、UTF-8
+      byte範囲を保持する。scopeEpochは権限の世代であり、通常の会話追加による入力watermarkとは別である。
+    </p>
+    <p>
+      一回のfeedは128件。1原典を最大32000 bytesのUTF-8断片へ分け、8断片・64000
+      bytes以内で同じScopeとprincipalの会話をまとめる。cursor、断片の一意なキー、vibe
+      memory、FTS、jobは同じWriter
+      transactionで保存する。通知対象を優先し、別途128件ずつ保存済み記録を巡回して復元・通知遅延も照合する。
+    </p>
+  </section>
+  <section id="distillation">
+    <h2>蒸留と採用</h2>
+    <p>
+      個人の出来事はpersonal_episodeとして、既存の意図・判断・行動・結果・未解決事項を再利用する。行動、結果、教訓が不明なら空欄を維持する。eventStart、eventEnd、timePrecisionは原文が示す精度だけを保持する。年の出来事は年の区間として検索し、架空の月日は補わない。
+    </p>
+    <p>
+      個人EpisodeにはevidenceQuotesを要求する。sourceIdと正確な引用が、許可された原典の本人発話かtranscriptの範囲内にあることをHostで検証する。LLM実行前、保存前、検索、詳細取得でも生存・版・許可を検証する。引用照合は主張の意味的な正しさを保証するものではない。誤一般化・時間抽出の精度は実LLMによる別の評価を要する。
+    </p>
+    <p>
+      個人Scopeはrepo/globalの代用にしない。開発用の一般的なmemory検索・fetchおよびFinding/Knowledgeへの派生ではSAAAの私的原記録を利用しない。個人Episode検索はHostから渡されたScopeと全原典の現行許可を照合する。
+    </p>
+  </section>
+  <section id="invalidation">
+    <h2>訂正・忘却・停止</h2>
+    <p>
+      SAAAが型付きの本人情報の訂正を受理すると、値が変わった旧Assertionの原典版をEpisode派生用として退役する。元の会話は履歴として保持する。同値の再確認では原典を退役させない。原文の編集、発話者・時刻の編集は原典の新しい版を作る。
+    </p>
+    <p>
+      原典の変更・削除・許可取消しを検出したら、同期済み原記録、Episode、FTS、参照、生成job、job
+      event、断片台帳を除去する。複数原典のうち一部だけ失効した場合は、残る許可済み原典から再取得する。削除や停止中に遅れて届く生成も保存前の照合で拒否する。
+    </p>
+    <p>
+      SAAAへ戻すEpisodeはIDとsourceKeyと原典契約を持つ。SAAAの応答受理と保存の直前に原典を照合し、忘却後はEpisodeおよびSnapshot由来の保存済み派生回答も除去する。原文の深掘りはSAAAのfetch_episode_sourceで、その応答で取得済みのEpisodeと原典版だけを最大8192
+      bytesずつ読む。
+    </p>
+    <p>
+      保存済み派生回答は原典編集、取得許可の変更、原典版の退役、Scope失効、所属変更でも除去する。会話履歴や後の再取り込みから旧回答を使い回さない。通常会話のISO形式の日時はepoch
+      millisecondsへ変換し、旧版の時刻切り詰めは原文を保つ新しいSource版へ移行する。
+    </p>
+    <p>
+      同じfocus Scopeの直近16メッセージにある回答から、Episode
+      ID・sourceKey・原典版を最大5件、次のターンへ引き継ぐ。Episode本文をSAAAに別保存しない。参照の適格性は毎回検証し、必要な話題の継続でだけ利用する。新しい回答の依存にも引き継ぎ、focus変更・失効・履歴範囲外では使わない。
+    </p>
+    <p>
+      SAAAのDBを参照できない場合、私的原記録の適格性を証明できないため利用を保留する。ContextStill停止中はSAAAの直近会話と現在状態で会話を継続する。未処理履歴が入力予算を超える場合は、記憶が不完全である旨を明示し、過去の状態を断定しない。
+    </p>
+    <p>
+      ContextStillが作成する新規の管理バックアップからはSAAAの原記録と派生Episodeを除去し、空きページも圧縮する。復元時には現行SAAAの許可・失効履歴から再同期する。ユーザーが作成した外部のコピーや過去のバックアップをこの機能が変更することはない。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証と運用開始条件</h2>
+    <p>
+      隔離したSAAAの通常migrationで作ったSQLite
+      fixtureをContextStillへ接続し、取得・再投入・UTF-8の長い記録・部分忘却・停止復帰・検索・詳細取得・失効した生成の拒否を確認する。既存の開発用Episodeの回帰も継続する。実データの同期を始める前にこの契約の両側の検証を通し、明示した範囲だけを許可する。
+    </p>
+    <p>
+      実LLMによる日本語の時間・採用精度、背景token数、遅延、cache実績、Consolidationの効果比較は自動契約テストと区別する。これらを未測定のまま改善率や「最良」を主張しない。SAAAの推論Observationの統合は試験運用で初期値は無効とする。
+    </p>
+  </section>
+</article>
