@@ -7,47 +7,36 @@ Thank you for considering a contribution to context-still.
 1. Open an issue for substantial behavior changes.
 2. Keep pull requests focused and reviewable.
 3. Preserve local-first behavior and auditability.
-4. Keep public user documentation in `spec/pub/`.
-5. Keep internal implementation plans and design notes in `spec/docs/`.
+4. Keep public user documentation in `spec/docs/pub/` (Markdown).
+5. Keep internal design notes and implementation plans in `spec/docs/` (Spec HTML).
 
 ## Development Setup
+
+Requirements: Bun 1.4.4 only.
 
 ```bash
 git clone https://github.com/ugnoguchigxp/contextStill.git
 cd contextStill
 bun install
-docker compose up -d
-cp .env.example .env
-bun run db:migrate
 ```
 
 ## Verification
 
-Run the daily fast gate before opening a pull request:
+Run the gate before opening a pull request:
 
 ```bash
 bun run verify
 ```
 
-Run the full release gate before tagging or cutting a release:
+It runs, in order and stopping at the first failure: `format:check`, `lint`, `typecheck`, `boundaries`, `test`, `spec:check`. Run the tests of one domain with:
 
 ```bash
-bun run verify:full
+bun run test:domain -- <name>
 ```
 
-For MCP changes:
+Tests never start a server or reach the network: `scripts/test-preload.ts` blocks `fetch` and `Bun.serve`, so use `app.request()`, temporary directories, and injected `fetch` fixtures. Do not point a test at a real database.
 
-```bash
-bun run verify:mcp
-```
-
-For queue operational changes:
-
-```bash
-bun run verify:queue:smoke
-```
-
-`bun run verify` is intentionally limited to typecheck, lint, format check, unit tests, and web build. Integration tests and queue smoke are destructive. Use only a dedicated test database whose name includes `test`.
+After editing a Spec HTML document under `spec/docs/`, run `bun run spec:fix` and then `bun run spec:check`.
 
 ## Pull Request Checklist
 

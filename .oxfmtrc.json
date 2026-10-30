@@ -1,0 +1,28 @@
+{
+	"$schema": "./node_modules/oxfmt/configuration_schema.json",
+	"useTabs": true,
+	"tabWidth": 2,
+	"printWidth": 80,
+	"singleQuote": false,
+	"quoteProps": "as-needed",
+	"trailingComma": "all",
+	"semi": true,
+	"arrowParens": "always",
+	"bracketSameLine": false,
+	"bracketSpacing": true,
+	"sortPackageJson": false,
+	"ignorePatterns": [
+		"**/*.md",
+		"spec/**",
+		"node_modules/**",
+		"data/**",
+		"coverage/**",
+		".s11tnext/**",
+		".serena/**",
+		"target/**",
+		"scratch/**",
+		".tmp/**",
+		"github-pages/**",
+		"docs/**"
+	]
+}

@@ -1,0 +1,22 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"plugins": ["typescript", "unicorn", "oxc"],
+	"categories": {
+		"correctness": "error"
+	},
+	"rules": {
+		"unicorn/prefer-array-flat-map": "error"
+	},
+	"ignorePatterns": [
+		"node_modules/**",
+		"data/**",
+		"coverage/**",
+		".s11tnext/**",
+		".serena/**",
+		"target/**",
+		"scratch/**",
+		".tmp/**",
+		"github-pages/**",
+		"docs/**"
+	]
+}
