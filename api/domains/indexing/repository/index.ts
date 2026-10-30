@@ -71,7 +71,8 @@ export interface EmbedSourceRow {
 /**
  * Active, searchable rows of the owner table with the state of their vector in the space, oldest
  * first. Evidence-only rows (repo-specific, unusable, absorbed) are never searched or clustered,
- * so they are not embedded.
+ * so they are not embedded. Repo-scope episodes are not assessed and stay evidence (N2 plan 6.1);
+ * repo-scope knowledge is, because its atoms are generalized into global canonicals.
  */
 export function listActiveForEmbedding(
 	db: Database,
@@ -91,6 +92,7 @@ export function listActiveForEmbedding(
 			 LEFT JOIN vectors v
 			   ON v.owner_kind = ? AND v.owner_id = o.id AND v.space_key = ?
 			 WHERE o.status = 'active' AND o.retrieval = 'searchable'
+			   ${owner === "episode" ? "AND o.scope = 'global'" : ""}
 			 ORDER BY o.seq`,
 		)
 		.all(owner, spaceKey) as EmbedSourceRow[];

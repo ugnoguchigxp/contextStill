@@ -469,6 +469,49 @@ describe("embedMissing", () => {
 		expect(await vectorOf(s, "knowledge", "e1")).toBeNull();
 	});
 
+	test("repo-scope episodes and evidence-only rows are not embedded", async () => {
+		const s = await ready();
+		await addEpisode(s.deps, "e1");
+		await addEpisode(s.deps, "e2");
+		await addKnowledge(s.deps, "a");
+		await addKnowledge(s.deps, "b");
+		await s.deps.store.write((db) => {
+			db.run(
+				"UPDATE episodes SET scope = 'repo', repo_key = 'r' WHERE id = 'e2'",
+			);
+			db.run(
+				"UPDATE knowledge_items SET retrieval = 'evidence_only' WHERE id = 'b'",
+			);
+		});
+		const episodes = await embedMissing(s.deps, { ...ARGS, owner: "episode" });
+		expect(episodes).toMatchObject({ candidates: 1, embedded: 1 });
+		expect(await vectorOf(s, "episode", "e2")).toBeNull();
+		const knowledge = await embedMissing(s.deps, ARGS);
+		expect(knowledge).toMatchObject({ candidates: 1, embedded: 1 });
+		expect(await vectorOf(s, "knowledge", "b")).toBeNull();
+	});
+
+	test("larm_deploying (an expired connection) retries the same batch once", async () => {
+		const s = await ready();
+		await addKnowledge(s.deps, "a");
+		s.larm.onEmbed = (call) => {
+			if (call === 1) throw new LarmError("larm_deploying");
+		};
+		expect(await embedMissing(s.deps, ARGS)).toMatchObject({
+			embedded: 1,
+			failed: 0,
+		});
+		// a second one in the same batch is a failure, not a loop
+		await addKnowledge(s.deps, "b");
+		s.larm.onEmbed = () => {
+			throw new LarmError("larm_deploying");
+		};
+		expect(await embedMissing(s.deps, ARGS)).toMatchObject({
+			embedded: 0,
+			failed: 1,
+		});
+	});
+
 	test("busy waits retryAfterMs and retries the same batch", async () => {
 		const s = await ready();
 		await addKnowledge(s.deps, "a");

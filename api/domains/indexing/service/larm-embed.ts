@@ -51,6 +51,7 @@ export async function embedBatch(
 	type: EmbeddingInputType,
 ): Promise<EmbedOutcome> {
 	let busyWaits = 0;
+	let reconnected = false;
 	for (let attempt = 0; ; attempt++) {
 		try {
 			const vectors = await deps.larm.embed(texts, type);
@@ -74,6 +75,17 @@ export async function embedBatch(
 					`larm_busy: waiting ${wait}ms (retry ${attempt + 1}/${MAX_BUSY_RETRIES})`,
 				);
 				await deps.sleep(wait);
+				continue;
+			}
+			if (
+				error instanceof LarmError &&
+				error.code === "larm_deploying" &&
+				!reconnected
+			) {
+				// The connection's lease (about 300 s) ran out during a long run; the client makes a
+				// new connection on the next call, so the same batch is tried once more.
+				reconnected = true;
+				deps.log("larm_deploying: retrying the batch once on a new connection");
 				continue;
 			}
 			return { ok: false, error, busyWaits };
