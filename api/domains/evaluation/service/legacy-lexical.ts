@@ -26,8 +26,10 @@ function dynamicScoreOf(metadataJson: string): number {
 }
 
 /**
- * Rows the v2 search would also consider for a case: active, global scope (a case has no
- * repoKey), the case's spaces, and atoms for knowledge. Text is the same fields v1 scored.
+ * The pool the atoms before distillation offered for a case: global scope (a case has no
+ * repoKey), the case's spaces, and atoms for knowledge, active or superseded (so the legacy
+ * baselines see the same rows before and after the re-distillation; retrieval is ignored).
+ * Text is the same fields v1 scored.
  */
 export function loadCandidates(
 	db: Database,
@@ -51,7 +53,7 @@ export function loadCandidates(
 				string[]
 			>(
 				`SELECT id, handle, title, body, importance, updated_at, metadata_json FROM knowledge_items
-				 WHERE status='active' AND layer='atom' AND scope='global' AND space IN (${marks})`,
+				 WHERE status IN ('active','superseded') AND layer='atom' AND scope='global' AND space IN (${marks})`,
 			)
 			.all(...spaces))
 			out.push({

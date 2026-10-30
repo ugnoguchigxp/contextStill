@@ -17,11 +17,13 @@ const OPTIONS = {
 	lanes: "value",
 	k: "value",
 	out: "value",
+	judge: "flag",
 } as const;
 
 const SYSTEMS: readonly EvalSystem[] = [
 	"legacy-lexical",
 	"legacy-query-first",
+	"v2-atom-baseline",
 	"v2-hybrid",
 ];
 const LANES: readonly SearchLane[] = ["fts", "short", "vector"];
@@ -59,6 +61,8 @@ function parse(argv: string[], now: Date = new Date()) {
 		lanes: list(args.values.get("lanes"), LANES, DEFAULT_LANES, "lanes"),
 		k: intOption(args, "k", 10),
 		outPath: isAbsolute(out) ? out : join(REPO_ROOT, out),
+		/** Judges unjudged canonical pairs in the top k with the distill LLM (needs LARM). */
+		judge: args.flags.has("judge"),
 	};
 }
 
@@ -77,6 +81,12 @@ export const evalSearch = (argv: string[]) =>
 					log: (line) => console.error(line),
 				},
 				args,
+				args.judge
+					? {
+							judgePairs: (pairs, signal) =>
+								runtime.distill.judgePairs(pairs, signal),
+						}
+					: {},
 			);
 			// runEvaluation owns the file; this only guarantees one exists at --out.
 			if (!existsSync(args.outPath))

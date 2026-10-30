@@ -6,7 +6,7 @@ export const DEFAULT_PORT = 39181;
 export const APP_VERSION = "2.0.0-alpha.0";
 
 /** Ports of the v1 system; v2 never binds them. */
-const LEGACY_PORTS: readonly number[] = [39171, 39172];
+export const LEGACY_PORTS: readonly number[] = [39171, 39172];
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 export type ConfigErrorCode =

@@ -11,9 +11,13 @@ export const domains = {
 	vectors: { tier: 0, depends: [] },
 	sources: { tier: 0, depends: [] },
 	usage: { tier: 0, depends: [] },
+	map: { tier: 0, depends: [] },
 	experience: { tier: 1, depends: ["sources"] },
 	knowledge: { tier: 1, depends: ["sources"] },
-	search: { tier: 2, depends: ["knowledge", "experience", "vectors"] },
+	search: {
+		tier: 2,
+		depends: ["knowledge", "experience", "vectors", "map"],
+	},
 	legacy: {
 		tier: 2,
 		depends: ["sources", "experience", "knowledge", "vectors", "usage"],
@@ -22,8 +26,28 @@ export const domains = {
 		tier: 2,
 		depends: ["larm", "vectors", "knowledge", "experience"],
 	},
-	mcp: { tier: 3, depends: ["search", "knowledge", "experience", "sources"] },
-	evaluation: { tier: 3, depends: ["search", "legacy", "knowledge"] },
+	mcp: {
+		tier: 4,
+		depends: ["search", "knowledge", "experience", "sources", "map", "distill"],
+	},
+	distill: {
+		tier: 3,
+		depends: [
+			"knowledge",
+			"experience",
+			"vectors",
+			"map",
+			"larm",
+			"queue",
+			"usage",
+			"sources",
+			"indexing",
+		],
+	},
+	evaluation: {
+		tier: 4,
+		depends: ["search", "legacy", "knowledge", "map", "distill"],
+	},
 } as const satisfies Record<
 	string,
 	{ tier: number; depends: readonly string[] }

@@ -4,6 +4,7 @@ export type {
 	EpisodeSourceRef,
 	EpisodeStatus,
 	OutcomeKind,
+	Retrieval,
 	TimePrecision,
 } from "./contracts";
 export {
@@ -12,5 +13,6 @@ export {
 	listEpisodeSources,
 	migrations,
 	replaceEpisodeSources,
+	setEpisodeRetrieval,
 	upsertEpisode,
 } from "./repository";

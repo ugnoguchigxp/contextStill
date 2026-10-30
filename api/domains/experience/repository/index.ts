@@ -3,7 +3,12 @@ import { canonicalJson } from "../../../infrastructure/digest";
 import { makeHandle } from "../../../infrastructure/handle";
 import type { UpsertResult } from "../../../infrastructure/scope";
 import { upsertRow } from "../../../infrastructure/sqlite/upsert";
-import type { EpisodeInput, EpisodeRow, EpisodeSourceRef } from "../contracts";
+import type {
+	EpisodeInput,
+	EpisodeRow,
+	EpisodeSourceRef,
+	Retrieval,
+} from "../contracts";
 
 export { migrations } from "./migrations";
 
@@ -80,6 +85,7 @@ interface EpisodeDbRow {
 	scope: EpisodeRow["scope"];
 	repo_key: string | null;
 	facets_json: string;
+	retrieval: Retrieval;
 	revision: number;
 	created_at: string;
 	updated_at: string;
@@ -87,7 +93,7 @@ interface EpisodeDbRow {
 
 const COLUMNS = `id, handle, title, situation, intent, decision, observations, action, outcome,
   lesson, open_questions_json, outcome_kind, event_start, event_end, time_precision, confidence,
-  importance, status, space, scope, repo_key, facets_json, revision, created_at, updated_at`;
+  importance, status, space, scope, repo_key, facets_json, retrieval, revision, created_at, updated_at`;
 
 function toRow(row: EpisodeDbRow): EpisodeRow {
 	return {
@@ -113,6 +119,7 @@ function toRow(row: EpisodeDbRow): EpisodeRow {
 		scope: row.scope,
 		repoKey: row.repo_key,
 		facets: JSON.parse(row.facets_json) as Record<string, unknown>,
+		retrieval: row.retrieval,
 		revision: row.revision,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
@@ -148,4 +155,21 @@ export function listEpisodeSources(
 			)
 			.all(episodeId) as { source_id: string; locator: string; role: string }[]
 	).map((r) => ({ sourceId: r.source_id, locator: r.locator, role: r.role }));
+}
+
+/** True when the retrieval changed; the revision then moves by one. The caller owns the transaction. */
+export function setEpisodeRetrieval(
+	db: Database,
+	id: string,
+	retrieval: Retrieval,
+	updatedAt: string,
+): boolean {
+	return (
+		db
+			.query(
+				`UPDATE episodes SET retrieval = ?, revision = revision + 1, updated_at = ?
+				 WHERE id = ? AND retrieval != ?`,
+			)
+			.run(retrieval, updatedAt, id, retrieval).changes > 0
+	);
 }

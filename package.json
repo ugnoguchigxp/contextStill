@@ -21,6 +21,7 @@
 		"vectors:embed": "bun api/application/commands/vectors-embed.ts",
 		"eval:search": "bun api/application/commands/eval-search.ts",
 		"settings:larm": "bun api/application/commands/settings-larm.ts",
+		"distill": "bun api/application/commands/distill.ts",
 		"spec:view": "bunx --bun spec-html ./spec/docs --markdown-lang ja",
 		"spec:convert": "bunx --bun spec-html convert",
 		"spec:check": "bunx --bun spec-html check ./spec/docs --warnings-as-errors && bunx --bun spec-html check ./spec/docs/.archived --fixer --format",

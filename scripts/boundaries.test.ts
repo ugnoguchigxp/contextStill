@@ -47,13 +47,15 @@ test("the domain table is a DAG that only points to lower tiers", () => {
 		vectors: 0,
 		sources: 0,
 		usage: 0,
+		map: 0,
 		experience: 1,
 		knowledge: 1,
 		search: 2,
 		legacy: 2,
 		indexing: 2,
-		mcp: 3,
-		evaluation: 3,
+		mcp: 4,
+		distill: 3,
+		evaluation: 4,
 	});
 });
 

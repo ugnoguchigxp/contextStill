@@ -134,6 +134,37 @@ export function getSourceContent(db: Database, id: string): string | null {
 	return row ? row.content : null;
 }
 
+const clampChars = (maxChars: number) =>
+	Math.max(0, Math.floor(Number.isFinite(maxChars) ? maxChars : 0));
+
+/** The first `maxChars` characters of a source's text; SQLite cuts it, so the rest is not read. */
+export function getSourceExcerpt(
+	db: Database,
+	id: string,
+	maxChars: number,
+): string | null {
+	const row = db
+		.query(
+			"SELECT substr(content, 1, ?) AS excerpt FROM source_records WHERE id = ?",
+		)
+		.get(clampChars(maxChars), id) as { excerpt: string } | null;
+	return row ? row.excerpt : null;
+}
+
+/** The first `maxChars` characters of a fragment's text. */
+export function getFragmentExcerpt(
+	db: Database,
+	id: string,
+	maxChars: number,
+): string | null {
+	const row = db
+		.query(
+			"SELECT substr(content, 1, ?) AS excerpt FROM source_fragments WHERE id = ?",
+		)
+		.get(clampChars(maxChars), id) as { excerpt: string } | null;
+	return row ? row.excerpt : null;
+}
+
 /** The source a fragment belongs to, without reading the fragment text. */
 export function getFragmentSourceId(db: Database, id: string): string | null {
 	const row = db

@@ -1,4 +1,5 @@
 import type { HttpErrorStatus } from "../infrastructure/http";
+import { errorStatus as distill } from "../domains/distill";
 import { errorStatus as larm } from "../domains/larm";
 import { errorStatus as search } from "../domains/search";
 import { errorStatus as settings } from "../domains/settings";
@@ -37,6 +38,7 @@ export function mergeErrorStatus(
 
 const statusByCode = mergeErrorStatus(
 	shared,
+	distill,
 	larm,
 	search,
 	settings,

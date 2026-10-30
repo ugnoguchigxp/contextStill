@@ -8,4 +8,9 @@ export {
 	type EvalSystem,
 	type SystemMetrics,
 } from "./contracts";
-export { legacyQueryTokens, legacyScoreText, runEvaluation } from "./service";
+export {
+	legacyQueryTokens,
+	legacyScoreText,
+	runEvaluation,
+	type EvalOptions,
+} from "./service";

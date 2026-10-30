@@ -2,6 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { tempStore } from "../../../infrastructure/sqlite/test-support";
 import {
 	findSourceByUri,
+	getFragmentExcerpt,
+	getSourceExcerpt,
 	getSourceFragment,
 	getSourceRecord,
 	migrations,
@@ -199,4 +201,24 @@ test("fragments: upsert, lookup, byte range checks, cascade", async () => {
 		db.query("DELETE FROM source_records WHERE id = 's1'").run(),
 	);
 	expect(store.read((db) => getSourceFragment(db, "f1"))).toBeNull();
+});
+
+test("an excerpt is the first characters only, cut by code point, and missing rows give null", async () => {
+	const store = setup();
+	await store.write((db) => {
+		upsertSourceRecord(db, record({ content: "😀".repeat(1000) + "end" }));
+		upsertSourceFragment(
+			db,
+			fragment({ id: "f1", sourceId: "s1", content: "ab" + "x".repeat(5000) }),
+		);
+	});
+	await store.readSnapshot((db) => {
+		expect(getSourceExcerpt(db, "s1", 3)).toBe("😀😀😀");
+		expect(getSourceExcerpt(db, "s1", 5000)?.length).toBe(2003);
+		expect(getSourceExcerpt(db, "s1", 0)).toBe("");
+		expect(getSourceExcerpt(db, "s1", -1)).toBe("");
+		expect(getSourceExcerpt(db, "missing", 10)).toBeNull();
+		expect(getFragmentExcerpt(db, "f1", 4)).toBe("abxx");
+		expect(getFragmentExcerpt(db, "missing", 4)).toBeNull();
+	});
 });

@@ -8,6 +8,10 @@ export interface Filter {
 	repoKey: string | null;
 	types: KnowledgeType[] | null;
 	layers: KnowledgeLayer[];
+	/** Evaluation baseline only: status IN ('active','superseded') and retrieval is not looked at. */
+	includeSuperseded: boolean;
+	/** The theme and its descendants; rows must belong to one of them through an active `about` edge. */
+	themeIds: string[] | null;
 }
 export interface Candidate {
 	id: string;
@@ -40,7 +44,9 @@ function scopeSql(
 	binder: Binder,
 ): string {
 	const parts = [
-		`${alias}.status = 'active'`,
+		filter.includeSuperseded
+			? `${alias}.status IN ('active', 'superseded')`
+			: `${alias}.status = 'active' AND ${alias}.retrieval = 'searchable'`,
 		`${alias}.space IN (${binder.list(filter.spaces)})`,
 		filter.repoKey === null
 			? `${alias}.scope = 'global'`
@@ -51,10 +57,20 @@ function scopeSql(
 		if (filter.types)
 			parts.push(`${alias}.type IN (${binder.list(filter.types)})`);
 	}
+	if (filter.themeIds)
+		parts.push(
+			`EXISTS (SELECT 1 FROM map_edges e WHERE e.src_kind = '${kind}' AND e.src_id = ${alias}.id
+				AND e.relation = 'about' AND e.status = 'active' AND e.dst_kind = 'theme'
+				AND e.dst_id IN (${binder.list(filter.themeIds)}))`,
+		);
 	return parts.join(" AND ");
 }
 
-const TITLE_COLUMN = "title";
+/** Columns that score 2 points like the title: a canonical's situation says when it applies. */
+const TITLE_LIKE_COLUMNS: Record<SearchKind, string[]> = {
+	knowledge: ["title", "situation"],
+	episode: ["title"],
+};
 const BODY_COLUMNS: Record<SearchKind, string[]> = {
 	knowledge: ["body"],
 	episode: ["situation", "action", "outcome", "lesson"],
@@ -72,8 +88,9 @@ export function runLexicalLane(
 	const table = TABLE[kind];
 	if (lane === "fts") {
 		const fts = kind === "knowledge" ? "knowledge_fts" : "episodes_fts";
+		// knowledge_fts: title, situation, body. episodes_fts: title, situation, action, outcome, lesson.
 		const weights =
-			kind === "knowledge" ? "2.0, 1.0" : "2.0, 1.0, 1.0, 1.0, 1.5";
+			kind === "knowledge" ? "2.0, 2.5, 1.0" : "2.0, 1.0, 1.0, 1.0, 1.5";
 		const match = binder.bind(
 			terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR "),
 		);
@@ -88,7 +105,7 @@ export function runLexicalLane(
 		}[];
 		return rows.map((row) => ({ id: row.id, raw: -row.score }));
 	}
-	// Per term: 2 points for a title hit, 1 for a body hit; `hits` counts the terms that
+	// Per term: 2 points for a title hit, 2 for a situation hit (knowledge), 1 for a body hit; `hits` counts the terms that
 	// appear anywhere. A row needs hits on at least half of the terms, so a single noisy
 	// term cannot pull unrelated rows into the lane when the query has many terms.
 	const perTerm = terms.map((term) => {
@@ -96,9 +113,12 @@ export function runLexicalLane(
 		const body = BODY_COLUMNS[kind]
 			.map((column) => `instr(lower(t.${column}), ${placeholder}) > 0`)
 			.join(" OR ");
-		const title = `instr(lower(t.${TITLE_COLUMN}), ${placeholder}) > 0`;
+		const titleLike = TITLE_LIKE_COLUMNS[kind].map(
+			(column) => `(instr(lower(t.${column}), ${placeholder}) > 0)`,
+		);
+		const title = titleLike.join(" OR ");
 		return {
-			points: `(${title}) * 2 + ((${body}) > 0)`,
+			points: `${titleLike.map((hit) => `${hit} * 2`).join(" + ")} + ((${body}) > 0)`,
 			hit: `((${title}) OR (${body}))`,
 		};
 	});

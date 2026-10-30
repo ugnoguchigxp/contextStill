@@ -81,6 +81,52 @@ export interface LarmEmbeddingDeps {
 	maxBatch?: number;
 }
 
+export interface ChatMessage {
+	role: "system" | "user" | "assistant";
+	content: string;
+}
+
+export interface ChatRequest {
+	messages: ChatMessage[];
+	/** 1..16384 */
+	maxOutputTokens: number;
+	/** true: send `response_format {"type":"json_object"}` (left out when the provider does not support it). */
+	json: boolean;
+	signal?: AbortSignal;
+}
+
+export interface ChatResult {
+	text: string;
+	model: string;
+	finishReason: "stop" | "length" | "other";
+	usage: { inputTokens: number | null; outputTokens: number | null };
+}
+
+/** The chat side of LARM (provider `llm`). A failure is a `LarmError`. */
+export interface LlmClient {
+	readonly provider: "larm" | "fixture";
+	/**
+	 * The model of the connection when it is already known, else null. Part of the key under which
+	 * `callJson` reuses an earlier answer.
+	 */
+	model?(): string | null;
+	/** Same shape as the embedding client's status. */
+	status(): LarmEmbeddingStatus;
+	chat(req: ChatRequest): Promise<ChatResult>;
+	release(): Promise<void>;
+}
+
+/** `chatTimeoutMs` defaults to 300000; a response body is cut at 1 MiB (`larm_http_error`). */
+export type LarmChatDeps = LarmEmbeddingDeps & {
+	llmProfile: () => string;
+	chatTimeoutMs?: number;
+	/**
+	 * Ports a claimed provider baseURL may not use, besides LARM's own: the legacy daemon's and
+	 * this backend's. The credential and the knowledge text must never be sent to them.
+	 */
+	forbiddenPorts?: readonly number[];
+};
+
 export const errorStatus = {
 	larm_not_configured: 503,
 	larm_token_missing: 503,

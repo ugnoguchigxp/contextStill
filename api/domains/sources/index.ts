@@ -8,8 +8,10 @@ export type {
 export type { SourceMetaRow } from "./repository";
 export {
 	findSourceByUri,
+	getFragmentExcerpt,
 	getFragmentSourceId,
 	getSourceContent,
+	getSourceExcerpt,
 	getSourceFragment,
 	getSourceMeta,
 	getSourceRecord,

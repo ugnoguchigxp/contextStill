@@ -12,7 +12,9 @@ import {
 import {
 	type EvidenceInput,
 	type KnowledgeInput,
+	type KnowledgeRow as KnowledgeItem,
 	type KnowledgeStatus,
+	getKnowledgeById,
 	knowledgeContentDigest,
 	replaceKnowledgeEvidence,
 	upsertKnowledgeItem,
@@ -494,6 +496,49 @@ function knowledgeStatus(
 	}
 }
 
+/**
+ * What a re-import must not undo. The legacy row only says `active`, so it cannot overwrite
+ * what the re-distillation decided: an atom it superseded stays `superseded`, and one it
+ * retracted (the loser of a conflict, `retracted` with `evidence_only`) stays `retracted`.
+ * The protection rests on `status` and `retrieval`, not on `metadata.distill`. A legacy
+ * `deprecated` still retracts (a superseded atom becomes `retracted`). A `retracted` row that
+ * stays `searchable` came from a legacy `deprecated` earlier and follows the legacy row again.
+ * The `metadata.distill` the re-distillation wrote is kept, and when the title or body changed
+ * it is marked `needsReassess`. `retrieval` is not part of the upsert, so it stays as it is.
+ */
+export function keepDistillState(
+	existing: KnowledgeItem | null,
+	input: KnowledgeInput,
+): KnowledgeInput {
+	if (!existing) return input;
+	const distill = isRecord(existing.metadata.distill)
+		? existing.metadata.distill
+		: null;
+	const held =
+		existing.status === "superseded" ||
+		(existing.status === "retracted" && existing.retrieval === "evidence_only");
+	const settled = held || existing.retrieval === "evidence_only";
+	const changed =
+		existing.title !== input.title || existing.body !== input.body;
+	const needsReassess = settled && changed;
+	if (!held && !distill && !needsReassess) return input;
+	return {
+		...input,
+		status:
+			held && input.status !== "retracted" ? existing.status : input.status,
+		metadata:
+			distill || needsReassess
+				? {
+						...input.metadata,
+						distill: {
+							...distill,
+							...(needsReassess ? { needsReassess: true } : {}),
+						},
+					}
+				: input.metadata,
+	};
+}
+
 export interface KnowledgePlanDeps {
 	state: ImportState;
 	provenance: ProvenanceIndex;
@@ -567,7 +612,10 @@ export const planKnowledge =
 			targetTable: "knowledge_items",
 			targetId: row.id,
 			apply: (db) => {
-				const result = upsertKnowledgeItem(db, input);
+				const result = upsertKnowledgeItem(
+					db,
+					keepDistillState(getKnowledgeById(db, row.id), input),
+				);
 				replaceKnowledgeEvidence(
 					db,
 					row.id,

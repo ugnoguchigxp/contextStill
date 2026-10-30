@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { getLogger } from "../infrastructure/logger";
+import { getRun, registerDistill } from "../domains/distill";
 import { registerLarm } from "../domains/larm";
 import { registerMcp } from "../domains/mcp";
 import { registerSettings } from "../domains/settings";
@@ -9,6 +11,8 @@ import { errorResponse } from "./error-status";
 import type { Runtime } from "./runtime";
 
 const log = getLogger("app");
+
+const API_BODY_LIMIT_BYTES = 1024 * 1024;
 
 /** Comparison time does not depend on where the tokens first differ. */
 function sameToken(presented: string, expected: string): boolean {
@@ -46,12 +50,24 @@ export function createApp(
 			});
 		return next();
 	});
+	// /mcp has its own, smaller limit; the largest /api body is a calibration import.
+	app.use(
+		"/api/*",
+		bodyLimit({
+			maxSize: API_BODY_LIMIT_BYTES,
+			onError: (c) => c.json({ error: "payload_too_large" }, 413),
+		}),
+	);
 
 	registerSettings(app, {
 		settings: runtime.settings,
 		larmTokenPresent: () => !!runtime.config.larmToken,
 	});
 	registerLarm(app, runtime.larm);
+	registerDistill(app, {
+		service: runtime.distill,
+		getRun: (id) => runtime.store.read((db) => getRun(db, id)),
+	});
 	registerMcp(app, {
 		path: "/mcp",
 		token: tokens.mcp,

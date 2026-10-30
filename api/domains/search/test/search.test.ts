@@ -10,10 +10,17 @@ import {
 	type EpisodeInput,
 } from "../../experience";
 import {
+	knowledgeContentDigest,
 	migrations as knowledgeMigrations,
+	setKnowledgeDisposition,
 	upsertKnowledgeItem,
 	type KnowledgeInput,
 } from "../../knowledge";
+import {
+	migrations as mapMigrations,
+	upsertCluster,
+	upsertEdge,
+} from "../../map";
 import { migrations as sourcesMigrations } from "../../sources";
 import {
 	ensureVectorSpace,
@@ -43,6 +50,7 @@ async function setup() {
 		...experienceMigrations,
 		...knowledgeMigrations,
 		...vectorMigrations,
+		...mapMigrations,
 	]);
 	disposers.push(t.dispose);
 	const store = t.store;
@@ -75,6 +83,8 @@ const knowledge = (over: Partial<KnowledgeInput> = {}): KnowledgeInput => ({
 	metadata: {},
 	createdAt: T,
 	updatedAt: T,
+	// A canonical states a situation (5.3); one that no test query matches.
+	...(over.layer === "canonical" ? { situation: "◇◇◇" } : {}),
 	...over,
 });
 const episode = (over: Partial<EpisodeInput> = {}): EpisodeInput => ({
@@ -186,8 +196,10 @@ test("rows out of scope never appear however well they match", async () => {
 		knowledge({ id: "personal", space: "personal", ...strong }),
 	]);
 	const search = createSearch({ store, spaceKey });
-	expect(ids(await search.search(req()))).toEqual(["in"]);
-	// repo scope opens only with a matching repoKey; canonical only when asked for.
+	// canonical and atom are searched by default; the other rows are out of scope.
+	expect(ids(await search.search(req())).sort()).toEqual(["canonical", "in"]);
+	expect(ids(await search.search(req({ layers: ["atom"] })))).toEqual(["in"]);
+	// repo scope opens only with a matching repoKey.
 	const withRepo = await search.search(
 		req({ repoKey: "repo-a", layers: ["atom", "canonical"] }),
 	);
@@ -202,7 +214,11 @@ test("rows out of scope never appear however well they match", async () => {
 	])
 		await vec(store, spaceKey, "knowledge", id, [1, 0, 0, 0]);
 	const v = await vectorOnly.search(
-		req({ lanes: ["vector"], queryVector: Float32Array.from([1, 0, 0, 0]) }),
+		req({
+			lanes: ["vector"],
+			layers: ["atom"],
+			queryVector: Float32Array.from([1, 0, 0, 0]),
+		}),
 	);
 	expect(ids(v)).toEqual(["in"]);
 });
@@ -269,9 +285,15 @@ test("Japanese substring of 3+ characters matches via fts, 2 character word via 
 test("RRF score follows the formula with the lane weights (hand computed)", async () => {
 	const { store, spaceKey } = await setup();
 	await seed(store, [
-		knowledge({ id: "k1", title: "backup", body: "short" }),
-		knowledge({ id: "k2", title: "other", body: "backup one two three four" }),
+		knowledge({ layer: "canonical", id: "k1", title: "backup", body: "short" }),
 		knowledge({
+			layer: "canonical",
+			id: "k2",
+			title: "other",
+			body: "backup one two three four",
+		}),
+		knowledge({
+			layer: "canonical",
 			id: "k3",
 			title: "third",
 			body: `backup ${Array.from({ length: 60 }, (_, i) => `w${i}`).join(" ")}`,
@@ -308,8 +330,13 @@ test("RRF score follows the formula with the lane weights (hand computed)", asyn
 test("short lane carries weight 0.5", async () => {
 	const { store, spaceKey } = await setup();
 	await seed(store, [
-		knowledge({ id: "a", title: "規則", body: "規則の本文" }),
-		knowledge({ id: "b", title: "別", body: "規則だけ" }),
+		knowledge({
+			layer: "canonical",
+			id: "a",
+			title: "規則",
+			body: "規則の本文",
+		}),
+		knowledge({ layer: "canonical", id: "b", title: "別", body: "規則だけ" }),
 	]);
 	await vec(store, spaceKey, "knowledge", "b", [1, 0, 0, 0]);
 	await vec(store, spaceKey, "knowledge", "a", [0.6, 0.8, 0, 0]);
@@ -331,8 +358,8 @@ test("ties break by best lane rank, then knowledge before episode, then id", asy
 	await seed(
 		store,
 		[
-			knowledge({ id: "kb", title: "規則", body: "x" }),
-			knowledge({ id: "ka", title: "規則", body: "x" }),
+			knowledge({ layer: "canonical", id: "kb", title: "規則", body: "x" }),
+			knowledge({ layer: "canonical", id: "ka", title: "規則", body: "x" }),
 		],
 		[episode({ id: "e0", title: "規則", situation: "x" })],
 	);
@@ -566,7 +593,9 @@ test("a vector from another space is ignored", async () => {
 
 test("no_lexical_terms falls back to the vector lane alone", async () => {
 	const { store, spaceKey } = await setup();
-	await seed(store, [knowledge({ id: "k1", title: "x", body: "y" })]);
+	await seed(store, [
+		knowledge({ layer: "canonical", id: "k1", title: "x", body: "y" }),
+	]);
 	await vec(store, spaceKey, "knowledge", "k1", [1, 0, 0, 0]);
 	const search = createSearch({ store, spaceKey });
 	const r = await search.search(
@@ -706,4 +735,292 @@ test("short lane requires half of the terms to hit; 1-2 terms need only one", as
 	expect(ids(two)).toEqual(["k-all", "k-two", "k-one"]);
 	const one = await search.search(req({ query: "ef", lanes: ["short"] }));
 	expect(ids(one)).toEqual(["k-all"]);
+});
+
+const canonical = (over: Partial<KnowledgeInput> = {}) =>
+	knowledge({
+		layer: "canonical",
+		situation: "when the nightly job runs",
+		...over,
+	});
+
+test("evidence_only and superseded rows never appear; includeSuperseded lifts both", async () => {
+	const { store, spaceKey } = await setup();
+	const strong = { title: "backup backup", body: "backup backup backup" };
+	await seed(
+		store,
+		[
+			knowledge({ id: "in", title: "backup", body: "weak mention" }),
+			knowledge({ id: "evidence", ...strong }),
+			knowledge({ id: "old", ...strong }),
+			canonical({ id: "canon-evidence", ...strong }),
+		],
+		[
+			episode({ id: "ep-in", title: "backup", situation: "x" }),
+			episode({
+				id: "ep-evidence",
+				title: "backup backup",
+				situation: "backup",
+			}),
+		],
+	);
+	await store.write((db) => {
+		setKnowledgeDisposition(db, "evidence", {
+			retrieval: "evidence_only",
+			updatedAt: T,
+		});
+		setKnowledgeDisposition(db, "canon-evidence", {
+			retrieval: "evidence_only",
+			updatedAt: T,
+		});
+		setKnowledgeDisposition(db, "old", { status: "superseded", updatedAt: T });
+		db.query(
+			"UPDATE episodes SET retrieval = 'evidence_only' WHERE id = ?",
+		).run("ep-evidence");
+	});
+	await vec(store, spaceKey, "knowledge", "evidence", [1, 0, 0, 0]);
+	const search = createSearch({ store, spaceKey });
+	const base = req({
+		kinds: ["knowledge", "episode"],
+		lanes: ["fts", "short"],
+	});
+	expect(ids(await search.search(base)).sort()).toEqual(["ep-in", "in"]);
+	const vector = await search.search(
+		req({ lanes: ["vector"], queryVector: Float32Array.from([1, 0, 0, 0]) }),
+	);
+	expect(ids(vector)).toEqual([]);
+	const lifted = await search.search({ ...base, includeSuperseded: true });
+	expect(ids(lifted).sort()).toEqual([
+		"canon-evidence",
+		"ep-evidence",
+		"ep-in",
+		"evidence",
+		"in",
+		"old",
+	]);
+	expect(lifted.hits.find((h) => h.id === "old")!.status).toBe("superseded");
+});
+
+test("a canonical whose words are only in the situation is found by fts and short", async () => {
+	const { store, spaceKey } = await setup();
+	await seed(store, [
+		canonical({
+			id: "c",
+			title: "別件",
+			body: "本文に語はない",
+			situation: "データベースの移行とバックアップ",
+		}),
+		knowledge({ id: "a", title: "別件", body: "本文に語はない" }),
+	]);
+	const search = createSearch({ store, spaceKey });
+	const fts = await search.search(
+		req({ query: "データベース", lanes: ["fts"] }),
+	);
+	expect(ids(fts)).toEqual(["c"]);
+	const short = await search.search(req({ query: "移行", lanes: ["short"] }));
+	expect(ids(short)).toEqual(["c"]);
+	expect(short.hits[0]!.lanes[0]!.raw).toBe(2);
+	expect(short.hits[0]!.situation).toBe("データベースの移行とバックアップ");
+});
+
+test("bm25 weighs situation (2.5) above title (2.0) above body (1.0)", async () => {
+	const { store, spaceKey } = await setup();
+	const filler = "alpha beta gamma delta epsilon";
+	await seed(store, [
+		canonical({
+			id: "in-body",
+			title: filler,
+			situation: filler,
+			body: `${filler} backup`,
+		}),
+		canonical({
+			id: "in-title",
+			title: `${filler} backup`,
+			situation: filler,
+			body: filler,
+		}),
+		canonical({
+			id: "in-situation",
+			title: filler,
+			situation: `${filler} backup`,
+			body: filler,
+		}),
+	]);
+	const r = await createSearch({ store, spaceKey }).search(
+		req({ lanes: ["fts"] }),
+	);
+	expect(ids(r)).toEqual(["in-situation", "in-title", "in-body"]);
+	const raw = r.hits.map((h) => h.lanes[0]!.raw);
+	expect(raw[0]!).toBeGreaterThan(raw[1]!);
+	expect(raw[1]!).toBeGreaterThan(raw[2]!);
+});
+
+test("atom is scaled by 0.8 and a canonical wins ties", async () => {
+	const { store, spaceKey } = await setup();
+	await seed(store, [
+		knowledge({ id: "a", title: "規則", body: "x" }),
+		canonical({ id: "c", title: "規則", body: "x", situation: "y" }),
+	]);
+	const search = createSearch({ store, spaceKey });
+	const r = await search.search(req({ query: "規則", lanes: ["short"] }));
+	// atom "a" ranks first inside the lane (seq order), yet the canonical leads after the 0.8.
+	const byId = Object.fromEntries(r.hits.map((h) => [h.id, h]));
+	expect(byId.a!.lanes[0]!.rank).toBe(1);
+	expect(byId.c!.lanes[0]!.rank).toBe(2);
+	expect(byId.a!.score).toBeCloseTo((0.5 / 61) * 0.8, 12);
+	expect(byId.c!.score).toBeCloseTo(0.5 / 62, 12);
+	expect(ids(r)).toEqual(["c", "a"]);
+	// An exact tie across layers: atom at rank 20 (0.8 / 80) equals canonical at rank 40 (1 / 100).
+	const items: KnowledgeInput[] = [];
+	for (let n = 1; n <= 40; n++)
+		items.push(
+			n === 20
+				? knowledge({ id: "tie-a", title: "同点", body: "x" })
+				: n === 40
+					? canonical({ id: "tie-c", title: "同点", body: "x" })
+					: knowledge({
+							id: `f${String(n).padStart(2, "0")}`,
+							title: "同点",
+							body: "x",
+						}),
+		);
+	await seed(store, items);
+	const tie = await search.search(
+		req({ query: "同点", lanes: ["short"], limit: 50 }),
+	);
+	const order = ids(tie);
+	expect(tie.hits.find((h) => h.id === "tie-a")!.lanes[0]!.rank).toBe(20);
+	expect(tie.hits.find((h) => h.id === "tie-c")!.lanes[0]!.rank).toBe(40);
+	expect(order.indexOf("tie-c")).toBeLessThan(order.indexOf("tie-a"));
+});
+
+test("canonical summary is situation (120) + ' — ' + body, cut at 280", async () => {
+	const { store, spaceKey } = await setup();
+	await seed(store, [
+		canonical({
+			id: "c",
+			title: "backup",
+			situation: "s".repeat(200),
+			body: "b".repeat(400),
+		}),
+		knowledge({ id: "a", title: "backup", body: "atom body" }),
+	]);
+	const r = await createSearch({ store, spaceKey }).search(req());
+	const c = r.hits.find((h) => h.id === "c")!;
+	expect(c.summary).toBe(`${"s".repeat(120)} — ${"b".repeat(280 - 123)}`);
+	expect([...c.summary]).toHaveLength(280);
+	const a = r.hits.find((h) => h.id === "a")!;
+	expect(a.summary).toBe("atom body");
+	expect(a.layer).toBe("atom");
+	expect(a.situation).toBe("");
+});
+
+test("vector lane matches the new digest (situation included), not the title+body one", async () => {
+	const { store, spaceKey } = await setup();
+	await seed(store, [
+		canonical({ id: "fresh", title: "t1", body: "b1", situation: "s1" }),
+		canonical({ id: "old", title: "t2", body: "b2", situation: "s2" }),
+	]);
+	await store.write((db) => {
+		for (const [id, t, b, s, digestSituation] of [
+			["fresh", "t1", "b1", "s1", "s1"],
+			["old", "t2", "b2", "s2", ""],
+		] as const) {
+			void s;
+			upsertVector(db, {
+				ownerKind: "knowledge",
+				ownerId: id,
+				spaceKey,
+				contentDigest: knowledgeContentDigest(t, b, digestSituation),
+				vector: Float32Array.from([1, 0, 0, 0]),
+				origin: "larm",
+				verification: "unverified",
+				now: T,
+			});
+		}
+	});
+	const r = await createSearch({ store, spaceKey }).search(
+		req({ lanes: ["vector"], queryVector: Float32Array.from([1, 0, 0, 0]) }),
+	);
+	expect(ids(r)).toEqual(["fresh"]);
+});
+
+async function seedThemes(store: SqliteStore) {
+	await seed(store, [
+		knowledge({ id: "k-low", title: "backup", body: "x" }),
+		knowledge({ id: "k-high", title: "backup", body: "y" }),
+		canonical({ id: "k-other", title: "backup", body: "z" }),
+		knowledge({ id: "k-none", title: "backup", body: "w" }),
+	]);
+	await store.write((db) => {
+		const theme = (id: string, level: 0 | 1 | 2, parentId: string | null) =>
+			upsertCluster(db, {
+				id,
+				kind: "theme",
+				parentId,
+				level,
+				name: id,
+				aliases: [],
+				description: "",
+				summary: {},
+				state: "distilled",
+				algorithm: "test",
+				memberDigest: "d",
+				members: [],
+				createdAt: T,
+				updatedAt: T,
+			});
+		theme("top", 1, null);
+		theme("sub", 2, "top");
+		theme("elsewhere", 2, null);
+		const edge = (
+			src: string,
+			relation: "about" | "broader",
+			dst: string,
+			srcKind: "knowledge" | "theme" = "knowledge",
+		) =>
+			upsertEdge(db, {
+				src: { kind: srcKind, id: src },
+				relation,
+				dst: { kind: "theme", id: dst },
+				origin: "clustering",
+				status: "active",
+				confidence: 0.9,
+				evidence: {},
+				extractorVersion: "test",
+				at: T,
+			});
+		edge("sub", "broader", "top", "theme");
+		edge("k-low", "about", "sub");
+		edge("k-low", "about", "top");
+		edge("k-high", "about", "top");
+		edge("k-other", "about", "elsewhere");
+	});
+}
+
+test("theme narrows to the theme and its descendants; hits carry up to 3 theme ids, level 2 first", async () => {
+	const { store, spaceKey } = await setup();
+	await seedThemes(store);
+	const search = createSearch({ store, spaceKey });
+	const all = await search.search(req());
+	expect(all.hits.find((h) => h.id === "k-low")!.themes).toEqual(["sub"]);
+	expect(all.hits.find((h) => h.id === "k-high")!.themes).toEqual(["top"]);
+	expect(all.hits.find((h) => h.id === "k-none")!.themes).toEqual([]);
+	expect(all.degraded).not.toContain("theme_unavailable");
+	const top = await search.search(req({ theme: "top" }));
+	expect(ids(top).sort()).toEqual(["k-high", "k-low"]);
+	const sub = await search.search(req({ theme: "sub" }));
+	expect(ids(sub)).toEqual(["k-low"]);
+	const unknown = await search.search(req({ theme: "nope" }));
+	expect(ids(unknown)).toEqual([]);
+});
+
+test("an empty theme table gives theme_unavailable and no narrowing", async () => {
+	const { store, spaceKey } = await setup();
+	await seed(store, [knowledge({ id: "k", title: "backup", body: "x" })]);
+	const r = await createSearch({ store, spaceKey }).search(
+		req({ theme: "top" }),
+	);
+	expect(ids(r)).toEqual(["k"]);
+	expect(r.degraded).toEqual(["theme_unavailable"]);
 });

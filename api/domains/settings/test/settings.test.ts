@@ -32,6 +32,7 @@ test("the default document", async () => {
 			baseUrl: null,
 			audience: null,
 			embeddingProfile: "embeddingCanary",
+			llmProfile: "contextStill",
 		},
 	});
 });

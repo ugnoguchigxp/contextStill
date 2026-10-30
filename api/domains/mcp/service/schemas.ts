@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { HANDLE_PATTERN } from "../../../infrastructure/handle";
+import { MCP_DEFAULT_SPACES } from "../contracts";
 
 const unique = <T>(items: readonly T[]) => new Set(items).size === items.length;
 
@@ -21,14 +21,17 @@ export const searchArgs = z.strictObject({
 		.min(1)
 		.max(3)
 		.refine(unique)
-		.default(["general", "eumenes"]),
+		.default([...MCP_DEFAULT_SPACES]),
 	theme: z.string().max(128).optional(),
 	limit: z.number().int().min(1).max(20).default(8),
 	depth: z.number().int().min(0).max(2).default(0),
 });
 
+/** Knowledge and episode handles only: a theme handle (`th_`) is not retrievable here. */
+const GET_HANDLE_PATTERN = /^(kn|ep)_[a-z2-7]{26}$/;
+
 export const getArgs = z.strictObject({
-	handle: z.string().regex(HANDLE_PATTERN),
+	handle: z.string().regex(GET_HANDLE_PATTERN),
 });
 
 export const TOOLS = [
@@ -62,7 +65,7 @@ export const TOOLS = [
 					minItems: 1,
 					maxItems: 3,
 					uniqueItems: true,
-					default: ["general", "eumenes"],
+					default: [...MCP_DEFAULT_SPACES],
 				},
 				theme: { type: "string", maxLength: 128 },
 				limit: { type: "integer", minimum: 1, maximum: 20, default: 8 },
@@ -79,7 +82,7 @@ export const TOOLS = [
 			additionalProperties: false,
 			required: ["handle"],
 			properties: {
-				handle: { type: "string", pattern: "^(kn|ep)_[a-z2-7]{26}$" },
+				handle: { type: "string", pattern: GET_HANDLE_PATTERN.source },
 			},
 		},
 	},

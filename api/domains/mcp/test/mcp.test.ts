@@ -2,18 +2,29 @@ import { afterEach, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { makeHandle } from "../../../infrastructure/handle";
 import { tempStore } from "../../../infrastructure/sqlite/test-support";
+import { migrations as distillMigrations } from "../../distill";
 import {
 	migrations as experienceMigrations,
+	setEpisodeRetrieval,
 	upsertEpisode,
 	type EpisodeInput,
 } from "../../experience";
 import {
 	migrations as knowledgeMigrations,
 	replaceKnowledgeEvidence,
+	setKnowledgeDisposition,
 	upsertKnowledgeItem,
 	type EvidenceInput,
 	type KnowledgeInput,
 } from "../../knowledge";
+import {
+	memberDigest,
+	migrations as mapMigrations,
+	themeHandle,
+	upsertCluster,
+	upsertEdge,
+	type ClusterInput,
+} from "../../map";
 import {
 	SearchError,
 	type SearchHit,
@@ -58,6 +69,14 @@ const SECRETS = [
 	"metadata-secret",
 	"AGENT-LOG-SECRET-BODY",
 	"REPO-SOURCE-SECRET-BODY",
+	"k-canon-id",
+	"k-canon-2-id",
+	"k-atom-a",
+	"k-atom-b",
+	"e-example-id",
+	"e-hidden-example-id",
+	"c-theme-",
+	"episodeIds",
 ];
 
 const disposers: (() => Promise<void>)[] = [];
@@ -175,6 +194,9 @@ function hit(over: Partial<SearchHit> = {}): SearchHit {
 		type: "procedure",
 		polarity: "positive",
 		status: "active",
+		layer: "atom",
+		situation: "",
+		themes: [],
 		space: "coding",
 		confidence: 0.8,
 		score: 0.0246,
@@ -190,6 +212,8 @@ async function setup(
 		...sourcesMigrations,
 		...knowledgeMigrations,
 		...experienceMigrations,
+		...mapMigrations,
+		...distillMigrations,
 	]);
 	disposers.push(t.dispose);
 	if (opts.seed !== false)
@@ -355,7 +379,11 @@ test("initialize, ping, notifications and tools/list follow the contract", async
 	const search = tools[0].inputSchema;
 	expect(search.additionalProperties).toBe(false);
 	expect(search.required).toEqual(["query"]);
-	expect(search.properties.spaces.default).toEqual(["general", "eumenes"]);
+	expect(search.properties.spaces.default).toEqual([
+		"coding",
+		"general",
+		"eumenes",
+	]);
 	expect(search.properties.spaces.items.enum).toEqual([
 		"coding",
 		"general",
@@ -586,7 +614,7 @@ test("search_knowledge: defaults, mapping, and degraded additions", async () => 
 	expect(fake.calls[0]).toMatchObject({
 		query: "バックアップ",
 		kinds: ["knowledge"],
-		spaces: ["general", "eumenes"],
+		spaces: ["coding", "general", "eumenes"],
 		limit: 8,
 	});
 	expect(fake.calls[0]!.repoKey).toBeUndefined();
@@ -625,11 +653,13 @@ test("search_knowledge: defaults, mapping, and degraded additions", async () => 
 		sourceKinds: ["agent_log", "document", "external", "web"],
 	});
 
+	// No theme table content: the name does not resolve, so the search is not narrowed.
 	const withExpansion = await tool(app, "search_knowledge", {
 		query: "q",
 		depth: 2,
 		theme: "db",
 	});
+	expect(fake.calls.at(-1)!.theme).toBeUndefined();
 	expect(withExpansion.payload.degraded).toEqual([
 		"vector_unavailable",
 		"expansion_unavailable",
@@ -1080,4 +1110,535 @@ test("cutChars cuts at code point boundaries", () => {
 	expect(cutChars("a😀b😀c", 3)).toBe("a😀b");
 	expect(cutChars("😀😀", 2)).toBe("😀😀");
 	expect(cutChars("😀".repeat(100_000), 600)).toBe("😀".repeat(600));
+});
+
+// ---- N2: canonical items, themes, warnings --------------------------------------------------
+
+const T2 = "2026-10-02T00:00:00.000Z";
+/** A clock that moves 2 s per call, so many calls never meet the token bucket. */
+const slowClock = () => {
+	let t = 0;
+	return () => (t += 2000);
+};
+const canonical = (over: Partial<KnowledgeInput> = {}): KnowledgeInput =>
+	knowledge({
+		id: "k-canon-id",
+		layer: "canonical",
+		title: "移行前にバックアップを確認する",
+		body: "本番へ書き込む前に、復元できるバックアップがあることを確かめる。",
+		situation: "本番のデータベースへ移行を行う直前",
+		rationale: "復元できないバックアップは役に立たない。",
+		exceptions: ["使い捨ての検証環境では省いてよい"],
+		examples: [
+			{
+				situation: "前日の移行",
+				action: "バックアップを復元して確かめた",
+				outcome: "失敗しても戻せた",
+				episodeIds: ["e-example-id", "e-hidden-example-id"],
+			},
+		],
+		appliesWhen: ["migration"],
+		...over,
+	});
+const atomEvidence = (
+	targetKind: EvidenceInput["targetKind"],
+	targetId: string | null,
+	role: EvidenceInput["role"] = "derived_from",
+) => ({ ...ev(targetKind, targetId), role });
+
+/** Atoms a and b over shared originals, a canonical item standing on both, and example episodes. */
+async function seedCanonical(
+	store: Awaited<ReturnType<typeof setup>>["store"],
+) {
+	await store.write((db) => {
+		upsertKnowledgeItem(db, knowledge({ id: "k-atom-a" }));
+		upsertKnowledgeItem(db, knowledge({ id: "k-atom-b" }));
+		replaceKnowledgeEvidence(
+			db,
+			"k-atom-a",
+			"pipeline",
+			[ev("fragment", "f-secret-frag"), ev("source", "s-secret-log")],
+			T,
+		);
+		replaceKnowledgeEvidence(
+			db,
+			"k-atom-b",
+			"pipeline",
+			[
+				ev("fragment", "f-secret-frag"),
+				ev("source", "s-secret-web"),
+				ev("external", null),
+			],
+			T,
+		);
+		upsertKnowledgeItem(db, canonical());
+		replaceKnowledgeEvidence(
+			db,
+			"k-canon-id",
+			"pipeline",
+			[
+				atomEvidence("atom", "k-atom-a"),
+				atomEvidence("atom", "k-atom-b", "supports"),
+				atomEvidence("atom", "k-atom-b", "refutes"),
+				atomEvidence("source", "s-secret-web"),
+			],
+			T,
+		);
+		upsertEpisode(db, episode({ id: "e-example-id" }));
+		upsertEpisode(
+			db,
+			episode({
+				id: "e-hidden-example-id",
+				scope: "repo",
+				repoKey: "repo-secret-key",
+			}),
+		);
+	});
+}
+
+function theme(id: string, over: Partial<ClusterInput> = {}): ClusterInput {
+	return {
+		id,
+		kind: "theme",
+		parentId: null,
+		level: 2,
+		name: "データベース",
+		aliases: ["DB"],
+		description: "",
+		summary: {},
+		state: "distilled",
+		algorithm: "kmeans.v1",
+		memberDigest: memberDigest([], new Map()),
+		members: [],
+		createdAt: T,
+		updatedAt: T,
+		...over,
+	};
+}
+
+test("an example with no served Episode is not returned; one with a served Episode shows only its handle", async () => {
+	const { app, store } = await setup();
+	await seedCanonical(store);
+	await store.write((db) => {
+		upsertEpisode(db, episode({ id: "e-personal-id", space: "personal" }));
+		upsertEpisode(db, episode({ id: "e-evidence-only-id" }));
+		setEpisodeRetrieval(db, "e-evidence-only-id", "evidence_only", T2);
+	});
+	const ex = (situation: string, episodeIds: string[]) => ({
+		situation,
+		action: "操作",
+		outcome: "結果",
+		episodeIds,
+	});
+	const served = async (examples: ReturnType<typeof ex>[]) => {
+		await store.write((db) => upsertKnowledgeItem(db, canonical({ examples })));
+		return tool(app, "get_knowledge", {
+			handle: makeHandle("knowledge", "k-canon-id"),
+		});
+	};
+	// Every example holds only hidden, missing or no Episode: none is served, text included.
+	const none = await served([
+		ex("repo の事例", ["e-hidden-example-id"]),
+		ex("個人の事例", ["e-personal-id", "e-evidence-only-id", "e-missing-id"]),
+	]);
+	expect(none.payload.item.examples).toEqual([]);
+	const empty = await served([ex("Episode を持たない事例", [])]);
+	expect(empty.payload.item.examples).toEqual([]);
+	for (const hidden of ["repo の", "個人の", "Episode を持たない"])
+		expect(JSON.stringify([none.payload, empty.payload])).not.toContain(hidden);
+	// One served Episode keeps the example, and only that handle is shown.
+	const mixed = await served([
+		ex("混在する事例", ["e-hidden-example-id", "e-example-id"]),
+	]);
+	expect(mixed.payload.item.examples).toEqual([
+		{
+			situation: "混在する事例",
+			action: "操作",
+			outcome: "結果",
+			episodes: [makeHandle("episode", "e-example-id")],
+		},
+	]);
+});
+
+test("get_knowledge returns a canonical item with the new fields and flattened evidence", async () => {
+	const { app, store } = await setup();
+	await seedCanonical(store);
+	const r = await tool(app, "get_knowledge", {
+		handle: makeHandle("knowledge", "k-canon-id"),
+	});
+	expect(r.isError).toBeUndefined();
+	const item = r.payload.item;
+	expect(item).toMatchObject({
+		kind: "knowledge",
+		layer: "canonical",
+		situation: "本番のデータベースへ移行を行う直前",
+		rationale: "復元できないバックアップは役に立たない。",
+		exceptions: ["使い捨ての検証環境では省いてよい"],
+		supportCount: 2,
+		supersededBy: null,
+		evidenceTruncated: false,
+	});
+	// The example's episodes are shown by handle; the repo-scope one is dropped; no internal id.
+	expect(item.examples).toEqual([
+		{
+			situation: "前日の移行",
+			action: "バックアップを復元して確かめた",
+			outcome: "失敗しても戻せた",
+			episodes: [makeHandle("episode", "e-example-id")],
+		},
+	]);
+	// Originals of the atoms, each once: fragment (document), agent_log, web, external.
+	expect(item.evidence).toHaveLength(4);
+	expect(item.evidence.map((e: any) => e.sourceKind).sort()).toEqual([
+		"agent_log",
+		"document",
+		"external",
+		"web",
+	]);
+	expect(item.evidence.find((e: any) => e.sourceKind === "agent_log")).toEqual({
+		role: "derived_from",
+		sourceKind: "agent_log",
+	});
+	expect(item.evidence.find((e: any) => e.sourceKind === "external")).toEqual({
+		role: "derived_from",
+		sourceKind: "external",
+	});
+	expect(JSON.stringify(item)).not.toContain("AGENT-LOG-SECRET-BODY");
+});
+
+test("an atom item has empty canonical fields and a canonical with many originals is capped at 10", async () => {
+	const { app, store } = await setup();
+	await store.write((db) => {
+		for (let i = 0; i < 12; i++) {
+			upsertSourceRecord(
+				db,
+				source({
+					id: `s-secret-web-${i}`,
+					kind: "web",
+					uri: `https://example.com/p${i}`,
+					title: `p${i}`,
+					content: `c${i}`,
+				}),
+			);
+			upsertKnowledgeItem(db, knowledge({ id: `k-atom-${i}-x` }));
+			replaceKnowledgeEvidence(
+				db,
+				`k-atom-${i}-x`,
+				"pipeline",
+				[ev("source", `s-secret-web-${i}`)],
+				T,
+			);
+		}
+		upsertKnowledgeItem(db, canonical());
+		replaceKnowledgeEvidence(
+			db,
+			"k-canon-id",
+			"pipeline",
+			Array.from({ length: 12 }, (_, i) =>
+				atomEvidence("atom", `k-atom-${i}-x`),
+			),
+			T,
+		);
+	});
+	const atom = await tool(app, "get_knowledge", {
+		handle: makeHandle("knowledge", "k-secret-id"),
+	});
+	expect(atom.payload.item).toMatchObject({
+		situation: "",
+		rationale: "",
+		exceptions: [],
+		examples: [],
+		supportCount: 0,
+	});
+	const r = await tool(app, "get_knowledge", {
+		handle: makeHandle("knowledge", "k-canon-id"),
+	});
+	expect(r.payload.item.supportCount).toBe(12);
+	expect(r.payload.item.evidence).toHaveLength(10);
+	expect(r.payload.item.evidenceTruncated).toBe(true);
+	expect(r.bytes).toBeLessThanOrEqual(32 * 1024);
+});
+
+test("get_knowledge accepts knowledge and episode handles only", async () => {
+	const { app, store } = await setup();
+	await store.write((db) => upsertCluster(db, theme("c-theme-1")));
+	const r = await tool(app, "get_knowledge", {
+		handle: themeHandle("c-theme-1"),
+	});
+	expect(r.isError).toBe(true);
+	expect(r.payload).toEqual({ error: "invalid_arguments" });
+});
+
+test("a superseded atom shows supersededBy; evidence_only and repo-scope atoms are not found", async () => {
+	const { app, store } = await setup();
+	await seedCanonical(store);
+	await store.write((db) => {
+		// k-atom-a is absorbed by the canonical item (evidence route); k-atom-b through an edge.
+		setKnowledgeDisposition(db, "k-atom-a", {
+			status: "superseded",
+			retrieval: "evidence_only",
+			updatedAt: T2,
+		});
+		setKnowledgeDisposition(db, "k-atom-b", {
+			status: "superseded",
+			retrieval: "evidence_only",
+			updatedAt: T2,
+		});
+		upsertKnowledgeItem(
+			db,
+			canonical({ id: "k-canon-2-id", title: "別の正本" }),
+		);
+		upsertEdge(db, {
+			src: { kind: "knowledge", id: "k-canon-2-id" },
+			relation: "supersedes",
+			dst: { kind: "knowledge", id: "k-atom-b" },
+			origin: "llm",
+			status: "active",
+			confidence: 0.9,
+			evidence: {},
+			extractorVersion: "t",
+			at: T2,
+		});
+		// Superseded with no active canonical: served, supersededBy null.
+		upsertKnowledgeItem(
+			db,
+			knowledge({ id: "k-orphan-id", status: "superseded" }),
+		);
+		setKnowledgeDisposition(db, "k-orphan-id", {
+			retrieval: "evidence_only",
+			updatedAt: T2,
+		});
+		// evidence_only but still active (repo-specific): not found.
+		upsertKnowledgeItem(db, knowledge({ id: "k-evonly-id" }));
+		setKnowledgeDisposition(db, "k-evonly-id", {
+			retrieval: "evidence_only",
+			updatedAt: T2,
+		});
+		upsertEpisode(db, episode({ id: "e-evonly-id" }));
+		setEpisodeRetrieval(db, "e-evonly-id", "evidence_only", T2);
+	});
+	const get = (kind: "knowledge" | "episode", id: string) =>
+		tool(app, "get_knowledge", { handle: makeHandle(kind, id) });
+	const a = await get("knowledge", "k-atom-a");
+	expect(a.isError).toBeUndefined();
+	expect(a.payload.item.status).toBe("superseded");
+	expect(a.payload.item.supersededBy).toBe(
+		makeHandle("knowledge", "k-canon-id"),
+	);
+	const b = await get("knowledge", "k-atom-b");
+	expect(b.payload.item.supersededBy).toBe(
+		makeHandle("knowledge", "k-canon-2-id"),
+	);
+	expect(
+		(await get("knowledge", "k-orphan-id")).payload.item.supersededBy,
+	).toBeNull();
+	for (const [kind, id] of [
+		["knowledge", "k-evonly-id"],
+		["episode", "e-evonly-id"],
+		["knowledge", "k-repo-id"],
+	] as const) {
+		const r = await get(kind, id);
+		expect(r.isError).toBe(true);
+		expect(r.payload).toEqual({ error: "not_found" });
+	}
+});
+
+test("search results carry theme refs (handle and name, at most 3) and canonical evidence counts originals", async () => {
+	const canonHit = hit({
+		id: "k-canon-id",
+		handle: makeHandle("knowledge", "k-canon-id"),
+		layer: "canonical",
+		situation: "本番のデータベースへ移行を行う直前",
+		themes: [
+			"c-theme-1",
+			"c-theme-gone",
+			"c-theme-2",
+			"c-theme-3",
+			"c-theme-4",
+		],
+	});
+	const fake = fakeSearch([canonHit]);
+	const { app, store } = await setup({ search: fake.service });
+	await seedCanonical(store);
+	await store.write((db) => {
+		for (const [i, name] of ["データベース", "移行", "安全", "余り"].entries())
+			upsertCluster(db, theme(`c-theme-${i + 1}`, { name, aliases: [] }));
+	});
+	const r = await tool(app, "search_knowledge", { query: "q" });
+	const result = r.payload.results[0];
+	expect(result.themes).toEqual([
+		{ handle: themeHandle("c-theme-1"), name: "データベース" },
+		{ handle: themeHandle("c-theme-2"), name: "移行" },
+		{ handle: themeHandle("c-theme-3"), name: "安全" },
+	]);
+	expect(result.evidenceSummary).toEqual({
+		count: 4,
+		sourceKinds: ["agent_log", "document", "external", "web"],
+	});
+	expect(Object.keys(result).sort()).toEqual(
+		[
+			"confidence",
+			"evidenceSummary",
+			"handle",
+			"kind",
+			"polarity",
+			"route",
+			"score",
+			"space",
+			"status",
+			"summary",
+			"themes",
+			"title",
+			"type",
+		].sort(),
+	);
+});
+
+test("the theme input resolves by handle, name or alias; anything else is theme_unavailable and does not narrow", async () => {
+	const fake = fakeSearch([hit()]);
+	const { app, store } = await setup({
+		search: fake.service,
+		now: slowClock(),
+	});
+	await store.write((db) => {
+		upsertCluster(db, theme("c-theme-db"));
+		upsertCluster(
+			db,
+			theme("c-theme-ops", { name: "運用", aliases: ["ops", "共有"] }),
+		);
+		upsertCluster(
+			db,
+			theme("c-theme-sec", { name: "安全", aliases: ["共有"] }),
+		);
+		upsertCluster(
+			db,
+			theme("c-theme-rej", { name: "却下", aliases: [], state: "rejected" }),
+		);
+		upsertCluster(db, theme("c-theme-claim", { kind: "claim", name: "claim" }));
+	});
+	const search = (themeInput: string) =>
+		tool(app, "search_knowledge", { query: "q", theme: themeInput });
+	for (const [input, id] of [
+		[themeHandle("c-theme-db"), "c-theme-db"],
+		["データベース", "c-theme-db"],
+		["  データベース ", "c-theme-db"],
+		["DB", "c-theme-db"],
+		["ops", "c-theme-ops"],
+		["運用", "c-theme-ops"],
+	] as const) {
+		const r = await search(input);
+		expect(fake.calls.at(-1)!.theme).toBe(id);
+		expect(r.payload.degraded).not.toContain("theme_unavailable");
+	}
+	for (const input of [
+		"共有", // an alias of two themes
+		"db", // not an exact match
+		"却下", // a rejected theme
+		"claim", // not a theme
+		themeHandle("c-theme-claim"),
+		themeHandle("c-theme-missing"),
+		makeHandle("knowledge", "k-secret-id"),
+		"nothing",
+	]) {
+		const r = await search(input);
+		expect(fake.calls.at(-1)!.theme).toBeUndefined();
+		expect(r.payload.degraded).toContain("theme_unavailable");
+	}
+	await tool(app, "search_knowledge", { query: "q" });
+	expect(fake.calls.at(-1)!.theme).toBeUndefined();
+});
+
+test("unresolved conflicts between returned canonical items become warnings", async () => {
+	const h = (id: string, over: Partial<SearchHit> = {}) =>
+		hit({
+			id,
+			handle: makeHandle("knowledge", id),
+			layer: "canonical",
+			...over,
+		});
+	const hits = [
+		h("k-canon-id"),
+		h("k-canon-2-id"),
+		h("k-atom-a", { layer: "atom" }),
+	];
+	const fake = fakeSearch(hits);
+	const { app, store } = await setup({
+		search: fake.service,
+		now: slowClock(),
+	});
+	await seedCanonical(store);
+	await store.write((db) => {
+		upsertKnowledgeItem(
+			db,
+			canonical({ id: "k-canon-2-id", title: "別の正本" }),
+		);
+	});
+	const judge = (a: string, b: string, verdict: string, resolution: string) =>
+		store.write((db) =>
+			db
+				.query(
+					`INSERT OR REPLACE INTO distill_pair_judgments
+					 (a_id, b_id, a_digest, b_digest, verdict, resolution, created_at, updated_at)
+					 VALUES (?, ?, 'da', 'db', ?, ?, ?, ?)`,
+				)
+				.run(a, b, verdict, resolution, T, T),
+		);
+	const warnings = async () =>
+		(await tool(app, "search_knowledge", { query: "q" })).payload.warnings;
+
+	expect(await warnings()).toEqual([]);
+	// ids are stored a < b: "k-canon-2-id" < "k-canon-id"
+	await judge("k-canon-2-id", "k-canon-id", "conflict", "owner_pending");
+	const both = [
+		makeHandle("knowledge", "k-canon-2-id"),
+		makeHandle("knowledge", "k-canon-id"),
+	];
+	expect(await warnings()).toEqual([
+		{ kind: "unresolved_conflict", handles: both },
+	]);
+	await judge("k-canon-2-id", "k-canon-id", "unknown", "none");
+	expect(await warnings()).toHaveLength(1);
+	// Settled, compatible or unrelated pairs are not warned about.
+	for (const [verdict, resolution] of [
+		["conflict", "a_wins"],
+		["conflict", "b_wins"],
+		["conflict", "owner_resolved"],
+		["compatible", "none"],
+		["condition_split", "split"],
+		["duplicate", "merged"],
+		["unrelated", "none"],
+	] as const) {
+		await judge("k-canon-2-id", "k-canon-id", verdict, resolution);
+		expect(await warnings()).toEqual([]);
+	}
+	// Atoms are never named, and a pair needs both sides in the results.
+	await judge("k-atom-a", "k-canon-id", "conflict", "owner_pending");
+	expect(await warnings()).toEqual([]);
+	await judge("k-canon-2-id", "k-canon-id", "conflict", "owner_pending");
+	fake.service.search = async () => ({
+		hits: [hits[0]!],
+		degraded: [],
+		lanesUsed: ["fts"],
+		candidateCounts: { fts: 0, short: 0, vector: 0 },
+	});
+	expect(await warnings()).toEqual([]);
+});
+
+test("search responses with themes and warnings still stay within 32 KiB", async () => {
+	const many = Array.from({ length: 20 }, (_, i) =>
+		hit({
+			id: `k-canon-${i}`,
+			handle: makeHandle("knowledge", `k-canon-${i}`),
+			layer: "canonical",
+			summary: "あ".repeat(280),
+			themes: ["c-theme-1"],
+		}),
+	);
+	const { app, store } = await setup({ search: fakeSearch(many).service });
+	await store.write((db) =>
+		upsertCluster(db, theme("c-theme-1", { name: "い".repeat(2000) })),
+	);
+	const r = await tool(app, "search_knowledge", { query: "q", limit: 20 });
+	expect(r.bytes).toBeLessThanOrEqual(32 * 1024);
+	expect(r.payload.truncated).toBe(true);
 });

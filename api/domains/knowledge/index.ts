@@ -1,4 +1,6 @@
 export type {
+	CanonicalExample,
+	CanonicalFields,
 	EvidenceInput,
 	EvidenceOrigin,
 	EvidenceRole,
@@ -11,13 +13,16 @@ export type {
 	KnowledgeType,
 	Polarity,
 	ProvenanceStatus,
+	Retrieval,
 } from "./contracts";
 export {
 	getKnowledgeByHandle,
 	getKnowledgeById,
 	knowledgeContentDigest,
 	listKnowledgeEvidence,
+	listSupersededBy,
 	migrations,
 	replaceKnowledgeEvidence,
+	setKnowledgeDisposition,
 	upsertKnowledgeItem,
 } from "./repository";

@@ -1,0 +1,2085 @@
+<article lang="ja">
+  <h1>contextStill v2 実装計画：N2 クラスタリングと再蒸留（2026-10-30）</h1>
+  <p>
+    <a href="eumenes-knowledge-map-proposal-2026-10-29.html">方針提案</a>の段階N2を、coder
+    subagentがこの文書だけで実装できる粒度に落とした計画である。N0とN1の契約・実施結果は<a
+      href="contextstill-v2-n0-n1-implementation-plan.html"
+      >N0/N1計画</a
+    >を正本とし、本書はその上に足すものだけを書く。2026-10-30のownerの方針（下記）を最優先し、方針提案と食い違う点は<a
+      href="#proposal-changes"
+      >12章</a
+    >に列挙する。方針提案そのものは書き換えない。
+  </p>
+  <p>
+    本書の件数は、2026-10-30に<code>data/context-still.sqlite3</code>（N1取り込み後、636
+    MB）を<code>file:…?mode=ro</code>と<code>{ readonly: true }</code>で開いて集計した値である。近傍の類似度の統計は、取り込んだ旧ベクトル（9,579件、すべて<code>unverified</code>）で総当たり計算した値で、検証前のベクトルに基づく<strong>推定</strong>である。確認できなかった点は「未検証」、根拠のない見積りは「推測」と書く。
+  </p>
+
+  <h2>0. ownerの方針（2026-10-30）</h2>
+  <blockquote>
+    <p>
+      正直repo固有の知識とか蓄積したくないので、まずはglobalを基本とし、重複、矛盾を排除したナレッジベースにしたいです。何時でも似たようなシナリオだった場合の有効な情報を引き出したい
+    </p>
+  </blockquote>
+  <ol>
+    <li>repo固有の知識は蓄積しない。globalが基本。</li>
+    <li>重複と矛盾を取り除いた知識ベースにする。</li>
+    <li>検索の目的は、似たシナリオ（状況）が来たときに、有効だった情報を引き出すこと。</li>
+  </ol>
+  <p>
+    維持する方針：Eumenesがsearchして使う知識基盤であること、graphはN3、<code>context_compile</code>はコーディングエージェント向けでN5に移植、テーマ単位の蒸留を残す、コーディングエージェントの蓄積は捨てずに行を残して根拠（L1／L0）にする、TypeScript
+    only、embeddingはLARMの<code>intfloat/multilingual-e5-small</code>（384次元）。
+  </p>
+
+  <h2>1. 目的と非目標</h2>
+  <h3>目的</h3>
+  <ul>
+    <li>
+      原子知識（L1）9,530件（active）を、<strong>状況（どんなときに効くか）を第一級に持つ正本知識（L2）</strong>へ再蒸留する。重複はクラスタ単位でまとめ、矛盾は検出して解くかownerの確認へ回す。
+    </li>
+    <li>
+      repo固有の事実は検索から外す（行は消さない）。汎用化できる教訓は、repo名・path・portなどを外した正本として取り込む。scope・repo・spaceをまたいで重複を束ねる。
+    </li>
+    <li>
+      正本ができた原子知識を<code>superseded</code>にして検索から外し、検索とMCPの主対象を正本へ切り替える。MCPの既定spaceを全spaceにする。
+    </li>
+    <li>
+      テーマ（2階層）とテーマ知識、facet語彙の正規化、正本に添える一般化した事例を作る（段階N2b）。
+    </li>
+    <li>シナリオ形式の評価集合と、上位k件の重複率・矛盾率を作り、N2の完了を数値で判定する。</li>
+  </ul>
+  <h3>非目標（N2で作らない）</h3>
+  <ul>
+    <li>
+      芋づる展開、<code>related_knowledge</code>・<code>browse_theme</code>・<code>knowledge_feedback</code>、LLMによる型付き関係（requires、supports、refines）、co_used、テーマ一致の検索lane。いずれもN3。N2が書く<code>map_edges</code>は<code>supersedes</code>、<code>contradicts</code>、<code>about</code>、<code>broader</code>、<code>example_of</code>（candidate）だけである。
+    </li>
+    <li>
+      新しい原子知識の生成（finding、covering、finalize、Episode蒸留、agent
+      logの同期）。N4。N2は旧版からの差分取り込みで増えた・変わった原子知識をクラスタへ足す最小の差分stageだけを持つ。
+    </li>
+    <li>
+      <code>context_compile</code>の移植とrepo scopeのfail-closed分離（N5）。Web
+      UI。外部へ出すLLM providerの本実装（ownerの判断待ち。<a href="#owner-questions">14章</a>）。
+    </li>
+  </ul>
+
+  <h2>2. すべてのworkstreamに共通する制約</h2>
+  <p>N0/N1計画の2章をそのまま適用し、各coder promptに貼る。加えて次を守る。</p>
+  <ul>
+    <li>
+      テストでLLMを呼ばない。LLMは注入した偽の<code>LlmClient</code>（固定の応答を返すfixture）で試す。live
+      LARMやクラウドのLLMへ接続しない。
+    </li>
+    <li>
+      原子知識・Episode・LLMの出力は信頼できないデータとして扱う。promptにその旨を書き、LLMの出力はZodのschemaとhost側の照合（<a
+        href="#host-checks"
+        >6.4節</a
+      >）を通ったものだけを保存する。LLMへの入力・出力をlogへ出さない（<code>distill_llm_calls</code>へ保存するだけ）。
+    </li>
+    <li>
+      原子知識とEpisodeの行は削除しない。変えてよいのは<code>status</code>、<code>retrieval</code>（新設）と、<code>knowledge_evidence</code>・<code>map_*</code>・<code>distill_*</code>の行だけである。
+    </li>
+    <li>
+      新しいpackageを足さない（クラウドLLMのSDKを含む）。必要になったら止まってorchestratorへ報告する。
+    </li>
+  </ul>
+
+  <h2>3. 現状（2026-10-30の集計）</h2>
+  <table>
+    <caption>
+      原子知識の分布（knowledge_items、layer='atom'）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">区分</th>
+        <th scope="col">件数</th>
+        <th scope="col">備考</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>active</td>
+        <td>9,530（global 6,957、repo 2,573）</td>
+        <td>retracted 49。canonicalは0件</td>
+      </tr>
+      <tr>
+        <td>type／polarity（global）</td>
+        <td>rule+ 5,183、rule− 345、procedure 1,429</td>
+        <td>repoはrule+ 1,299、rule− 786、procedure 488</td>
+      </tr>
+      <tr>
+        <td>由来（active・global）</td>
+        <td>source_missing 5,025、resolved 1,144、external 736、unresolved 52</td>
+        <td>repoはresolved 2,502、external 67、unresolved 4。source_missingはほぼ全件がglobal</td>
+      </tr>
+      <tr>
+        <td>旧版の分類（metadata.legacy）</td>
+        <td>
+          global/classified 63、repo/classified 2,573、repo/conflict 602、repo/unresolved 6,292
+        </td>
+        <td>
+          globalの6,957件のうち、旧版がglobalと判定したのは63件だけで、残り6,894件は分類器がrepoを決められなかった行である（N0/N1計画5.7節の規則でglobalにした）
+        </td>
+      </tr>
+      <tr>
+        <td>repo固有の兆候（globalの行）</td>
+        <td>
+          repo名（5文字以上）を含む370件、絶対path・<code>localhost:</code>・<code>127.0.0.1</code>・<code>*.ts</code>等を含む253件
+        </td>
+        <td>LIKE／部分一致による概数。重なりあり</td>
+      </tr>
+      <tr>
+        <td>repo_key</td>
+        <td>204種</td>
+        <td>
+          上位はcontextstill 664、nightworkers 554、vulnworkbench 242、memoryrouter 174、gnosis 115
+        </td>
+      </tr>
+      <tr>
+        <td>条件・手順の列</td>
+        <td>applies_when・not_applies_when・stepsはすべて空（9,530件中0件）</td>
+        <td>
+          状況は本文に埋まっている。本文に<code>Use when</code>を含む2,226件（procedureは1,917件の全件）、<code
+            >Avoid:</code
+          >
+          2,171件
+        </td>
+      </tr>
+      <tr>
+        <td>本文の長さ</td>
+        <td>title＋bodyの平均381文字、最大2,475文字、合計3.63M文字</td>
+        <td></td>
+      </tr>
+      <tr>
+        <td>facet語彙（appliesTo）</td>
+        <td>domains 3,331種、technologies 4,050種、changeTypes 3,229種</td>
+        <td>小文字化した異なり数</td>
+      </tr>
+      <tr>
+        <td>利用実績</td>
+        <td>
+          87,180件（used 66,050、not_used 21,129、off_topic
+          1）。対象は2,178件、usedを持つactiveは1,806件
+        </td>
+        <td></td>
+      </tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>
+      Episode（episodes）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">区分</th>
+        <th scope="col">件数</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>scope</td>
+        <td>
+          repo 13,317（上位nightworkers 3,879、contextstill 1,277、vulnworkbench 742）、global
+          843。すべてactive
+        </td>
+      </tr>
+      <tr>
+        <td>outcome_kind</td>
+        <td>success 10,698、mixed 2,374、failure 619、unknown 469</td>
+      </tr>
+      <tr>
+        <td>原子知識との結び付き</td>
+        <td>
+          原子知識の根拠と同じsource_recordを持つEpisodeは2,004件、そのsourceを根拠に持つ原子知識は2,263件
+        </td>
+      </tr>
+      <tr>
+        <td>本文の長さ</td>
+        <td>situation＋action＋outcome＋lessonの平均672文字</td>
+      </tr>
+      <tr>
+        <td>ベクトル</td>
+        <td>0件（N1の<code>vectors:embed --owner episode</code>はowner作業として未実施）</td>
+      </tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>
+      原子知識の近傍類似度（旧ベクトル、cosine、総当たり。推定）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">指標</th>
+        <th scope="col">値</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>最近傍の類似度の分位</td>
+        <td>p10 0.889、p25 0.902、p50 0.918、p75 0.933、p90 0.950、p99 0.988</td>
+      </tr>
+      <tr>
+        <td>単連結（10近傍、閾値t）の連結成分</td>
+        <td>
+          t=0.90で最大成分6,355件、t=0.92で2,514件、t=0.94で複数要素の成分532個（計1,669件、最大104件）、t=0.96で173個（計582件）
+        </td>
+      </tr>
+      <tr>
+        <td>相互5近傍（t=0.93）</td>
+        <td>複数要素の成分771個（計2,678件）、最大256件</td>
+      </tr>
+      <tr>
+        <td>scope・型をまたぐ辺（t=0.94）</td>
+        <td>辺2,229本のうちscopeが異なる260本（12%）、typeかpolarityが異なる342本（15%）</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    結論：e5-smallの類似度は狭い範囲（0.89〜0.95）に詰まっており、単連結や相互近傍の連結成分は数百〜数千件の鎖になる。閾値だけで「同じ主張」を切り出すことはできないので、大きさの上限を持つ平均連結の凝集（<a
+      href="#clustering"
+      >6.3節</a
+    >）にし、閾値は人手ラベルで決める。scopeをまたぐ近い組が1割以上あり、repoをまたいだ統合に意味がある。
+  </p>
+
+  <h2>4. 設計の要点</h2>
+  <figure>
+    <pre class="mermaid">
+flowchart LR
+  P["前提：ベクトル検証<br/>（owner、live LARM）"] --&gt; A["S1 一般性の判定<br/>（決定的な兆候＋LLM）"]
+  A --&gt; C["S2 閾値の較正<br/>（人手ラベル）"]
+  C --&gt; K["S3 claimクラスタ<br/>（scope・repoをまたぐ）"]
+  K --&gt; D["S4 再蒸留<br/>planner → host照合 → verifier"]
+  D --&gt; E["S5 正本の埋め込み"]
+  E --&gt; X["S6 矛盾の検出と解消<br/>（クラスタ間）"]
+  X --&gt; U["S7 audit<br/>active正本は矛盾しない"]
+  U --&gt; T["S8 テーマ・facet・事例（N2b）"]
+  A -. "repo固有" .-&gt; EO["evidence_only<br/>（行は残す）"]
+  D -. "置換" .-&gt; SU["原子知識をsuperseded"]
+  X -. "未解決" .-&gt; R["ownerの確認queue"]
+    </pre>
+    <figcaption>N2のstageの流れ</figcaption>
+  </figure>
+  <ul>
+    <li>
+      <strong>scopeは由来の記録にする</strong
+      >。正本は常に<code>scope='global'</code>・<code>repo_key=NULL</code>で作る。原子知識とEpisodeの<code>scope</code>・<code>repo_key</code>は取り込んだ由来としてそのまま残し、検索の安全柵（repo
+      scopeの行はrepoKeyなしでは出ない）も残す。検索に出すかどうかは新しい列<code>retrieval</code>（<code>searchable</code>／<code>evidence_only</code>）で決める。
+    </li>
+    <li>
+      <strong>一般性の判定</strong
+      >：原子知識を<code>general</code>（そのまま一般知識）、<code>generalizable</code>（repoの具体を外せば一般の教訓）、<code>repo_specific</code>（特定repoの事実）、<code>unusable</code>（行動に使える内容がない）に分ける。旧scopeは判定の材料にするだけで、globalの行も判定する。<code>repo_specific</code>と<code>unusable</code>は<code>evidence_only</code>にする。
+    </li>
+    <li>
+      <strong>正本は状況を第一級に持つ</strong
+      >：状況（situation）、有効だった対処（body）、理由（rationale）、適用する条件・しない条件、手順、例外、事例、根拠の原子知識。検索の問いは状況の記述として来る前提で、FTSは状況の列を最も重くし、ベクトルは状況を先頭に置いた文で作る。
+    </li>
+    <li>
+      <strong>重複</strong
+      >：scope・repo・spaceをまたぎ、type・polarityでも分けずに、上限12件の平均連結でclaimクラスタを作る。LLMはplanner（部分集合への分割と下書き）とverifier（独立の照合）の2段で、その間にhost側の照合を挟む。正本へ吸収した原子知識は<code>supersedes</code>で繋いで<code>superseded</code>にする。
+    </li>
+    <li>
+      <strong>矛盾</strong
+      >：クラスタ内はplannerが部分集合間の関係として出し、クラスタ間は正本の近傍の組をLLMで判定する。条件違いは状況別の指針に分け、本当の対立は根拠の強さと新しさで決めて負けた側を<code>retracted</code>にし、決めきれないものはownerの確認queueへ回す。auditで「active正本どうしに未解決の対立がない」を検査する。
+    </li>
+    <li>
+      <strong>切り替えは段階的</strong
+      >：検索の既定layerを<code>["canonical","atom"]</code>にし、<code>retrieval='searchable'</code>かつ<code>status='active'</code>の行だけを出す。吸収された原子知識は<code>superseded</code>、repo固有は<code>evidence_only</code>になるので、再蒸留が進むほど原子知識は検索から自然に消える。未吸収の一般的な原子知識だけが一時的な予備として残る（点数は0.8倍）。
+    </li>
+    <li>
+      <strong>LLMの実行はbackendのqueueで行う</strong>。queue
+      domainにhandlerを載せ、backendがrunnerとretentionを回す。stageの投入、状況の確認、確認queueの解決はAPI（<code>/api/distill/*</code>）と、それを呼ぶ薄いCLI（<code>bun run distill</code>）で行う。
+    </li>
+  </ul>
+
+  <h2>5. 契約</h2>
+  <p>
+    この章の型、DDL、schemaは<a href="#ws-n2-0">N2-0</a
+    >が書き、並行のworkstreamでは変更しない。変更が必要になったら止まってorchestratorへ報告する。
+  </p>
+
+  <h3>5.1 domainとtier（scripts/domains.ts）</h3>
+  <table>
+    <caption>
+      追加・変更するdomain
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">domain</th>
+        <th scope="col">tier</th>
+        <th scope="col">依存（api）</th>
+        <th scope="col">責務</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>map（新設）</td>
+        <td>0</td>
+        <td>なし</td>
+        <td>claimクラスタとテーマ、所属、型付きの関係、facet対応表の保存と読み出し</td>
+      </tr>
+      <tr>
+        <td>larm（変更）</td>
+        <td>0</td>
+        <td>なし</td>
+        <td>
+          embeddingに加えて、Agent Connection（provider
+          <code>llm</code
+          >、<code>openai.chat-completions.v1</code>）によるchatの<code
+            >LlmClient</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td>distill（新設）</td>
+        <td>3</td>
+        <td>knowledge、experience、vectors、map、larm、queue、usage、sources、indexing</td>
+        <td>
+          一般性の判定、較正、claimクラスタ、再蒸留、矛盾、確認queue、audit、テーマ、事例、queue
+          handler、<code>/api/distill/*</code>
+        </td>
+      </tr>
+      <tr>
+        <td>search（変更）</td>
+        <td>2</td>
+        <td>knowledge、experience、vectors、<strong>map</strong></td>
+        <td>canonicalとretrieval、状況の列、テーマの絞り込み（mapの表をSELECTしてよい）</td>
+      </tr>
+      <tr>
+        <td>mcp（変更）</td>
+        <td>3</td>
+        <td>search、knowledge、experience、sources、<strong>map</strong></td>
+        <td>既定space、正本の項目、テーマの値</td>
+      </tr>
+      <tr>
+        <td>evaluation（変更）</td>
+        <td><strong>4</strong>（3から）</td>
+        <td>search、legacy、knowledge、<strong>map、distill</strong></td>
+        <td>supersedes経由の正解、シナリオ集合、重複率・矛盾率</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    読み取りの例外（他domainの表をSELECTする）にdistillを足す：knowledge、experience、vectors、usage、sources、mapの表を読み、書き込みは各domainの<code>index.ts</code>の同期関数だけで行う。distillの表（<code>distill_*</code>）はdistillだけが書く。
+  </p>
+
+  <h3>5.2 migration（N2で足すもの）</h3>
+  <p>
+    <code>allMigrations</code
+    >の登録順は、N1の8件をそのままの順で先に置き、そのあとに<code>map/0001-init</code>、<code>knowledge/0002-canonical</code>、<code>experience/0002-retrieval</code>、<code>distill/0001-init</code>を足す。GOLDENのテストをこの12件へ更新する。各domainの<code>migrations</code>配列には末尾に足し、<code>api/application/migrations.ts</code>はid順の配列を明示して組む（domain配列のspreadの順に頼らない）。既存DBでは<code>openStore</code>が適用前に<code>VACUUM INTO</code>のbackupを作る（<code>api/infrastructure/sqlite/index.ts:277-279</code>）。
+  </p>
+  <pre><code class="language-sql">-- knowledge/0002-canonical  after: ["knowledge/0001-init"]
+ALTER TABLE knowledge_items ADD COLUMN situation TEXT NOT NULL DEFAULT '';
+ALTER TABLE knowledge_items ADD COLUMN rationale TEXT NOT NULL DEFAULT '';
+ALTER TABLE knowledge_items ADD COLUMN exceptions_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(exceptions_json));
+ALTER TABLE knowledge_items ADD COLUMN examples_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(examples_json));
+ALTER TABLE knowledge_items ADD COLUMN retrieval TEXT NOT NULL DEFAULT 'searchable'
+  CHECK (retrieval IN ('searchable','evidence_only'));
+CREATE INDEX knowledge_items_retrieval_idx ON knowledge_items(retrieval, status, layer, space);
+DROP TRIGGER knowledge_fts_ai;
+DROP TRIGGER knowledge_fts_ad;
+DROP TRIGGER knowledge_fts_au;
+DROP TABLE knowledge_fts;
+CREATE VIRTUAL TABLE knowledge_fts USING fts5(
+  title, situation, body, content='knowledge_items', content_rowid='seq', tokenize='trigram'
+);
+CREATE TRIGGER knowledge_fts_ai AFTER INSERT ON knowledge_items BEGIN
+  INSERT INTO knowledge_fts(rowid, title, situation, body) VALUES (new.seq, new.title, new.situation, new.body);
+END;
+CREATE TRIGGER knowledge_fts_ad AFTER DELETE ON knowledge_items BEGIN
+  INSERT INTO knowledge_fts(knowledge_fts, rowid, title, situation, body)
+  VALUES ('delete', old.seq, old.title, old.situation, old.body);
+END;
+CREATE TRIGGER knowledge_fts_au AFTER UPDATE OF title, situation, body ON knowledge_items BEGIN
+  INSERT INTO knowledge_fts(knowledge_fts, rowid, title, situation, body)
+  VALUES ('delete', old.seq, old.title, old.situation, old.body);
+  INSERT INTO knowledge_fts(rowid, title, situation, body) VALUES (new.seq, new.title, new.situation, new.body);
+END;
+INSERT INTO knowledge_fts(knowledge_fts) VALUES ('rebuild');
+
+-- experience/0002-retrieval  after: ["experience/0001-init"]
+ALTER TABLE episodes ADD COLUMN retrieval TEXT NOT NULL DEFAULT 'searchable'
+  CHECK (retrieval IN ('searchable','evidence_only'));
+CREATE INDEX episodes_retrieval_idx ON episodes(retrieval, status, space, scope);
+
+-- map/0001-init  after: []
+CREATE TABLE map_clusters (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('claim','theme')),
+  parent_id TEXT REFERENCES map_clusters(id),
+  level INTEGER NOT NULL DEFAULT 0 CHECK (level BETWEEN 0 AND 2),
+  handle TEXT UNIQUE,                       -- themeだけ（th_…）
+  name TEXT NOT NULL DEFAULT '',
+  aliases_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(aliases_json)),
+  description TEXT NOT NULL DEFAULT '',
+  summary_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(summary_json)), -- テーマ知識
+  state TEXT NOT NULL CHECK (state IN ('pending','distilled','review','rejected','stale')),
+  member_digest TEXT NOT NULL,
+  algorithm TEXT NOT NULL,                  -- 例 'avglink.v1|t=0.930|cap=12'
+  revision INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK ((kind = 'theme') = (handle IS NOT NULL))
+) STRICT;
+CREATE INDEX map_clusters_kind_state_idx ON map_clusters(kind, state);
+CREATE TABLE map_cluster_members (
+  cluster_id TEXT NOT NULL REFERENCES map_clusters(id) ON DELETE CASCADE,
+  member_kind TEXT NOT NULL CHECK (member_kind IN ('knowledge','episode')),
+  member_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('member','core','example')),
+  similarity REAL,
+  PRIMARY KEY (cluster_id, member_kind, member_id)
+) STRICT;
+CREATE INDEX map_cluster_members_member_idx ON map_cluster_members(member_kind, member_id);
+CREATE TABLE map_edges (
+  id TEXT PRIMARY KEY,
+  src_kind TEXT NOT NULL CHECK (src_kind IN ('knowledge','episode','theme')),
+  src_id TEXT NOT NULL,
+  relation TEXT NOT NULL CHECK (relation IN
+    ('about','broader','requires','supports','refines','contradicts','supersedes','example_of','co_used')),
+  dst_kind TEXT NOT NULL CHECK (dst_kind IN ('knowledge','episode','theme')),
+  dst_id TEXT NOT NULL,
+  origin TEXT NOT NULL CHECK (origin IN ('deterministic','clustering','llm','behavioral','human')),
+  status TEXT NOT NULL CHECK (status IN ('candidate','active','retracted')),
+  confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+  evidence_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(evidence_json)),
+  extractor_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (src_kind, src_id, relation, dst_kind, dst_id)
+) STRICT;
+CREATE INDEX map_edges_src_idx ON map_edges(src_kind, src_id, relation, status);
+CREATE INDEX map_edges_dst_idx ON map_edges(dst_kind, dst_id, relation, status);
+CREATE TABLE map_facet_concepts (
+  facet_key TEXT NOT NULL CHECK (facet_key IN ('domains','technologies','changeTypes')),
+  raw_value TEXT NOT NULL,                  -- 小文字化した旧facet値
+  concept TEXT NOT NULL,
+  theme_id TEXT REFERENCES map_clusters(id),
+  origin TEXT NOT NULL CHECK (origin IN ('deterministic','llm','human')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (facet_key, raw_value)
+) STRICT;
+
+-- distill/0001-init  after: ["knowledge/0002-canonical","experience/0002-retrieval","map/0001-init"]
+CREATE TABLE distill_assessments (
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('knowledge','episode')),
+  owner_id TEXT NOT NULL,
+  generality TEXT NOT NULL CHECK (generality IN ('general','generalizable','repo_specific','unusable')),
+  signals_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(signals_json)),
+  reason TEXT NOT NULL DEFAULT '',
+  origin TEXT NOT NULL CHECK (origin IN ('deterministic','llm','human')),
+  content_digest TEXT NOT NULL,             -- 判定したときの行のdigest
+  prompt_version TEXT NOT NULL,
+  call_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (owner_kind, owner_id)
+) STRICT;
+CREATE TABLE distill_params (
+  key TEXT PRIMARY KEY,                     -- 'thresholds' など
+  value_json TEXT NOT NULL CHECK (json_valid(value_json)),
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE distill_runs (
+  id TEXT PRIMARY KEY,
+  stage TEXT NOT NULL,
+  params_json TEXT NOT NULL CHECK (json_valid(params_json)),
+  state TEXT NOT NULL CHECK (state IN ('running','completed','failed','cancelled')),
+  counts_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(counts_json)),
+  started_at TEXT NOT NULL,
+  finished_at TEXT
+) STRICT;
+CREATE TABLE distill_llm_calls (
+  id TEXT PRIMARY KEY,
+  run_id TEXT REFERENCES distill_runs(id),
+  stage TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  prompt_version TEXT NOT NULL,
+  input_digest TEXT NOT NULL,               -- 再実行時の再利用の鍵
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  latency_ms INTEGER NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ok','invalid_output','provider_error')),
+  response_json TEXT CHECK (response_json IS NULL OR json_valid(response_json)), -- 64 KiBまで
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX distill_llm_calls_digest_idx ON distill_llm_calls(input_digest, outcome);
+CREATE TABLE distill_pair_judgments (
+  a_id TEXT NOT NULL,                       -- 正本のid（a_id &lt; b_id）
+  b_id TEXT NOT NULL,
+  a_digest TEXT NOT NULL,
+  b_digest TEXT NOT NULL,
+  verdict TEXT NOT NULL CHECK (verdict IN
+    ('duplicate','compatible','condition_split','conflict','unrelated','unknown')),
+  resolution TEXT NOT NULL CHECK (resolution IN
+    ('none','merged','split','a_wins','b_wins','owner_pending','owner_resolved')),
+  detail_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(detail_json)),
+  call_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (a_id, b_id)
+) STRICT;
+CREATE TABLE distill_reviews (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN
+    ('conflict','low_confidence','generality','verifier_unknown','host_rejected')),
+  subject_json TEXT NOT NULL CHECK (json_valid(subject_json)),
+  proposal_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(proposal_json)),
+  state TEXT NOT NULL CHECK (state IN ('open','resolved','dismissed')),
+  resolution_json TEXT CHECK (resolution_json IS NULL OR json_valid(resolution_json)),
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
+) STRICT;
+CREATE INDEX distill_reviews_state_idx ON distill_reviews(state, kind);</code></pre>
+  <p>
+    <code>ALTER TABLE … ADD COLUMN</code
+    >にCHECKを付けた列をSTRICT表へ足せることは未検証であり、<code>api/application/migrations.test.ts</code>で既存行を持つDBへの適用を試す。失敗するならCHECKを外し、値の検査をrepositoryで行う（契約の変更としてorchestratorへ報告）。
+  </p>
+
+  <h3>5.3 knowledge・experienceの公開入口</h3>
+  <pre><code class="language-ts">// knowledge/contracts（追加）
+export type Retrieval = "searchable" | "evidence_only";
+export interface CanonicalFields {
+  situation: string;          // 1..600文字。canonicalでは必須、atomは''
+  rationale: string;          // 0..800
+  exceptions: string[];       // 各200文字以下、8件まで
+  examples: CanonicalExample[]; // 2件まで（N2b）
+}
+export interface CanonicalExample { situation: string; action: string; outcome: string; episodeIds: string[] }
+// KnowledgeInput に CanonicalFields を足す（atomは既定値）。retrieval は KnowledgeInput に入れない
+// （upsertは retrieval を書かない。既存行の retrieval を保つ）
+export interface KnowledgeRow { …既存; situation; rationale; exceptions; examples; retrieval: Retrieval }
+
+// knowledge/index.ts（追加・変更）
+export function knowledgeContentDigest(title: string, body: string, situation?: string): string;
+// situation が空なら sha256Hex(`${title}\n${body}`)（N1と同じ。旧ベクトルとの照合を保つ）
+// 空でなければ sha256Hex(`${situation}\n${title}\n${body}`)
+export function setKnowledgeDisposition(db: Database, id: string,
+  d: { status?: KnowledgeStatus; retrieval?: Retrieval; updatedAt: string }): boolean; // 変化したらtrue、revision+1
+export function listSupersededBy(db: Database, atomId: string): string[]; // 置換先の正本id（map_edgesでなくevidenceから）
+
+// experience/index.ts（追加）
+export function setEpisodeRetrieval(db: Database, id: string, retrieval: Retrieval, updatedAt: string): boolean;</code></pre>
+
+  <h3>5.4 map domain</h3>
+  <pre><code class="language-ts">export type ClusterKind = "claim" | "theme";
+export type ClusterState = "pending" | "distilled" | "review" | "rejected" | "stale";
+export type NodeKind = "knowledge" | "episode" | "theme";
+export type Relation = "about" | "broader" | "requires" | "supports" | "refines"
+  | "contradicts" | "supersedes" | "example_of" | "co_used";
+export type EdgeOrigin = "deterministic" | "clustering" | "llm" | "behavioral" | "human";
+export interface ClusterInput { id: string; kind: ClusterKind; parentId: string | null; level: 0 | 1 | 2;
+  name: string; aliases: string[]; description: string; summary: Record&lt;string, unknown&gt;;
+  state: ClusterState; algorithm: string;
+  members: { kind: "knowledge" | "episode"; id: string; role: "member" | "core" | "example"; similarity: number | null }[];
+  createdAt: string; updatedAt: string; }
+export interface EdgeInput { src: { kind: NodeKind; id: string }; relation: Relation; dst: { kind: NodeKind; id: string };
+  origin: EdgeOrigin; status: "candidate" | "active" | "retracted"; confidence: number;
+  evidence: Record&lt;string, unknown&gt;; extractorVersion: string; at: string; }
+// index.ts（同期関数）
+export function memberDigest(members: ClusterInput["members"], contentDigests: Map&lt;string, string&gt;): string;
+// sha256Hex(canonicalJson(members を kind,id 昇順に並べ [kind,id,contentDigest] の配列))
+export function upsertCluster(db: Database, c: ClusterInput): UpsertResult; // member_digest が同じなら unchanged
+export function setClusterState(db: Database, id: string, state: ClusterState, at: string): boolean;
+export function upsertEdge(db: Database, e: EdgeInput): UpsertResult;      // UNIQUE(src,relation,dst)で更新
+export function setEdgeStatus(db: Database, id: string, status: EdgeInput["status"], at: string): boolean;
+export function getCluster(db: Database, id: string): ClusterRow | null;
+export function listClusterMembers(db: Database, id: string): ClusterInput["members"];
+export function clustersOfMember(db: Database, kind: "knowledge" | "episode", id: string, clusterKind: ClusterKind): string[];
+export function edgesFrom(db: Database, kind: NodeKind, id: string, relation?: Relation): EdgeRow[];
+export function edgesTo(db: Database, kind: NodeKind, id: string, relation?: Relation): EdgeRow[];
+export function upsertFacetConcept(db: Database, f: { facetKey: string; rawValue: string; concept: string;
+  themeId: string | null; origin: "deterministic" | "llm" | "human"; at: string }): UpsertResult;
+export function themeHandle(id: string): string; // makeHandle("theme", id)</code></pre>
+  <p>
+    <code>api/infrastructure/handle.ts</code
+    >：<code>HandleKind</code>に<code>"theme"</code>を足し、prefixは<code>th_</code>、<code>HANDLE_PATTERN</code>は<code>/^(kn|ep|th)_[a-z2-7]{26}$/</code>にする。MCPの<code>get_knowledge</code>の入力patternは<code>^(kn|ep)_</code>のまま変えない（テーマの取得はN3の<code>browse_theme</code>）。
+  </p>
+
+  <h3>5.5 larm domain：chat</h3>
+  <p>
+    <a href="larm-public-profile-discovery-contextstill.html">Agent Connection provide契約</a
+    >に従い、<code>POST /v1/agent-connections</code>へ<code>profile</code>（設定<code>larm.llmProfile</code>、既定<code>contextStill</code>）、<code>audience</code>、<code>client=contextstill</code>、<code>ttlSeconds=300</code>、<code>allowFallback=false</code>、<code>deploymentPolicy=existing-only</code>、<code>providers:["llm"]</code>を送り、claimで得たbaseURL・model・credentialで<code>/v1/chat/completions</code>を呼ぶ。renew、再claim、releaseはembeddingの接続と同じ実装を共有する。busyは<a
+      href="llm-provider-busy-503-contract.html"
+      >busy 503契約</a
+    >（<code>Retry-After</code>、なければ30秒）、409は<code>larm_provider_conflict</code>。
+  </p>
+  <pre><code class="language-ts">// larm/contracts（追加）
+export interface ChatMessage { role: "system" | "user" | "assistant"; content: string }
+export interface ChatRequest {
+  messages: ChatMessage[];
+  maxOutputTokens: number;            // 1..16384
+  json: boolean;                      // true なら response_format {"type":"json_object"} を付ける（未対応なら付けずに送る）
+  signal?: AbortSignal;
+}
+export interface ChatResult {
+  text: string; model: string; finishReason: "stop" | "length" | "other";
+  usage: { inputTokens: number | null; outputTokens: number | null };
+}
+export interface LlmClient {
+  readonly provider: "larm" | "fixture";
+  status(): LarmEmbeddingStatus;     // 同じ形を流用
+  chat(req: ChatRequest): Promise&lt;ChatResult&gt;;   // 失敗は LarmError（code は既存の LarmErrorCode）
+  release(): Promise&lt;void&gt;;
+}
+export function createLarmChat(deps: LarmEmbeddingDeps &amp; { llmProfile: () =&gt; string; chatTimeoutMs?: number }): LlmClient;
+// chatTimeoutMs 既定 300000。応答本文は 1 MiB で打ち切って larm_http_error</code></pre>
+  <p>
+    settings（契約の変更）：<code>larmSettingsSchema</code>に<code>llmProfile: z.string().min(1).max(64).default("contextStill")</code>を足す。保存済みの文書に無い場合は既定値で読む。<code>PUT
+      /api/settings/larm</code>の本文は変えない。
+  </p>
+
+  <h3>5.6 distill domain</h3>
+  <pre><code class="language-ts">export type Generality = "general" | "generalizable" | "repo_specific" | "unusable";
+export type DistillStage = "assess" | "cluster" | "canonical" | "embed" | "conflict" | "theme" | "examples" | "incremental";
+export interface Thresholds {           // distill_params.thresholds。較正で決める
+  clusterEdge: number;                  // 候補辺の下限（既定 0.930。仮）
+  clusterMerge: number;                 // 平均連結の下限（既定 0.935。仮）
+  clusterCap: number;                   // 12
+  pairCandidate: number;                // 矛盾候補の組の下限（既定 0.900。仮）
+  calibratedAt: string | null;          // null なら canonical stage を拒否（distill_calibration_missing）
+}
+export interface DistillDeps {
+  store: SqliteStore; llm: LlmClient; queue: QueueService; spaceKey: string;
+  embedKnowledge: () =&gt; Promise&lt;EmbedReport&gt;;   // indexing.embedMissing(owner knowledge, missing)
+  now: () =&gt; Date; log: (line: string) =&gt; void;
+}
+export interface DistillService {
+  registerHandlers(): void;                                   // queue へ 5.7 の handler を登録
+  startStage(stage: DistillStage, opts: { limit?: number; dryRun: boolean; allowUnverified?: boolean }): Promise&lt;{ runId: string; enqueued: number }&gt;;
+  status(): DistillStatus;
+  calibrationSample(n: number): CalibrationPair[];           // 層別の組（本文を含む。API token必須）
+  applyCalibration(labels: CalibrationLabel[]): Thresholds;
+  listReviews(state: "open" | "resolved" | "dismissed"): ReviewRow[];
+  resolveReview(id: string, decision: ReviewDecision): Promise&lt;void&gt;;
+  audit(): AuditReport;
+  judgePairs(pairs: { a: string; b: string }[], signal?: AbortSignal): Promise&lt;PairVerdict[]&gt;; // evaluationが使う
+}
+export interface DistillStatus {
+  atoms: Record&lt;"superseded" | "evidence_only" | "searchable_unabsorbed" | "unassessed", number&gt;;
+  assessments: Record&lt;Generality, number&gt;;
+  clusters: Record&lt;ClusterState, number&gt;;
+  canonicals: { active: number; retracted: number; superseded: number; withoutVector: number };
+  reviews: Record&lt;ReviewRow["kind"], number&gt;;   // open のみ
+  llm: { calls: number; inputTokens: number; outputTokens: number; invalidOutput: number };
+  queue: QueueStatus;
+}
+export interface CalibrationPair { pairId: string; similarity: number; bin: string;
+  a: { id: string; title: string; body: string }; b: { id: string; title: string; body: string } }
+export interface CalibrationLabel { pairId: string; label: "same" | "different" | "unsure"; labelSource: "agent-draft" | "owner" }
+export type ReviewDecision =
+  | { kind: "a_wins" | "b_wins" | "split" | "keep_both" }      // conflict
+  | { kind: "accept" | "reject" }                              // low_confidence・verifier_unknown・host_rejected
+  | { kind: "set_generality"; generality: Generality }         // generality
+  | { kind: "dismiss" };
+export interface AuditReport { ok: boolean; violations: { code: AuditCode; subject: string[] }[]; checked: Record&lt;AuditCode, number&gt; }
+export type AuditCode = "unresolved_conflict" | "unjudged_near_pair" | "citation_invalid" | "generalization_lint"
+  | "superseded_without_target" | "active_atom_absorbed" | "canonical_without_vector" | "repo_scope_canonical";
+export class DistillError extends Error { constructor(public code: DistillErrorCode) }
+export type DistillErrorCode = "invalid_distill_request" | "distill_not_found" | "distill_stage_running"
+  | "distill_vectors_unverified" | "distill_calibration_missing" | "llm_invalid_output" | "host_rejected";
+export const errorStatus = { invalid_distill_request: 400, distill_not_found: 404, distill_stage_running: 409,
+  distill_vectors_unverified: 409, distill_calibration_missing: 409, llm_invalid_output: 502, host_rejected: 422 } as const;</code></pre>
+
+  <h4>LLMの出力schema（Zod、すべてstrict）</h4>
+  <pre><code class="language-ts">// 原子知識は prompt の中で a1..aN（Episode は e1..eN）の局所的な別名で渡し、UUIDを渡さない
+const alias = z.string().regex(/^[ae][1-9][0-9]?$/);
+export const assessOutput = z.strictObject({ schemaVersion: z.literal(1),
+  items: z.array(z.strictObject({ ref: alias, generality: z.enum(["general","generalizable","repo_specific","unusable"]),
+    reason: z.string().max(200) })).min(1).max(20) });
+
+const claim = z.strictObject({ text: z.string().min(1).max(400), support: z.array(alias).min(1) });
+export const canonicalDraft = z.strictObject({
+  type: z.enum(["rule","procedure"]), polarity: z.enum(["positive","negative"]),
+  title: z.string().min(1).max(120), situation: z.string().min(1).max(600),
+  guidance: z.string().min(1).max(2000), rationale: z.string().max(800),
+  appliesWhen: z.array(z.string().max(200)).max(8), notAppliesWhen: z.array(z.string().max(200)).max(8),
+  steps: z.array(z.string().max(300)).max(12), exceptions: z.array(z.string().max(200)).max(8),
+  claims: z.array(claim).min(1).max(16) });          // 本文の主張を1文ずつ、支持する別名付きで
+export const plannerOutput = z.strictObject({ schemaVersion: z.literal(1),
+  groups: z.array(z.strictObject({ members: z.array(alias).min(1),
+    disposition: z.enum(["canonical","repo_specific","unusable"]),
+    canonical: canonicalDraft.nullable() })).min(1),
+  relations: z.array(z.strictObject({ a: z.number().int().min(0), b: z.number().int().min(0),
+    kind: z.enum(["condition_split","conflict"]), note: z.string().max(300) })).max(16) });
+const check = z.enum(["preserved","not_preserved","unknown"]);
+export const verifierOutput = z.strictObject({ schemaVersion: z.literal(1),
+  verdict: z.enum(["supported","rejected","unknown"]),
+  claims: z.array(z.strictObject({ index: z.number().int().min(0), entailed: z.enum(["yes","no","unknown"]) })),
+  checks: z.strictObject({ conditions: check, negation: check, exceptions: check, numbersAndUnits: check,
+    situationFaithful: check, noNewMeaning: check, noRepoSpecifics: check }),
+  rationale: z.string().max(800) });
+export const pairOutput = z.strictObject({ schemaVersion: z.literal(1),
+  pairs: z.array(z.strictObject({ index: z.number().int().min(0),
+    verdict: z.enum(["duplicate","compatible","condition_split","conflict","unrelated","unknown"]),
+    aNotAppliesWhen: z.array(z.string().max(200)).max(3),    // condition_split のときだけ非空
+    bNotAppliesWhen: z.array(z.string().max(200)).max(3),
+    note: z.string().max(300) })).min(1).max(8) });
+export const themeOutput = z.strictObject({ schemaVersion: z.literal(1), name: z.string().min(1).max(40),
+  description: z.string().max(300), aliases: z.array(z.string().max(40)).max(8),
+  overview: z.string().max(600), keyMembers: z.array(alias).max(8),
+  cautions: z.array(z.string().max(200)).max(5), openQuestions: z.array(z.string().max(200)).max(5) });
+export const examplesOutput = z.strictObject({ schemaVersion: z.literal(1),
+  examples: z.array(z.strictObject({ situation: z.string().max(300), action: z.string().max(300),
+    outcome: z.string().max(300), episodes: z.array(alias).min(1) })).max(2) });</code></pre>
+
+  <h4>LLM呼び出しの共通部（distill/service/llm）</h4>
+  <pre><code class="language-ts">export interface JsonCall&lt;T&gt; { runId: string | null; stage: DistillStage; subjectRef: string; promptVersion: string;
+  system: string; user: string; schema: z.ZodType&lt;T&gt;; maxOutputTokens: number; signal: AbortSignal }
+export function callJson&lt;T&gt;(deps: DistillDeps, call: JsonCall&lt;T&gt;): Promise&lt;{ value: T; callId: string; cached: boolean }&gt;;
+// input_digest = sha256Hex(canonicalJson({provider, model, promptVersion, system, user}))
+// 同じ digest の outcome='ok' の行があれば LLM を呼ばずに再parseして返す（再実行時の費用を抑える）
+// JSON.parse か schema に失敗したら、Zod の issue の path だけを添えて1回だけ直させる。それでも失敗なら
+//   outcome='invalid_output' を記録して DistillError("llm_invalid_output")
+// LarmError はそのまま投げる（queue の classify が retry／fail を決める）</code></pre>
+
+  <h3>5.7 queue handler</h3>
+  <table>
+    <caption>
+      distillが登録するjob（scopeはすべて<code>distill</code>、laneは<code>background</code>）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">kind</th>
+        <th scope="col">payload</th>
+        <th scope="col">dedupeKey</th>
+        <th scope="col">resourceKey</th>
+        <th scope="col">recovery</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>distill.assess</code></td>
+        <td><code>{runId, owner, ids[≤20]}</code></td>
+        <td><code>assess:{owner}:{sha(ids+digests)}:{promptVersion}</code></td>
+        <td><code>llm</code></td>
+        <td>replay_safe</td>
+      </tr>
+      <tr>
+        <td><code>distill.cluster</code></td>
+        <td><code>{runId}</code></td>
+        <td><code>cluster:{runId}</code></td>
+        <td><code>cpu</code></td>
+        <td>replay_safe</td>
+      </tr>
+      <tr>
+        <td><code>distill.canonical</code></td>
+        <td>
+          <code>{runId, clusterId, memberDigest}</code>または<code
+            >{runId, singles: ids[≤8]}</code
+          >
+        </td>
+        <td><code>canonical:{clusterId|sha(ids)}:{memberDigest}:{promptVersion}</code></td>
+        <td><code>llm</code></td>
+        <td>replay_safe</td>
+      </tr>
+      <tr>
+        <td><code>distill.embed</code></td>
+        <td><code>{runId}</code></td>
+        <td><code>embed:{runId}</code></td>
+        <td><code>embedding</code></td>
+        <td>replay_safe</td>
+      </tr>
+      <tr>
+        <td><code>distill.conflict</code></td>
+        <td><code>{runId, pairs: [a,b][≤8]}</code></td>
+        <td><code>conflict:{sha(pairs+digests)}:{promptVersion}</code></td>
+        <td><code>llm</code></td>
+        <td>replay_safe</td>
+      </tr>
+      <tr>
+        <td><code>distill.resolve</code></td>
+        <td><code>{runId, a, b}</code></td>
+        <td><code>resolve:{a}:{b}:{digests}</code></td>
+        <td><code>llm</code></td>
+        <td>replay_safe</td>
+      </tr>
+      <tr>
+        <td>
+          <code>distill.theme</code>・<code
+            >distill.examples</code
+          >
+        </td>
+        <td>
+          <code>{runId, themeId}</code>・<code
+            >{runId, canonicalIds[≤4]}</code
+          >
+        </td>
+        <td>同様</td>
+        <td><code>llm</code></td>
+        <td>replay_safe</td>
+      </tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>
+      <code>prepareInTransaction</code
+      >は入力を読み、<code>execute</code>はLLMと計算だけを行い（DBを書かない）、<code>settleInTransaction</code>が1つのtransactionで全ての書き込みを行う。<code>maxAttempts</code>は3。
+    </li>
+    <li>
+      <code>classify</code
+      >：<code>larm_busy</code>・<code>larm_unreachable</code>・<code>larm_deploying</code>はretry（busyは<code>retryAfterMs</code>だけ待つ）、<code>larm_provider_conflict</code>・<code>larm_not_configured</code>・<code>larm_token_missing</code>・<code>larm_contract_mismatch</code>はfail（そのstageの残りjobは次の<code>startStage</code>で新しいkeyにより投入し直す）。<code>llm_invalid_output</code>と<code>host_rejected</code>はfailにせず、settleで確認queueへ回して完了にする。
+    </li>
+    <li>
+      資源枠：<code>llm</code>の容量は既定1（LARMの同時枠が確認できるまで。設定の変更はN2では定数）、<code>embedding</code>は1、<code>cpu</code>は1。<code>distill.cluster</code>は256行ごとに<code>await</code>で処理を譲り、backendのMCP応答を止めない。
+    </li>
+  </ul>
+
+  <h3>5.8 API（distill/controller、API tokenのbearer）</h3>
+  <table>
+    <caption>
+      <code>/api/distill/*</code>
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">method・path</th>
+        <th scope="col">本文・応答</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>POST /api/distill/runs</code></td>
+        <td>
+          <code>{stage, limit?, dryRun?, allowUnverified?}</code> → 202
+          <code>{runId, enqueued}</code>。同じstageが走っていれば409
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>GET /api/distill/runs/:id</code>・<code
+            >GET /api/distill/status</code
+          >
+        </td>
+        <td>runの状態とcounts・<code>DistillStatus</code></td>
+      </tr>
+      <tr>
+        <td>
+          <code>GET /api/distill/calibration/sample?n=300</code>・<code
+            >PUT /api/distill/calibration</code
+          >
+        </td>
+        <td>
+          <code>CalibrationPair[]</code>・<code
+            >{labels: CalibrationLabel[]}</code
+          >
+          →
+          <code>Thresholds</code>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>GET /api/distill/reviews?state=open</code>・<code
+            >POST /api/distill/reviews/:id/resolve</code
+          >
+        </td>
+        <td>
+          <code>ReviewRow[]</code>・<code
+            >ReviewDecision</code
+          >
+          → 204
+        </td>
+      </tr>
+      <tr>
+        <td><code>GET /api/distill/audit</code></td>
+        <td><code>AuditReport</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    CLI：<code>bun run distill -- &lt;run STAGE|status|calibration-export PATH|calibration-import PATH|reviews|resolve ID JSON|audit&gt;</code>。backendの<code>/api/distill/*</code>を、<code>config.host:config.port</code>とAPI
+    tokenで呼ぶだけで、DBを開かない（AGENTS.mdの「CLIはAPIを使う」）。テストは注入したfetchで行う。
+  </p>
+
+  <h3>5.9 search・MCP・evaluation・indexingの契約の変更</h3>
+  <pre><code class="language-ts">// search/contracts
+export interface SearchRequest { …既存;
+  layers?: KnowledgeLayer[];      // 既定を ["canonical","atom"] へ変更
+  theme?: string;                 // テーマのid。指定時はそのテーマと下位テーマに about で属する知識だけ
+  includeSuperseded?: boolean;    // 評価の基準線専用。true なら status IN ('active','superseded') かつ retrieval を見ない。MCPは渡さない
+}
+export interface SearchHit { …既存; layer: KnowledgeLayer | null; situation: string; themes: string[] /* theme id */ }
+
+// mcp：search_knowledge.inputSchema.properties.spaces.default を ["coding","general","eumenes"] へ
+// search_knowledge の results[].themes を [{ "handle": "th_…", "name": "…" }] で埋める（最大3件）
+// get_knowledge（knowledge）の item に situation, rationale, exceptions, examples, supportCount を足す（追加のみ。contractVersionはv1のまま）
+
+// evaluation/contracts
+evalCaseSchema.style: z.enum(["paraphrase","keyword","question","scenario"])
+export type EvalSystem = "legacy-lexical" | "legacy-query-first" | "v2-hybrid" | "v2-atom-baseline";
+export interface SystemMetrics { …既存; dupRateAtK: number | null; conflictRateAtK: number | null }
+export interface EvalArgs { …既存; judge: boolean }   // true なら未判定の組を distill.judgePairs で判定
+
+// indexing：embeddingText("knowledge", row) は row.situation が空でなければ `${situation}\n${title}\n${body}`、
+// 空なら `${title}\n${body}`（N1と同じ）。digest は knowledgeContentDigest(title, body, situation)</code></pre>
+
+  <h2>6. stageごとの設計</h2>
+
+  <h3>6.0 前提：ベクトル</h3>
+  <ul>
+    <li>
+      クラスタリングと矛盾候補はベクトルが前提である。<code>distill.cluster</code>は、母集団の行のベクトルが<code>origin='larm'</code>か<code>verification='verified'</code>で、かつcontent_digestが一致するものだけを使い、使えない行が母集団の1%を超えたら<code>distill_vectors_unverified</code>で止まる。<code>allowUnverified:true</code>は試行（pilot）専用で、そのrunで作ったclusterは<code>algorithm</code>に<code>|unverified</code>を付け、canonical
+      stageはこれを拒否する。
+    </li>
+    <li>
+      owner作業（N1から残っているもの）：<code>bun run vectors:verify-legacy</code>、不合格なら<code>bun run vectors:embed -- --owner knowledge --all</code>（約9.6k件）、<code>bun run vectors:embed -- --owner episode</code>（14,160件。N2bの事例とテーマに必要）。いずれもbackend停止中に行う。
+    </li>
+  </ul>
+
+  <h3>6.1 S1 一般性の判定（assess）</h3>
+  <ul>
+    <li>
+      対象：activeの原子知識9,530件と、<code>scope='global'</code>のEpisode
+      843件。repo scopeのEpisode
+      13,317件は判定せず、検索に出ないまま根拠として残す（N1の範囲の絞り込みで既に出ない）。
+    </li>
+    <li>
+      決定的な兆候（<code>signals_json</code>）：(a)
+      repo名の出現（knowledgeとepisodesの全repo_key
+      204種＋のうち4文字以上で、一般語の除外表に無いもの。除外表は<code>distill/service/checks/repo-terms.ts</code>に固定し、<code>todolist</code>のような一般語を入れる）、(b)
+      絶対path（<code>/Users/</code>、<code>/home/</code>、<code>~/</code>、<code>[A-Z]:\</code>）、(c)
+      repo内の相対path（<code>[\w.-]+/[\w./-]+\.(ts|tsx|js|rs|py|go|md|json|toml|sql|yml|yaml|dart)</code>）、(d)
+      port（<code>(localhost|127\.0\.0\.1|\[::1\]):\d{2,5}</code>、<code>port\s*\d{4,5}</code>）、(e)
+      旧scope・repo_key・classificationStatus。
+    </li>
+    <li>
+      LLM：20件ずつ<code>assessOutput</code>で判定させる。promptには定義と例（repo固有＝特定repoのfile・設定値・機能・決定の事実、汎用化可能＝repo名を外しても他のrepoで通じる教訓）を書く。
+    </li>
+    <li>
+      決定：LLMの判定を採る。ただしLLMが<code>general</code>で兆候(b)(c)(d)のいずれかがあれば<code>generalizable</code>に下げる（正本の段階で具体を外させる）。<code>repo_specific</code>と<code>unusable</code>は同じtransactionで<code>retrieval='evidence_only'</code>にする。判定時のcontent_digestを保存し、本文が変わったら再判定の対象にする。
+    </li>
+    <li>
+      確かめ方：判定の層（旧scope×判定）で200件を層別に抜き、agentが判定の正否を付け、ownerが40件を確認する。<code>repo_specific</code>の精度≥0.90、再現率≥0.80を合格とする。不合格ならpromptを直して再判定する（<code>promptVersion</code>を上げると全件が対象になる）。
+    </li>
+  </ul>
+
+  <h3>6.2 S2 閾値の較正</h3>
+  <ul>
+    <li>
+      <code>calibrationSample(300)</code
+      >：判定が<code>general</code>／<code>generalizable</code>の原子知識の10近傍の組を、類似度の帯（0.86–0.89、0.89–0.91、0.91–0.93、0.93–0.95、0.95–0.97、0.97–1.00）ごとに50組、sha256(pairId)の順で決定的に選ぶ。scopeをまたぐ組とtype・polarityが違う組を、母集団の比率以上に含める。
+    </li>
+    <li>
+      ラベル：「同じ主張（統合して失うものがない）」<code>same</code>／<code>different</code>／<code>unsure</code>。agent-draftで全件を付け、ownerが60組を確認する。ラベルはgitに入れず<code>data/distill/</code>（gitignore済み）に置く。
+    </li>
+    <li>
+      <code>applyCalibration</code
+      >：<code>clusterEdge</code>は<code>same</code>の組の再現率が0.95以上になる最大の閾値、<code>clusterMerge</code>は平均連結で純度が0.90以上になる最小の閾値を、ラベルから計算する（<code>unsure</code>は除く）。<code>pairCandidate</code>は<code>clusterEdge − 0.03</code>。結果を<code>distill_params.thresholds</code>へ保存し、<code>calibratedAt</code>を入れる。
+    </li>
+  </ul>
+
+  <h3 id="clustering">6.3 S3 claimクラスタ</h3>
+  <ul>
+    <li>
+      母集団：activeで<code>retrieval='searchable'</code>、判定が<code>general</code>／<code>generalizable</code>の原子知識。scope、repo、space、type、polarityで分けない（type・polarityは下書きの材料としてLLMへ渡し、極性の対立は矛盾の候補として扱う）。
+    </li>
+    <li>
+      近傍：Float32の総当たりで20近傍（約9.5k件で13秒。計測値）。<code>clusterEdge</code>以上の辺を候補とする。
+    </li>
+    <li>
+      凝集：候補辺で繋がった2つのclusterだけを併合の候補にし、平均連結（全組のcosineの平均を、ベクトルから正確に計算）が最も高い組から、<code>clusterMerge</code>以上かつ併合後の大きさが<code>clusterCap</code>（12）以下の間だけ併合する。同点は平均連結の降順、2つのclusterの最小seqの昇順。単連結の鎖（3章）を避けるためである。
+    </li>
+    <li>
+      保存：大きさ2以上を<code>map_clusters(kind='claim', state='pending')</code>に、各memberをcentroidとの類似度付きで保存する。大きさ1の行はclusterを作らず、canonical
+      stageで8件ずつまとめて処理する。既存のclusterと<code>member_digest</code>が同じならそのまま（unchanged）、構成が変わったら新しいclusterを作り、古いものを<code>stale</code>にする。
+    </li>
+    <li>
+      件数の見込み（推測）：t=0.94の単連結で1,669件が532成分に入ることから、複数要素のclusterは1,000〜2,000個、そこに入る原子知識は2,500〜5,000件、単独が4,000〜6,500件と見込む。正本は6,500〜8,500件（重複の削減15〜30%）。較正後に計り直す。
+    </li>
+  </ul>
+
+  <h3 id="host-checks">6.4 S4 再蒸留（planner → host照合 → verifier）</h3>
+  <ol>
+    <li>
+      <strong>planner</strong
+      >：clusterの原子知識（別名、type、polarity、title、body、旧scopeとrepoの有無、判定）を渡し、<code>plannerOutput</code>を返させる。指示の要点：同じ主張の部分集合に分ける（全memberをちょうど1回ずつ使う）、正本はsituation（どんな状況で効くか。具体的な状況の記述）を先に書く、repo名・path・port・識別子を外して一般化する（他repoでも通じる言い方にする）、原子知識にない主張を足さない、主張を1文ずつ<code>claims</code>に支持する別名付きで書く、条件の違う部分集合の関係を<code>relations</code>に書く。旧版の<code>landscape-curation-v2</code>（<code>git show
+        legacy/v1:shared/prompts/landscape-curation-v2.txt</code>）の「条件・否定・例外・数値・識別子を保つ」「類似は根拠にならない」を引き継ぐ。単独の原子知識は8件まとめて同じschemaで正本化する（groupは1件ずつ）。
+    </li>
+    <li>
+      <strong>host照合</strong>（決定的。<code>distill/service/checks</code>）：
+      <ul>
+        <li>
+          別名の実在と所属：<code>members</code>・<code>support</code>の別名がすべて入力に存在し、各<code>support</code>が自分のgroupのmemberである。
+        </li>
+        <li>被覆：入力のmemberが、groupsにちょうど1回ずつ現れる。</li>
+        <li>
+          新しい主張がない：各claimの内容語（<code>Intl.Segmenter</code>の2文字以上の語から停止語を除く）のうち、支持する原子知識の本文に現れるものが60%以上である。数字・単位付きの値・英数字の識別子・コード片（<code>`…`</code>）は、支持する原子知識に同じ文字列がある場合だけ許す。
+        </li>
+        <li>
+          一般化の検査：正本のtitle、situation、guidance、rationale、条件、手順、例外に、repo名（6.1の表）、絶対path、repo内の相対path、portが現れない。
+        </li>
+        <li>
+          極性：正本のpolarityが、支持する原子知識の多数のpolarityと一致する（同数ならnegativeを優先しreviewへ）。
+        </li>
+        <li>長さとschema（Zodで済み）。</li>
+      </ul>
+      違反があれば、違反の種類と該当箇所だけを添えてplannerに1回直させ、それでも違反ならそのgroupを<code>host_rejected</code>の確認queueへ回す（原子知識は変えない）。
+    </li>
+    <li>
+      <strong>verifier</strong
+      >：plannerの理由は渡さず、元の原子知識と下書き（claims付き）だけを渡して<code>verifierOutput</code>を返させる（旧版の<code>landscape-curation-verify-v2</code>を引き継ぐ）。<code>verdict='supported'</code>、全claimが<code>entailed='yes'</code>、checksがすべて<code>preserved</code>のときだけ採用する。<code>rejected</code>なら指摘を添えてplannerに1回直させ、もう一度verifierに通す。それでも通らないか<code>unknown</code>なら<code>verifier_unknown</code>の確認queueへ回す。
+    </li>
+    <li>
+      <strong>settle</strong>（1つの<code>store.write</code>）：
+      <ul>
+        <li>
+          正本の行：<code>layer='canonical'</code>、<code>scope='global'</code>、<code>repo_key=NULL</code>、<code>space</code>はmemberの多数（同数ならcoding）、<code>body</code>＝guidance、situation等、<code>facets</code>はmemberのfacetの和集合、<code>importance</code>はmemberの最大、<code>confidence</code>は<code>min(0.95,
+            max(member) + 0.05·log2(n))</code>（全memberがsource_missingなら0.6を上限）、<code>provenance_status</code>はmemberにresolvedかexternalがあればそれ（resolved優先）、なければsource_missing。<code>metadata.distill</code>に<code>{clusterId,
+            promptVersion, plannerCallId, verifierCallId}</code>、<code>metadata.usage</code>にmemberの利用実績の合計（used、not_used）。
+        </li>
+        <li>
+          idの安定：既存の正本で、根拠のmemberとのJaccardが0.5以上のものがあればそのidを使ってrevisionを上げ、なければ新しいUUID。handleはidから決まる。
+        </li>
+        <li>
+          根拠：各memberを<code>knowledge_evidence(target_kind='atom', role='derived_from', origin='pipeline')</code>、quoteにそのmemberが支持するclaimの文。
+        </li>
+        <li>
+          置換：<code>map_edges(src=正本, relation='supersedes', dst=原子知識, origin='llm', status='active')</code>、原子知識を<code>status='superseded'</code>・<code>retrieval='evidence_only'</code>にする。
+        </li>
+        <li>
+          <code>repo_specific</code
+          >／<code>unusable</code>のgroupの原子知識は<code>retrieval='evidence_only'</code>と判定（origin
+          llm）を書く。
+        </li>
+        <li>
+          <code>relations</code
+          >の<code>conflict</code>は<code>distill_pair_judgments</code>へ入れ、<code>distill.resolve</code>を投入する。<code>condition_split</code>は両方の正本を残し、判定を<code>resolution='split'</code>で記録する。
+        </li>
+        <li>
+          clusterを<code>distilled</code>にする。runの最後に<code>distill.embed</code>を1件投入する。
+        </li>
+      </ul>
+    </li>
+  </ol>
+
+  <h3>6.5 S6 矛盾の検出と解消（conflict）</h3>
+  <ul>
+    <li>
+      候補：activeの正本ごとに、正本のベクトル（状況を先頭に置いた文）で5近傍のうち<code>pairCandidate</code>以上の組、加えて同じclaim
+      clusterから出た正本どうしの組。両方のcontent_digestが同じ判定が<code>distill_pair_judgments</code>にあれば省く。
+    </li>
+    <li>
+      判定：8組ずつ<code>pairOutput</code>。同じ状況で両立しない指示を<code>conflict</code>、状況や条件が違えば両立するものを<code>condition_split</code>、同じ主張を<code>duplicate</code>とする。
+    </li>
+    <li>
+      解き方：
+      <ul>
+        <li>
+          <code>duplicate</code>：2つの正本の根拠の和集合で新しいclaim
+          clusterを作って再蒸留し、settleで古い2つを<code>superseded</code>にして<code>supersedes</code>（新→旧）で繋ぐ。
+        </li>
+        <li>
+          <code>condition_split</code
+          >：判定が出した<code>notAppliesWhen</code>を各正本へ足す下書きを作り、verifierで「根拠と矛盾しない」ことを確かめてからrevisionを上げる。通らなければ<code>verifier_unknown</code>へ。
+        </li>
+        <li>
+          <code>conflict</code
+          >：強さ<code>S = log2(1+原子知識の数) + log2(1+原記録の数) + 0.5·log2(1+used) +
+            R</code>（<code>R</code>は、根拠の最新の時刻が相手より90日以上新しければ1、それ以外0。原記録の数はsource_missingの原子知識を数えない）を両側で計算し、差が1.0以上かつ両側のimportanceが0.8未満なら、弱い側を<code>retracted</code>にして<code>contradicts</code>（強→弱、origin
+          llm、active）を張り、<code>resolution='a_wins'|'b_wins'</code>を記録する。それ以外は<code>owner_pending</code>にして<code>conflict</code>の確認queueへ回す。係数は初期値で、pilotの結果で見直す。
+        </li>
+        <li>
+          <code>unknown</code
+          >：<code>conflict</code>の確認queueへ回す。
+        </li>
+      </ul>
+    </li>
+    <li>
+      ownerの確認：<code>a_wins</code>／<code>b_wins</code>は自動と同じ処理、<code>split</code>は<code>condition_split</code>の処理、<code>keep_both</code>は<code>compatible</code>（origin
+      human）として記録する。未解決の<code>conflict</code>の両側は、MCPで<code>warnings</code>に<code>{"kind":"unresolved_conflict","handles":[…]}</code>を付けて返す。
+    </li>
+  </ul>
+
+  <h3>6.6 S7 audit：「active正本どうしは矛盾しない」の検証</h3>
+  <ol>
+    <li>
+      <code>unresolved_conflict</code
+      >：両方がactiveで<code>verdict IN ('conflict','unknown')</code>かつ<code>resolution</code>が<code>a_wins</code>／<code>b_wins</code>／<code>owner_resolved</code>でない組が0件。
+    </li>
+    <li>
+      <code>unjudged_near_pair</code
+      >：6.5の候補の組のうち、現在のdigestで判定のないものが0件。
+    </li>
+    <li>
+      <code>citation_invalid</code
+      >・<code>generalization_lint</code>：全active正本に6.4のhost照合を再実行し、違反0件。
+    </li>
+    <li>
+      <code>superseded_without_target</code
+      >・<code>active_atom_absorbed</code>：supersededの原子知識はactiveかsupersededの正本へ辿れ、正本の根拠になっている原子知識にactiveのものがない。
+    </li>
+    <li>
+      <code>canonical_without_vector</code
+      >・<code>repo_scope_canonical</code>：active正本はすべてベクトルを持ち、scopeはglobalである。
+    </li>
+    <li>
+      抜き取りの再判定（auditの数には入れず報告だけ）：候補の組から100組を決定的に選び、別のprompt版で判定し直して、<code>conflict</code>の一致率を出す。
+    </li>
+  </ol>
+
+  <h3>6.7 Episodeの役割</h3>
+  <ul>
+    <li>
+      repo
+      scopeのEpisode（13,317件）は根拠だけにする。検索にもMCPにも出さず（N1のまま）、行と原記録への参照を残す。
+    </li>
+    <li>
+      globalのEpisode（843件）は一般性の判定を通し、<code>general</code>／<code>generalizable</code>だけを<code>retrieval='searchable'</code>に残す（MCPの<code>kinds:["episode"]</code>で出る）。
+    </li>
+    <li>
+      「似たシナリオの経験」は、正本に添える一般化した事例（<code>examples_json</code>、最大2件）として出す（N2b、6.9節）。Episode本体を出さずに、repoの具体を外した「状況・対処・結果」を正本の中で返す。
+    </li>
+  </ul>
+
+  <h3>6.8 source_missing（5,062件）</h3>
+  <ul>
+    <li>
+      削除も降格もしない。原記録へは辿れないが、旧版の蒸留を通った知識であり、2,000件以上に利用実績がある。
+    </li>
+    <li>
+      正本の根拠にしてよい。ただし、全memberがsource_missingの正本は<code>confidence</code>の上限を0.6にし、<code>provenance_status='source_missing'</code>にする。矛盾の解消の強さでは原記録の数に数えない（6.5）。
+    </li>
+    <li>
+      <code>unusable</code
+      >と判定された行は<code>evidence_only</code>になる。それ以外の特別扱いはしない。
+    </li>
+  </ul>
+
+  <h3>6.9 N2b：テーマ、テーマ知識、facetの正規化、事例</h3>
+  <ul>
+    <li>
+      テーマ：active正本のベクトルを、決定的な初期値（sha256(id)の順で選ぶk-means++）の球面k-meansで、下位（level
+      2）を<code>k2 = round(N/25)</code>個、その中心をさらに<code>k1 = round(k2/8)</code>個の上位（level
+      1）へまとめる。clusterは<code>kind='theme'</code>、<code>about</code>（正本→テーマ）と<code>broader</code>（下位→上位）をorigin
+      clusteringで張る。
+    </li>
+    <li>
+      テーマ知識：テーマごとに、中心に近い20件の正本（別名a1..）を渡して<code>themeOutput</code>を返させ、名前・説明・aliasを<code>map_clusters</code>へ、概要・要となる正本（keyMembersの別名がそのテーマのmemberであることをhostで照合）・注意点・未解決の点を<code>summary_json</code>へ保存する。一般化の検査を通す。
+    </li>
+    <li>組み直し：前の版のテーマとmemberのJaccardが0.5以上ならid・handleを引き継ぐ。</li>
+    <li>
+      facetの正規化：原子知識のappliesToの異なり値（domains 3,331、technologies 4,050、changeTypes
+      3,229）を、その値を持つ原子知識が吸収された正本の多数のテーマへ対応付ける（origin
+      deterministic）。決まらない値は50件ずつLLMで概念名へまとめる（origin
+      llm）。<code>map_facet_concepts</code>へ保存する。N3のテーマ一致laneの入力になる。
+    </li>
+    <li>
+      事例：正本ごとに、根拠の原子知識と同じ原記録を持つEpisode（決定的）と、Episodeベクトルの近い3件（<code>pairCandidate</code>以上）を候補にし、4正本ずつ<code>examplesOutput</code>で一般化した事例を作らせる。別名の所属と一般化の検査を通し、<code>examples_json</code>と<code>example_of</code>（Episode→正本、candidate）を保存する。Episodeのベクトルがなければこの段は止まる。
+    </li>
+  </ul>
+
+  <h3>6.10 差分stage（incremental）</h3>
+  <p>
+    旧版のdaemonはN4まで動き続け、<code>import:legacy</code>の再実行で原子知識が増える・変わる。<code>incremental</code>は、未判定かdigestの変わった原子知識をassessし、最も近いclaim
+    clusterの平均連結が<code>clusterMerge</code>以上で大きさが上限未満なら加えてclusterを<code>stale</code>（再蒸留の対象）にし、そうでなければ単独として正本化する。N2の全件実行のあいだは、差分取り込みを止めることを推奨する（<a
+      href="#owner-questions"
+      >14章</a
+    >）。
+  </p>
+
+  <h2>7. 検索とMCPの切り替え</h2>
+  <ul>
+    <li>
+      絞り込み：knowledgeは<code>status='active' AND retrieval='searchable' AND layer IN (:layers)</code>、episodeは<code>status='active' AND retrieval='searchable'</code>を、N1の条件（space、scope／repoKey）に足す。<code>includeSuperseded</code>のときだけ評価用に緩める。
+    </li>
+    <li>
+      fts lane：<code>bm25(knowledge_fts, 2.0, 2.5, 1.0)</code>（title、situation、body）。short
+      laneはsituationにも2点を与える。vector laneはN1と同じ規則で、digestは5.3の新しい式で照合する。
+    </li>
+    <li>
+      RRFはN1のまま（k=60、w_fts=1.0、w_vector=1.0、w_short=0.5）。layerが<code>atom</code>のhitだけ合算後の点数を0.8倍し、同点はcanonicalを先にする。summaryは、canonicalなら<code>situation</code>（120文字まで）＋「
+      — 」＋body、atomとepisodeはN1のまま、全体を280文字で切る。
+    </li>
+    <li>
+      テーマ：hitの<code>themes</code>に、<code>about</code>で属するテーマ（level
+      2、なければlevel
+      1）のidを最大3件入れる。<code>theme</code>指定時は、そのテーマと下位テーマに属する知識だけを対象にし、テーマの表が空なら<code>theme_unavailable</code>をdegradedに入れて絞り込まない。
+    </li>
+    <li>
+      MCP：<code>search_knowledge</code>の既定spacesを<code>["coding","general","eumenes"]</code>にする（推奨。owner確認、<a
+        href="#owner-questions"
+        >14章</a
+      >）。<code>theme</code>はテーマのhandleか名前・aliasの完全一致で受け、解決できなければ<code>theme_unavailable</code>。<code>get_knowledge</code>はcanonicalにsituation、rationale、exceptions、examples、supportCountを足し、evidenceは根拠の原子知識が持つ原記録を重複なく最大10件、N1の規則（agent_logとexternalはroleとsourceKindだけ）で返す。原子知識のhandleでの取得は、supersededなら<code>supersededBy</code>に正本のhandleを入れて返し、<code>evidence_only</code>（repo固有）かrepo
+      scopeなら<code>not_found</code>にする。
+    </li>
+  </ul>
+  <table>
+    <caption>
+      schemaを変えずに値を埋めるもの・契約の変更が要るもの
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">区分</th>
+        <th scope="col">項目</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>値を埋めるだけ（MCPのJSONの形は不変）</td>
+        <td>
+          <code>results[].themes</code
+          >（N1は常に<code>[]</code>）、<code>warnings</code>（未解決の矛盾）、<code>get_knowledge</code>の<code>layer:"canonical"</code>・<code>supersededBy</code>・<code>appliesWhen</code>・<code>notAppliesWhen</code>・<code>steps</code>、<code>theme</code>入力の有効化、<code>evidenceSummary</code>（正本は根拠の原記録で数える）
+        </td>
+      </tr>
+      <tr>
+        <td>契約の変更</td>
+        <td>
+          <code>spaces</code
+          >の既定値、<code>results[].themes</code>の要素の形（<code>{handle,name}</code>）、<code>get_knowledge</code>のitemへの項目の追加、内部の<code>SearchRequest</code>／<code>SearchHit</code>、handleの<code
+            >th_</code
+          >
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>8. 評価</h2>
+  <h3>8.1 既存の60問（coding-known-item-v1）</h3>
+  <ul>
+    <li>
+      正解のref（<code>legacy:knowledge_items:&lt;uuid&gt;</code>）はファイルを変えずに使う。原子知識がsupersededなら<code>supersedes</code>を逆に辿り（正本→正本の置換も3段まで）、activeの正本へ写す。複数のrefが同じ正本に写ればgradeの最大を採る。<code>evidence_only</code>で正本に吸収されなかったrefは<code>unreachableRefs</code>に入れて除く。
+    </li>
+    <li>
+      基準線<code>v2-atom-baseline</code>は<code>layers:["atom"], includeSuperseded:true</code>で同じ検索を走らせる（再蒸留の前後どちらでも測れる）。
+    </li>
+  </ul>
+  <h3>8.2 シナリオ集合（coding-scenario-v1、80問）</h3>
+  <ul>
+    <li>
+      60問：Episodeから作る。原子知識と原記録を共有するEpisode（2,004件）から、repo（上位10）とoutcome_kind（success、mixed、failure）で層別に選び、situationをrepo名・path・人名を外した1〜3文の「いまこういう状況にいる」という記述に書き直して問いにする。
+    </li>
+    <li>
+      20問：本文に<code>Use when</code>を持つ原子知識の状況を、titleの3文字以上の連続を含まない言い換えにする。
+    </li>
+    <li>
+      正解：原子知識のrefで付ける（正本は8.1と同じく写す）。候補は、そのEpisodeと原記録を共有する原子知識と、<code>v2-atom-baseline</code>・<code>v2-hybrid</code>の上位20件のpoolで、agentが本文を読んでgrade（3：その状況でそのまま使える、2：部分的に役立つ）を付ける。<code>labelSource='agent-draft'</code>、<code>style='scenario'</code>、<code>spaces:["coding"]</code>。fileに本文を書かない。
+    </li>
+    <li>pilotの前に作り、再蒸留の前に基準線を測っておく。</li>
+  </ul>
+  <h3>8.3 重複率と矛盾率</h3>
+  <ul>
+    <li>
+      <code>dupRate@k</code
+      >＝上位k件のうち、より上位のhitと「同じ主張」であるhitの数の総和 ÷
+      hitの総数。原子知識どうしは、同じ正本へ吸収された（同じverified
+      groupの）ものを同じ主張とする。正本どうしは<code>distill_pair_judgments</code>の<code>duplicate</code>で判定し、未判定の組は<code>--judge</code>のとき<code>judgePairs</code>で判定する（<code>--judge</code>なしなら<code>null</code>）。
+    </li>
+    <li>
+      <code>conflictRate@k</code
+      >＝上位k件に<code>conflict</code>と判定された組を含み、かつ<code>warnings</code>でその組を示していない問いの割合。
+    </li>
+  </ul>
+  <h3 id="done">8.4 N2の完了条件</h3>
+  <table>
+    <caption>
+      完了条件（すべて満たす）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">観点</th>
+        <th scope="col">条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>クラスタの純度</td>
+        <td>
+          複数要素のclaim clusterを100個抜き、memberごとに「同じ主張か」を人手で見て、精度≥0.90
+        </td>
+      </tr>
+      <tr>
+        <td>一般性の判定</td>
+        <td>
+          <code>repo_specific</code>の精度≥0.90、再現率≥0.80（200件の層別標本）
+        </td>
+      </tr>
+      <tr>
+        <td>引用照合と一般化</td>
+        <td>auditの違反0件（全active正本がhost照合を通る、repo名・path・portを含む正本0件）</td>
+      </tr>
+      <tr>
+        <td>矛盾</td>
+        <td>
+          auditの<code>unresolved_conflict</code>と<code>unjudged_near_pair</code>が0件。シナリオ集合の<code>conflictRate@10</code>≤0.02
+        </td>
+      </tr>
+      <tr>
+        <td>重複</td>
+        <td>
+          シナリオ集合の<code>dupRate@10</code>≤0.05、かつ<code>v2-atom-baseline</code>の半分以下
+        </td>
+      </tr>
+      <tr>
+        <td>再現率</td>
+        <td>
+          60問の<code>v2-hybrid</code>（supersedes経由）のRecall@10が同じlanesの<code>v2-atom-baseline</code>から0.02以上下がらない。シナリオ集合のnDCG@10が基準線より0.05以上高い
+        </td>
+      </tr>
+      <tr>
+        <td>切り替え</td>
+        <td>
+          検索に残る未吸収の原子知識（<code>searchable_unabsorbed</code>）が判定general／generalizableの1%以下で、すべてopenの確認queueを持つ
+        </td>
+      </tr>
+      <tr>
+        <td>品質の標本</td>
+        <td>
+          正本40件をownerが読み、状況の記述が具体的で、元の原子知識の条件を落としていないものが36件以上
+        </td>
+      </tr>
+      <tr>
+        <td>検証</td>
+        <td><code>bun run verify</code>が成功</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>9. LLMとコスト</h2>
+  <h3>9.1 選択肢</h3>
+  <table>
+    <caption>
+      再蒸留に使えるLLM
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">選択肢</th>
+        <th scope="col">接続</th>
+        <th scope="col">利点</th>
+        <th scope="col">難点</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A. LARMのLLM（推奨の初期値）</td>
+        <td>
+          Agent Connection v3、profile
+          <code>contextStill</code
+          >、<code>openai.chat-completions.v1</code>（5.5節）。旧版が2026-09-25に隔離E2Eで実推論まで確認（<a
+            href="larm-public-profile-discovery-contextstill.html"
+            >provide契約</a
+          >）
+        </td>
+        <td>追加の費用0、知識をlocalの外へ出さない、新しいpackage不要</td>
+        <td>
+          modelと速度は未検証。SAAA・Eumenesと枠を取り合う（409）。JSONの遵守とplanner／verifierの品質はpilotで測る必要がある
+        </td>
+      </tr>
+      <tr>
+        <td>B. Claude API（Message Batches）</td>
+        <td>
+          <code>@anthropic-ai/sdk</code>の追加と、API
+          keyの<code>settings_credentials</code>への保存が要る（新規依存、owner判断）
+        </td>
+        <td>品質が高い見込み、Batchで50%安く、並列で速い</td>
+        <td>知識の本文（会話由来、社内情報を含みうる）を外部へ送る。費用がかかる</td>
+      </tr>
+      <tr>
+        <td>C. Codex／Claude Code CLI（定額の契約内）</td>
+        <td>
+          呼び出しごとのsubprocess（常駐しない）。Eumenesの<code>api/domains/inference/adapters/codex-sdk.ts</code>・<code>claude-session.ts</code>が参考
+        </td>
+        <td>追加の従量費用なし、品質が高い</td>
+        <td>rate limit、1件ごとの起動の遅さ、テストで再現しにくい、外部送信はBと同じ</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    推奨：N2はAで実装し、<code>LlmClient</code>の背後に置く。pilot（9.3節）で受入率と品質がpilotの基準に届かなければ、ownerの判断でBかCのproviderを足す（契約は<code>LlmClient</code>のまま）。plannerとverifierは同じproviderでよいが、verifierだけを強いmodelにする構成も<code>LlmClient</code>を2つ渡せば取れるようにする（<code>DistillDeps.llm</code>を<code>{planner,
+      verifier}</code>にするかはN2-0で決め、決めたら固定する。初期値は同じclientを両方に渡す）。
+  </p>
+
+  <h3>9.2 処理量と見積り（推定）</h3>
+  <p>
+    前提（推測）：日本語は1文字≒0.8 token、原子知識1件≒350 token（metadata込み）、正本の下書き≒500
+    token。複数要素のcluster
+    1,500個、単独6,000件（8件ずつ750回）、正本7,500件、修正の再実行15%、矛盾候補5,000組（8組ずつ625回）。
+  </p>
+  <table>
+    <caption>
+      stageごとのLLM呼び出しとtoken（推定）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">stage</th>
+        <th scope="col">呼び出し</th>
+        <th scope="col">入力</th>
+        <th scope="col">出力</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>assess（20件ずつ。Episode 843件を含む）</td>
+        <td>約520</td>
+        <td>約4.6M</td>
+        <td>約0.5M</td>
+      </tr>
+      <tr>
+        <td>canonical planner</td>
+        <td>約2,250</td>
+        <td>約6.5M</td>
+        <td>約3.8M</td>
+      </tr>
+      <tr>
+        <td>canonical verifier</td>
+        <td>約2,250</td>
+        <td>約9.4M</td>
+        <td>約1.9M</td>
+      </tr>
+      <tr>
+        <td>修正の再実行（15%）</td>
+        <td>約680</td>
+        <td>約2.4M</td>
+        <td>約0.9M</td>
+      </tr>
+      <tr>
+        <td>conflict・resolve</td>
+        <td>約700</td>
+        <td>約5.5M</td>
+        <td>約0.4M</td>
+      </tr>
+      <tr>
+        <td>N2b（テーマ約330、facet約150、事例約1,900）</td>
+        <td>約2,400</td>
+        <td>約3M</td>
+        <td>約0.5M</td>
+      </tr>
+      <tr>
+        <td>合計</td>
+        <td>約8,800</td>
+        <td>約31M</td>
+        <td>約8M</td>
+      </tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>
+      費用と時間の見積り（推定。±50%）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">provider</th>
+        <th scope="col">見積り</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A. LARM（同時1枠）</td>
+        <td>
+          費用0。出力30 token/秒・入力1,000
+          token/秒と仮定すると、1回あたり約60秒で約150時間。同時4枠が取れれば約40時間（速度は未検証）
+        </td>
+      </tr>
+      <tr>
+        <td>B. Claude Sonnet 5.5（入力$2・出力$10／MTok）</td>
+        <td>通常約$140、Batch約$70。並列で数時間</td>
+      </tr>
+      <tr>
+        <td>B. Claude Opus 5.5（$4・$20）</td>
+        <td>通常約$280、Batch約$140</td>
+      </tr>
+      <tr>
+        <td>B. Claude Haiku 5.5（$0.10・$0.50）</td>
+        <td>約$7（品質はpilotで要確認）</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    価格は2026-10-06時点のAnthropicの公表値（claude-apiの資料）で、cacheとthinkingの増分は入れていない。
+  </p>
+
+  <h3>9.3 pilotと失敗・再実行</h3>
+  <ul>
+    <li>
+      pilot：較正のあと、複数要素のcluster
+      200個と単独200件だけを<code>limit</code>付きで流し、受入率（verifierの<code>supported</code>／全group）、host照合の違反率、1回あたりのtokenと時間、品質の標本（ownerが20件）を測る。基準：受入率≥0.70、host違反（修正後）≤0.05、標本の18件以上が可。満たせばprovider・promptを固定して全件へ進む。
+    </li>
+    <li>
+      再実行：jobのdedupeKeyはcluster（member_digest）とprompt版を含むので、同じ<code>startStage</code>を何度投げても済んだものは投入されない。LLMの応答は<code>distill_llm_calls</code>に残り、settle前に落ちても同じ入力なら再利用する。prompt版を上げると全clusterが再実行の対象になる（正本のidはJaccardで引き継ぐ）。
+    </li>
+    <li>
+      失敗：provider側の一時障害はqueueのretry（最大3回、busyは<code>Retry-After</code>）、恒久的な誤りはjobをfailにしてstageの<code>counts</code>に出す。LLMの出力の誤りとhost照合の違反は確認queueへ回してjobは完了にする（同じ入力を無限に繰り返さない）。
+    </li>
+  </ul>
+
+  <h3>9.4 queueの使い方とretention</h3>
+  <ul>
+    <li>
+      backend（<code>api/application/runtime.ts</code>）で<code>distill.registerHandlers()</code>を呼び、<code>server.ts</code>の起動時だけ<code>queue.recover()</code>と<code>queue.start()</code>を呼ぶ（maintenance
+      commandではrunnerを動かさない）。
+    </li>
+    <li>
+      retention：backendの起動時と1時間ごとに<code>store.write((tx) =&gt; queue.pruneInTransaction(tx,
+        Date.now()))</code>を呼ぶ（終わったjobは14日、outcome_unknownは90日で消え、dedupeKeyが再利用可能になる。<code>api/domains/queue/service/index.ts:193-200</code>）。同じtimerで、<code>distill_llm_calls</code>のうち<code>outcome!='ok'</code>で30日を過ぎた行を消す（okの行はauditと再利用のために残す）。
+    </li>
+    <li>
+      backendの再起動はownerが行う。distillのstageはbackendが動いている間に進み、MCPは止まらない。
+    </li>
+  </ul>
+
+  <h2>10. Workstream</h2>
+  <figure>
+    <pre class="mermaid">
+flowchart LR
+  Z["N2-0 契約・migration・共通部（分割しない）"] --&gt; A["N2-A larm chat"]
+  Z --&gt; C["N2-C assess・較正・cluster"]
+  Z --&gt; D["N2-D canonical"]
+  Z --&gt; E["N2-E conflict・review・audit・API"]
+  Z --&gt; F["N2-F テーマ・facet・事例（N2b）"]
+  Z --&gt; G["N2-G search"]
+  Z --&gt; H["N2-H MCP"]
+  Z --&gt; I["N2-I 評価"]
+  Z --&gt; L["N2-L legacyの保護"]
+  A --&gt; J["I-N2 統合（orchestrator）"]
+  C --&gt; J
+  D --&gt; J
+  E --&gt; J
+  F --&gt; J
+  G --&gt; J
+  H --&gt; J
+  I --&gt; J
+  L --&gt; J
+    </pre>
+    <figcaption>
+      N2-0のあと、AからLは書き込み範囲が重ならないので並行できる。Fは実装だけ並行し、実行はS7のあと
+    </figcaption>
+  </figure>
+
+  <h3 id="ws-n2-0">N2-0 契約・migration・共通部（分割しない）</h3>
+  <ul>
+    <li>
+      目的：5章の契約をすべてcodeにし、並行するworkerが互いのcodeを待たずに書けるようにする。shared
+      fileを持つので1人で行う（N0と同じ扱い）。
+    </li>
+    <li>
+      書いてよい：<code>scripts/domains.ts</code>、<code>api/application/migrations.ts</code>と<code>migrations.test.ts</code>、<code>api/infrastructure/handle.ts</code>と<code>handle.test.ts</code>、<code>api/domains/map/**</code>（全部）、<code>api/domains/distill/{index.ts,contracts/**,repository/**,service/index.ts,service/llm/**,service/checks/**,test/fixtures/**}</code>と、<code>service/{assess,cluster,canonical,conflict,review,audit,theme,examples}/index.ts</code>の仮実装（<code>Error("not_implemented")</code>）、<code>api/domains/distill/controller/index.ts</code>の仮実装（503
+      <code>{"error":"distill_not_implemented"}</code
+      >）、<code>api/domains/{knowledge,experience}/{contracts,repository,index.ts}</code>（5.2・5.3）、<code>api/domains/larm/contracts/**</code>と<code>larm/index.ts</code>（<code>createLarmChat</code>の仮実装）、<code>api/domains/settings/{contracts,service}/**</code>（<code>llmProfile</code>）、<code>api/domains/{search,mcp,evaluation}/contracts/**</code>、<code>api/domains/indexing/service/embedding-text.ts</code>とそのtest。
+    </li>
+    <li>
+      禁止：上記以外。とくに各domainの<code>service</code>本体（search、mcp、evaluation、legacy、larmのembedding）とapplicationの<code>runtime.ts</code>・<code>app.ts</code>・<code>server.ts</code>。
+    </li>
+    <li>
+      作るもの：5.2のmigration、5.3と5.4の同期関数（実装まで）、<code>distill/repository</code>の全表の読み書き関数（assessments、params、runs、llm_calls、pair_judgments、reviews）、<code>callJson</code>（5.6）、<code>checks</code>（6.1の兆候と6.4のhost照合を純関数で：<code>repoSignals(text,
+        repoTerms)</code>、<code>validateAliases(groups, input)</code>、<code>checkNovelty(claim, supportTexts)</code>、<code>lintGeneralization(draft,
+        repoTerms)</code>、<code>checkPolarity(draft, supports)</code>）、偽の<code>LlmClient</code>（入力のdigestから固定の応答を返すfixture）、<code>embeddingText</code>と<code>knowledgeContentDigest</code>の変更。
+    </li>
+    <li>
+      テスト：GOLDENの12件、N1のDBにmigrationを当てて既存行の<code>retrieval='searchable'</code>・<code>situation=''</code>とFTSの再構築（旧文言が引ける、situationが引ける）、STRICTとCHECKの拒否、<code>setKnowledgeDisposition</code>のrevision、mapの<code>upsertCluster</code>のunchanged判定と<code>upsertEdge</code>の一意性、<code>callJson</code>の再利用・1回の修正・<code>llm_invalid_output</code>、checksの各規則の正例と反例（repo名、絶対path、相対path、port、数字の新規、別名の所属外、被覆の欠落と重複）、<code>embeddingText</code>と<code>knowledgeContentDigest</code>（situationが空ならN1と同じ値）、handleの<code>th_</code>。
+    </li>
+    <li>
+      受入：<code>bun run verify</code>が成功。<code>git status --short</code>の変更が書いてよい範囲だけにある。
+    </li>
+  </ul>
+
+  <h3>N2-A larm chat</h3>
+  <ul>
+    <li>目的：5.5の<code>createLarmChat</code>を実装する。</li>
+    <li>
+      書いてよい：<code>api/domains/larm/service/**</code>（chatのfileを足し、embeddingと共有する接続の部品を切り出してよい）、<code>api/domains/larm/test/**</code>。
+    </li>
+    <li>
+      禁止：<code>larm/contracts/**</code>、<code>larm/index.ts</code>、ほかのすべて。
+    </li>
+    <li>
+      テスト（fixture
+      fetch）：discoveryとcreate（201と202のpoll）、claimのbaseURL・model・credentialで推論、応答のprofile・protocol・endpoint・modelの検証と不一致での推論拒否、503とRetry-After（既定30秒）、409、credentialの期限での再claim、release、<code>json:true</code>で<code>response_format</code>、<code>finish_reason='length'</code>、1
+      MiB超の応答、例外messageにtoken・URL・応答本文が出ない。
+    </li>
+    <li>
+      受入：<code>bun run test:domain -- larm</code>が成功（既存のembeddingのtestを含む）。
+    </li>
+  </ul>
+
+  <h3>N2-C assess・較正・cluster</h3>
+  <ul>
+    <li>目的：6.1、6.2、6.3と<code>incremental</code>（6.10）を実装する。</li>
+    <li>
+      書いてよい：<code>api/domains/distill/service/{assess,cluster}/**</code>、<code>api/domains/distill/prompts/assess.ts</code>、<code>api/domains/distill/test/{assess,calibration,cluster,incremental}.test.ts</code>。
+    </li>
+    <li>禁止：上記以外（distillのcontracts・repository・llm・checks・index.tsを含む）。</li>
+    <li>
+      テスト：一時DBに原子知識と決定的なベクトルを入れて、兆候の抽出、LLMの判定とgeneralizableへの下げ、<code>evidence_only</code>の付与、digestが変わったときの再判定、較正の標本の決定性と帯ごとの件数・閾値の計算（手計算と一致）、平均連結が鎖を作らない（単連結なら1つになる配置で上限12・閾値で分かれる）、同点の順、member_digestが同じなら再実行で変化なし、構成変化で<code>stale</code>、未検証ベクトルで<code>distill_vectors_unverified</code>、incrementalの追加と単独化。
+    </li>
+    <li>受入：<code>bun test api/domains/distill/test/{assess,calibration,cluster,incremental}.test.ts</code>が成功。</li>
+  </ul>
+
+  <h3>N2-D canonical</h3>
+  <ul>
+    <li>
+      目的：6.4（planner、host照合の適用、verifier、修正1回、settle）と<code>distill.embed</code>を実装する。
+    </li>
+    <li>
+      書いてよい：<code>api/domains/distill/service/canonical/**</code>、<code>api/domains/distill/prompts/{canonical-plan,canonical-verify}.ts</code>、<code>api/domains/distill/test/canonical*.test.ts</code>。
+    </li>
+    <li>禁止：上記以外。</li>
+    <li>
+      テスト（偽のLlmClient）：正常な統合（正本の各列、evidence、supersedes、原子知識のsupersededとevidence_only、cluster
+      distilled、embedの投入）、部分集合への分割、repo_specificのgroup、host違反→修正→成功、host違反の2回目→<code>host_rejected</code>のreview、verifierのrejected→修正→supported、unknown→review、conflictの関係→pair判定とresolveの投入、Jaccard≥0.5でのid引き継ぎ、全memberがsource_missingのconfidence上限、単独8件のbatch、settleが1つのtransactionであること（途中で投げたら何も書かれない）。
+    </li>
+    <li>受入：<code>bun test api/domains/distill/test/canonical*.test.ts</code>が成功。</li>
+  </ul>
+
+  <h3>N2-E conflict・review・audit・API</h3>
+  <ul>
+    <li>
+      目的：6.5、6.6、確認queue、<code>judgePairs</code>、5.8のcontroller、CLIの本体関数を実装する。
+    </li>
+    <li>
+      書いてよい：<code>api/domains/distill/service/{conflict,review,audit}/**</code>、<code>api/domains/distill/controller/**</code>、<code>api/domains/distill/cli/**</code>（API
+      clientの関数。注入したfetchを使う）、<code>api/domains/distill/prompts/{pair-judge,condition-split}.ts</code>、<code>api/domains/distill/test/{conflict,review,audit,controller,cli}.test.ts</code>。
+    </li>
+    <li>禁止：上記以外。</li>
+    <li>
+      テスト：候補の組の選び方とdigestによる省略、duplicate→再蒸留の投入、condition_split→notAppliesWhenの追加とverifier、conflictの強さの計算（手計算）と自動解消・ownerへの回送、review解決の各decision、auditの各codeの正例と反例、controllerは<code>app.request</code>でtokenなし401・各endpointの形・409、CLIは偽のfetchで各subcommandの要求と終了コード。
+    </li>
+    <li>受入：<code>bun test</code>で上記のtestが成功。</li>
+  </ul>
+
+  <h3>N2-F テーマ・facet・事例（N2b）</h3>
+  <ul>
+    <li>目的：6.9を実装する。</li>
+    <li>
+      書いてよい：<code>api/domains/distill/service/{theme,examples}/**</code>、<code>api/domains/distill/prompts/{theme,facet,examples}.ts</code>、<code>api/domains/distill/test/{theme,facet,examples}.test.ts</code>。
+    </li>
+    <li>禁止：上記以外。</li>
+    <li>
+      テスト：k-meansの決定性、2階層とabout・broader、keyMembersの所属照合、Jaccardによるid・handleの引き継ぎ、facetの決定的な対応とLLMへの回送、事例の候補（同じ原記録）と一般化の検査、Episodeのベクトルがないときの停止。
+    </li>
+    <li>受入：上記のtestが成功。</li>
+  </ul>
+
+  <h3>N2-G search</h3>
+  <ul>
+    <li>
+      目的：7章の検索側（絞り込み、FTSの列と重み、short
+      lane、atomの0.8倍、summary、themes、theme絞り込み、includeSuperseded）を実装する。
+    </li>
+    <li>書いてよい：<code>api/domains/search/**</code>（contractsを除く）。</li>
+    <li>禁止：上記以外。</li>
+    <li>
+      テスト：evidence_onlyとsupersededの行がどれだけ良く一致しても出ない、includeSupersededで出る、situationだけに語がある正本がfts・shortで当たる、bm25の重み、canonicalとatomの同点の順と0.8倍、新しいdigestでのvector照合、theme絞り込みと下位テーマ、テーマが空なら<code>theme_unavailable</code>、N1の全testが通る。
+    </li>
+    <li>受入：<code>bun run test:domain -- search</code>が成功。</li>
+  </ul>
+
+  <h3>N2-H MCP</h3>
+  <ul>
+    <li>目的：7章のMCP側を実装する。</li>
+    <li>書いてよい：<code>api/domains/mcp/**</code>（contractsを除く）。</li>
+    <li>禁止：上記以外。</li>
+    <li>
+      テスト：<code>tools/list</code>の既定spaces、themesの形、theme入力の解決、warningsの<code>unresolved_conflict</code>、<code>get_knowledge</code>のcanonicalの追加項目とevidenceの平坦化（agent_logの抜粋を返さない）、supersededの原子知識で<code>supersededBy</code>、evidence_onlyとrepo
+      scopeで<code>not_found</code>、応答に内部ID・uri・repo_key・metadataが出ない、32
+      KiBの上限。
+    </li>
+    <li>受入：<code>bun run test:domain -- mcp</code>が成功。</li>
+  </ul>
+
+  <h3>N2-I 評価</h3>
+  <ul>
+    <li>
+      目的：8章（supersedes経由の正解、<code>v2-atom-baseline</code>、dupRate・conflictRate、<code>--judge</code>、シナリオ集合の初版）を実装する。
+    </li>
+    <li>
+      書いてよい：<code>api/domains/evaluation/**</code>（contractsを除く）、<code>eval/sets/coding-scenario-v1.jsonl</code>（新規）。
+    </li>
+    <li>禁止：上記以外（<code>eval/sets/coding-known-item-v1.jsonl</code>を含む）。</li>
+    <li>
+      テスト：supersededの正解の写し（多段、grade最大、evidence_onlyの除外）、指標の手計算との一致、<code>--judge</code>なしでnull、偽のjudgePairs、シナリオ集合の全行がschemaに通り本文を含まない。集合の作成はDBを読み取り専用で開いて行う。
+    </li>
+    <li>受入：<code>bun run test:domain -- evaluation</code>が成功。</li>
+  </ul>
+
+  <h3>N2-L legacyの保護</h3>
+  <ul>
+    <li>
+      目的：<code>import:legacy</code>の再実行が再蒸留の結果を壊さないようにする。取り込み先の原子知識が<code>superseded</code>なら、旧行が変わってもstatusを保ち（本文が変われば行は更新し、<code>metadata.distill.needsReassess=true</code>）、<code>retrieval</code>は書かない（5.3でupsertが書かない）。旧行の<code>deprecated</code>は従来どおり<code>retracted</code>にする。
+    </li>
+    <li>
+      書いてよい：<code>api/domains/legacy/**</code>（contractsとrepository/migrations.tsを除く）。
+    </li>
+    <li>禁止：上記以外。</li>
+    <li>
+      テスト：superseded・evidence_onlyの行の再取り込みで状態が保たれる、本文の変化で印が付く、deprecatedはretracted、2回目の取り込みが変更0件、N1の全test。
+    </li>
+    <li>受入：<code>bun run test:domain -- legacy</code>が成功。</li>
+  </ul>
+
+  <h2>11. 共有ファイルと統合手順（orchestratorが行う）</h2>
+  <ul>
+    <li>
+      共有ファイル：<code>package.json</code>、<code>bun.lock</code>、<code>scripts/**</code>（<code>domains.ts</code>を含む）、<code>api/application/**</code>（<code>migrations.ts</code>のmigration登録を含む）、<code>api/infrastructure/**</code>、各domainの<code>index.ts</code>（barrel）・<code>contracts/**</code>・<code>repository/migrations.ts</code>、<code>api/domains/distill/service/index.ts</code>、<code>spec/docs/README.html</code>。N2-0のあとはorchestratorだけが編集する。workerが変更を必要としたら止まって報告する。
+    </li>
+    <li>
+      並行前：<code>git status --short</code>で汚れたfileを確認し、workerに渡さない。並行後：各workerの変更が自分の範囲だけにあることを確かめる。
+    </li>
+  </ul>
+  <h3>I-N2 統合</h3>
+  <ol>
+    <li>
+      <code>runtime.ts</code
+      >：<code>createLarmChat</code>（<code>llmProfile: () =&gt;
+        settings.get().larm.llmProfile</code>）、<code>createDistill</code>（<code>embedKnowledge</code>はindexingの<code>embedMissing</code>をowner
+      knowledge・missingで呼ぶ）、<code>registerHandlers()</code>。<code>close()</code>でchatの接続もreleaseする。
+    </li>
+    <li>
+      <code>server.ts</code
+      >：起動時に<code>queue.recover()</code>・<code>queue.start()</code>、retentionのtimer（9.4）、停止時にrunnerを止めてから<code>runtime.close()</code>。
+    </li>
+    <li>
+      <code>app.ts</code
+      >：<code>registerDistill(app, …)</code>を<code>/api/distill</code>へ（API
+      tokenの下）。<code>error-status.ts</code>に5.6の<code>errorStatus</code>を足す。
+    </li>
+    <li>
+      <code>api/application/commands/distill.ts</code
+      >（N2-Eのcli関数を呼ぶ薄い入口。DBを開かない）と<code>package.json</code>の<code
+        >"distill"</code
+      >
+      script。
+    </li>
+    <li><code>bun run verify</code>（全体の唯一の通し実行）。</li>
+    <li>
+      <code>spec/docs/README.html</code
+      >に本書の行を足し、<code>bun run spec:fix</code>・<code>bun run spec:check</code>。
+    </li>
+    <li>
+      ownerへ残す運用（順に）：ベクトルの検証と補充（6.0）→backendの再起動→<code>distill run assess</code>→判定の標本確認→<code>calibration-export</code>・ラベル・<code>calibration-import</code>→シナリオ集合で基準線を測る（backend停止中に<code>eval:search</code>）→<code>distill run cluster</code>→pilot（<code>run canonical --limit</code>）→全件の<code>canonical</code>→<code>conflict</code>→<code>audit</code>→reviewの解決→N2b（<code>theme</code>、<code>examples</code>）→完了条件の評価（8.4）。
+    </li>
+  </ol>
+
+  <h2 id="proposal-changes">12. 方針提案からの変更</h2>
+  <table>
+    <caption>
+      方針提案（2026-10-29）と本書の違い
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">提案の箇所</th>
+        <th scope="col">提案</th>
+        <th scope="col">本書</th>
+        <th scope="col">理由</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>5章 近傍グラフ</td>
+        <td>type、極性、space、scopeが同じものどうしでk近傍グラフ</td>
+        <td>
+          scope・repo・space・type・極性で分けない。type・極性はLLMへ渡す材料にし、極性の対立は矛盾の候補にする
+        </td>
+        <td>ownerの方針（globalが基本、重複を排除）。scopeをまたぐ近い組が12%ある（3章）</td>
+      </tr>
+      <tr>
+        <td>5章 claimクラスタ</td>
+        <td>類似度の高いedgeだけを残しgraph clustering</td>
+        <td>上限12件の平均連結の凝集</td>
+        <td>単連結・相互近傍は数千件の鎖になる（3章の計測）</td>
+      </tr>
+      <tr>
+        <td>3.1節 L2正本</td>
+        <td>統一した主張、条件、例外、手順、根拠</td>
+        <td>
+          状況（situation）を第一級の列にし、理由・例外・事例を足す。FTSとベクトルは状況を最も重くする
+        </td>
+        <td>検索の目的は「似たシナリオで有効だった情報」</td>
+      </tr>
+      <tr>
+        <td>3.2節 scope</td>
+        <td>codingの中のrepo／globalを表す</td>
+        <td>
+          由来の記録にする。正本は常にglobal。repo固有の原子知識・Episodeは<code>retrieval='evidence_only'</code>で検索から外す（行は残す）
+        </td>
+        <td>ownerの方針（repo固有を蓄積しない）</td>
+      </tr>
+      <tr>
+        <td>3.1節 L0のEpisode</td>
+        <td>Episodeは経験として出す</td>
+        <td>
+          repo
+          scopeのEpisodeは根拠だけ。一般性を通ったglobalのEpisodeだけ検索に残し、経験は正本の中の一般化した事例として出す
+        </td>
+        <td>Episodeの94%（13,317件）がrepo scope</td>
+      </tr>
+      <tr>
+        <td>10章 Eumenesの既定space</td>
+        <td>generalとeumenes。codingは指定したときに含める</td>
+        <td>既定で全space（coding、general、eumenes）を推奨</td>
+        <td>ownerの方針。現在の知識はすべてcodingで、既定のままではEumenesが何も得られない</td>
+      </tr>
+      <tr>
+        <td>10章 人手の承認</td>
+        <td>確信度の低い正本知識に限る</td>
+        <td>
+          加えて、自動で決められない矛盾、verifierが決められないもの、host照合の違反が残るものを確認queueへ回す
+        </td>
+        <td>矛盾の排除を自動だけでは保証できない</td>
+      </tr>
+      <tr>
+        <td>3.3節・9章 map_edgesの時期</td>
+        <td>型付き関係はN3</td>
+        <td>
+          <code>map/0001-init</code
+          >をN2で作り、supersedes、contradicts、about、broader、example_of（candidate）をN2で書く
+        </td>
+        <td>置換と矛盾の記録がN2の完了条件に要る</td>
+      </tr>
+      <tr>
+        <td>6章 テーマ一致の検索lane</td>
+        <td>FTS・ベクトル・テーマ一致の3経路</td>
+        <td>N2はテーマの値と絞り込みだけ。テーマ一致laneはN3</td>
+        <td>N2の範囲を再蒸留に集中させる</td>
+      </tr>
+      <tr>
+        <td>5章 継続運用</td>
+        <td>新しい原子知識を最も近いクラスタへ加える</td>
+        <td>
+          N2は旧版の差分取り込み向けの<code>incremental</code>
+          stageだけ。本格はN4
+        </td>
+        <td>新しい原子知識の生成はN4</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>13. リスク・未検証</h2>
+  <ul>
+    <li>
+      ベクトルは未検証である。3章の類似度と6.3の件数の見込みは旧ベクトルでの値で、検証で不一致になり全件を埋め込み直すと分布が変わりうる。閾値は必ず較正で決め直す。
+    </li>
+    <li>
+      LARMのLLMの可用性、model、context
+      window、速度、<code>response_format</code>への対応、v2からのprofile
+      <code>contextStill</code
+      >のprovideはいずれも未検証（provide契約は旧版の2026-09-25の記録）。pilotで最初に確かめる。
+    </li>
+    <li>
+      e5の前置き：正本は<code>passage:</code>、問いは<code>query:</code>で埋め込む（N1と同じ）。状況どうしの対称な照合では両側<code>query:</code>の方が良い可能性があるが未検証。ベクトルは1件に1つなので、pilotでシナリオ集合を使って比べ、変えるなら<code>embeddingText</code>と前置きの規則をまとめて変える（全正本の埋め込み直し）。
+    </li>
+    <li>
+      新しい主張の検査（内容語60%）は語彙の言い換えを誤検知しうる。pilotで違反の内訳を見て閾値を調整する（host照合の閾値は<code>distill_params</code>ではなく定数で、変えたらprompt版と同様に版を上げる）。
+    </li>
+    <li>
+      一般化（repo名・pathの除去）でrepo固有の条件が落ち、別のrepoで誤った指示になる恐れがある。verifierの<code>noRepoSpecifics</code>と<code>conditions</code>で見るが、品質の標本（8.4）で確かめる。
+    </li>
+    <li>
+      見積り（9.2）のtoken換算、cluster数、LARMの速度はすべて推測である。pilotの実測で全件の時間と費用を出し直す。
+    </li>
+    <li>
+      queueはEumenesから写したもので、N2で初めて動かす。長いjob（LLMの数分）でのleaseとrecover、<code>cpu</code>のjobがevent
+      loopを譲ることを、N2-0とI-N2のテストで確かめる。
+    </li>
+    <li>STRICT表への<code>ADD COLUMN … CHECK</code>は未検証（5.2）。</li>
+    <li>
+      評価集合はagent-draftで、Episode由来の問いは正解のpoolが検索結果に依存する（pool
+      bias）。ownerの見直しが要る。
+    </li>
+  </ul>
+
+  <h2 id="owner-questions">14. ownerへの質問（作業は推奨案で進める）</h2>
+  <p>
+    2026-10-30、ownerは6問すべてを推奨案で承認した。1は「LARMで実装しpilotで測る」までの承認で、外部のLLMへ送るかどうかはpilotの結果を見て改めて決める。
+  </p>
+  <ol>
+    <li>
+      <strong>再蒸留のLLM</strong
+      >：推奨はLARMのLLMで実装しpilotで測ること。pilotが基準（9.3）に届かない場合、知識の本文を外部のLLMへ送ってよいか、送るならClaude
+      API（Sonnet
+      5.5のBatchで約$70の見積り、<code>@anthropic-ai/sdk</code>の追加が要る）とCodex／Claude
+      Code CLI（契約内）のどちらか。
+    </li>
+    <li>
+      <strong>自分の製品群のrepo固有知識</strong
+      >：contextStill、eumenes、LARM、SAAAなどのrepo固有の事実（例：特定のportや内部APIの挙動）も、他のrepoと同じく<code>evidence_only</code>にしてよいか。推奨は「はい」（方針どおり。汎用化できる教訓だけ正本にする）。Eumenes自身の運用に要る事実はN6でEumenes側から入れる。
+    </li>
+    <li>
+      <strong>矛盾の自動解消</strong
+      >：根拠の強さと新しさの差が大きいときに自動で<code>retracted</code>にしてよいか。推奨は「はい」、ただしimportance
+      0.8以上と差の小さいものは確認queueへ回し、自動で決めた件数をstatusに出す。
+    </li>
+    <li>
+      <strong>MCPの既定space</strong
+      >：<code>["coding","general","eumenes"]</code>にしてよいか。推奨は「はい」。
+    </li>
+    <li>
+      <strong>人手のラベルの量</strong
+      >：agent-draftのラベルに対して、ownerの確認を較正60組、一般性40件、正本の品質40件（pilotで20件）に絞ってよいか。推奨は「はい」。
+    </li>
+    <li>
+      <strong>旧版からの差分取り込み</strong
+      >：N2の全件実行のあいだ<code>import:legacy</code>の再実行を止め、終わってから<code>incremental</code>で追いつく運用でよいか。推奨は「はい」。
+    </li>
+  </ol>
+  <h2 id="results">15. 実施結果（2026-10-30）</h2>
+  <p>
+    N2-0のあと、N2-A〜N2-L（N2-AとN2-Lは1人）を並行で実装し、orchestratorが統合した。独立レビュー（distill・map、セキュリティ・境界、検索・評価・migration・legacyの3本）を1回行い、指摘を1回の修正で直した。<code>bun run verify</code>はすべて成功し、テストは678件で失敗0件。実DBへのmigrationの適用、live
+    LARM、backendの起動、実データでのstageの実行は行っていない（owner作業）。
+  </p>
+  <h3>15.1 計画からの変更</h3>
+  <table>
+    <caption>
+      Table: 実装で計画から変えた点
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">変更</th>
+        <th scope="col">理由</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>mcpのtier</td>
+        <td>
+          3から4へ上げ、<code>distill</code>に依存する。未解決の矛盾の組は<code>distill</code>の<code>listUnresolvedConflictPairs</code>だけが定義し、MCPのwarningsとauditが共有する
+        </td>
+        <td>読み取りの例外（5.1）はdistillだけで、mcpがdistillの表を直接読むのは規則外だった</td>
+      </tr>
+      <tr>
+        <td>DistillServiceの契約</td>
+        <td>
+          <code>applyCalibration</code
+          >、<code>calibrationSample</code>、<code>audit</code>は<code>Promise</code>を返し、処理の途中でevent
+          loopへ譲る。<code>resolveReview</code>はrequestの<code>signal</code>を受ける。<code>recoverRuns()</code>を足した
+        </td>
+        <td>
+          backendのMCP応答を止めない。split案のLLM呼び出しを切断で止める。crashで残ったrunを起動時に失敗にする
+        </td>
+      </tr>
+      <tr>
+        <td>queueへの投入</td>
+        <td>
+          dedupeKeyにrunIdを含める。stageは窓で投入する（assessは20件ずつの鎖、canonicalとconflictは16、theme・examplesは48）。resolveの投入がqueue_fullなら判定を残して次のrunへ回す
+        </td>
+        <td>
+          scopeあたりopen 128件の上限と、runをまたぐ同じkeyの<code
+            >request_conflict</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td>clusterのmember</td>
+        <td>
+          canonicalが受け付けるのは、active・searchableの原子知識、mergeクラスタ（<code>conflict-merge-v1</code>）の吸収済みの原子知識、同じclusterの正本に吸収された原子知識。incrementalは<code>distilled</code>のclusterにだけ足し、<code>pending</code>に戻して再蒸留する。<code>|unverified</code>のclusterは再蒸留しない
+        </td>
+        <td>重複の統合と追加の配置を再蒸留の経路に乗せる。staleが行き止まりだった</td>
+      </tr>
+      <tr>
+        <td>矛盾の自動解消</td>
+        <td>
+          別のprompt（<code>PAIR_RECHECK_VERSION</code>）で再判定し、conflictで勝ち負けが同じときだけ確定する。それ以外はownerへ回す
+        </td>
+        <td>LLMの1回の判定で正本をretractしない</td>
+      </tr>
+      <tr>
+        <td>personal</td>
+        <td>
+          <code>space='personal'</code
+          >の原子知識とEpisodeを、assess、cluster、canonical、theme、examplesの入力から除く。examplesの候補Episodeは<code>scope='global'</code>・searchable・activeに限る
+        </td>
+        <td>
+          方針提案10章（個人の原記録からrule・procedureを作らない）。repo
+          scopeやpersonalのEpisodeが事例経由でMCPに出ていた
+        </td>
+      </tr>
+      <tr>
+        <td>host照合</td>
+        <td>
+          noveltyをclaimsに加えてsteps・exceptions・appliesWhen・notAppliesWhenの各行に掛け、否定の不一致を<code>negation_mismatch</code>にする。facetsにlintを掛ける。plannerのrepo_specific・unusableは、兆候がなくassessと食い違えば<code>generality</code>のreviewにする
+        </td>
+        <td>「しない」を「する」にした正本が照合を通っていた</td>
+      </tr>
+      <tr>
+        <td>ownerの確認</td>
+        <td>
+          <code>host_rejected</code
+          >と<code>verifier_unknown</code>の正本の下書きを<code>accept</code>で採用できる（<code>acceptReviewedDraft</code>）。pair
+          reviewのidは両digestを含む
+        </td>
+        <td>
+          契約（5.6）の<code>accept</code>が実装で拒否されていた。再判定した組が確認queueに出なかった
+        </td>
+      </tr>
+      <tr>
+        <td>knowledgeの正本の項目</td>
+        <td>canonicalはsituationを必ず持つ。upsertで省いた項目は保存済みの値を保つ</td>
+        <td>situationのない正本が入りえた。部分更新で項目が消えた</td>
+      </tr>
+      <tr>
+        <td>LLMの記録と再利用</td>
+        <td>
+          callJsonのdigestからmodelを外し、同じmodelの<code>ok</code>だけを再利用する（接続前は再利用しない）。<code>distill_llm_calls(outcome, created_at)</code>のindexを<code>distill/0001-init</code>に足した
+        </td>
+        <td>接続前の呼び出しでmodelがnullになり、再利用のkeyが不安定だった。retentionの全表走査</td>
+      </tr>
+      <tr>
+        <td>LARMのchat</td>
+        <td>
+          claimのbaseURLで、旧版のport（39171、39172）とbackend自身のportを拒否する（<code>LarmChatDeps.forbiddenPorts</code>）。controlがhttpsならclaimもhttps
+        </td>
+        <td>知識の本文とcredentialを、同じhostの別のserviceへ送らない</td>
+      </tr>
+      <tr>
+        <td>埋め込みの対象</td>
+        <td><code>retrieval='searchable'</code>の行だけを埋め込む</td>
+        <td>検索にもclusterにも使わない行のコスト</td>
+      </tr>
+      <tr>
+        <td>評価</td>
+        <td>
+          正解は、同じ正本に吸収されたものを1つの主張として畳み、全systemが同じ母数で測る。conflictRateの「警告済み」はMCPと同じ述語にする。基準線のdupRateは再蒸留の後に測る。シナリオ集合のnoteからrepo名を除いた
+        </td>
+        <td>v2-hybridだけ母数が小さく、数値が良く見えた</td>
+      </tr>
+      <tr>
+        <td>backend</td>
+        <td>
+          起動時に<code>queue.recover()</code>、<code>distill.recoverRuns()</code>、<code>queue.start()</code>、retentionを行ってからlistenする。停止は各段階の失敗が次を止めない。<code>/api/*</code>のbodyは1
+          MiBまで
+        </td>
+        <td>復旧前に受けた要求と、停止時の未処理のreject</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3>15.2 直していない指摘</h3>
+  <ul>
+    <li>
+      <code>larm.baseUrl</code
+      >がloopback以外のときにhttpsを必須にするか（ownerの判断）。いまはloopback以外のhttpも受け付けるので、その設定では知識の本文とtokenが平文で流れる。
+    </li>
+    <li>
+      pilotで「cluster
+      200個と単独200件」を1回の<code>--limit</code>で指定できない（limitはclusterから数える）。
+    </li>
+    <li>
+      callJsonの記録の書き込みが混雑で失敗すると、LLMの応答が保存されないままjobが失敗する（費用だけが無駄になる）。
+    </li>
+    <li>
+      評価の、畳む前のref単位のcoverageの併記（<code>EvalReport</code>の契約の変更が要る）。
+    </li>
+    <li>
+      原子知識だけの0.8倍は、knowledgeとEpisodeを混ぜた検索で、Episodeを相対的に上げる（計画どおり。評価集合はknowledgeだけ）。
+    </li>
+  </ul>
+  <h3>15.3 ownerの作業（順に）</h3>
+  <ol>
+    <li>
+      LARMの接続とベクトル：<code>bun run settings:larm -- --base-url &lt;URL&gt;</code>、<code>LARM_API_TOKEN</code>を付けて<code>bun run vectors:verify-legacy</code>。不合格なら<code>vectors:embed</code>。最初にDBを開いたcommandがN2のmigrationを当て、その前に<code>data/context-still.sqlite3.pre-migration-&lt;時刻&gt;.sqlite3</code>（約640MB）を作る。
+    </li>
+    <li>
+      backendの起動（<code>bun run start</code>）。以後のstageは<code>bun run distill</code>（API経由。DBを開かない）で行う。
+    </li>
+    <li>
+      <code>bun run distill -- run assess</code>
+      → 判定の標本の確認 → <code>bun run distill -- calibration-export &lt;path&gt;</code>・ラベル付け・<code
+        >calibration-import</code
+      >
+      → <code>distill run cluster</code> →
+      pilot（<code>bun run distill -- run canonical --limit N</code>）→ 全件のcanonical → conflict → audit →
+      reviewの解決 → theme、examples。
+    </li>
+    <li>
+      基準線とシナリオ集合の評価は、backendを止めて<code>bun run eval:search</code>で行う（基準線のdupRateは再蒸留の後に測る）。
+    </li>
+  </ol>
+</article>

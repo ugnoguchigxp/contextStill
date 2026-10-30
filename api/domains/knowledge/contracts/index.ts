@@ -14,7 +14,29 @@ export type ProvenanceStatus =
 	| "source_missing"
 	| "unresolved";
 
-export interface KnowledgeInput {
+/** Whether search may return the row. The upsert never writes it; `setKnowledgeDisposition` does. */
+export type Retrieval = "searchable" | "evidence_only";
+
+export interface CanonicalExample {
+	situation: string;
+	action: string;
+	outcome: string;
+	episodeIds: string[];
+}
+
+/** The fields of a canonical item. Atoms keep the defaults ('' and []). */
+export interface CanonicalFields {
+	/** 1..600 characters; required for a canonical, '' for an atom. */
+	situation: string;
+	/** 0..800 characters. */
+	rationale: string;
+	/** At most 8, each at most 200 characters. */
+	exceptions: string[];
+	/** At most 2 (N2b). */
+	examples: CanonicalExample[];
+}
+
+export interface KnowledgeInput extends Partial<CanonicalFields> {
 	id: string;
 	layer: KnowledgeLayer;
 	type: KnowledgeType;
@@ -57,8 +79,12 @@ export interface EvidenceInput {
 	confidence: number | null;
 }
 
-export interface KnowledgeRow extends Omit<KnowledgeInput, "metadata"> {
+export interface KnowledgeRow
+	extends
+		Omit<KnowledgeInput, "metadata" | keyof CanonicalFields>,
+		CanonicalFields {
 	handle: string;
+	retrieval: Retrieval;
 	revision: number;
 	contentDigest: string;
 	metadata: Record<string, unknown>;

@@ -2,12 +2,21 @@ import { z } from "zod";
 
 export const larmAudienceSchema = z.enum(["same-host", "saaa-desktop"]);
 
-/** The LARM connection. `baseUrl` is the origin of the LARM control API (null: not configured). */
+const larmFields = {
+	baseUrl: z.string().min(1).max(2048).nullable(),
+	audience: larmAudienceSchema.nullable(),
+	embeddingProfile: z.string().min(1).max(64),
+	llmProfile: z.string().min(1).max(64),
+};
+
+/**
+ * The LARM connection. `baseUrl` is the origin of the LARM control API (null: not configured).
+ * A stored document without `llmProfile` (written before N2) reads with the default.
+ */
 export const larmSettingsSchema = z
 	.object({
-		baseUrl: z.string().min(1).max(2048).nullable(),
-		audience: larmAudienceSchema.nullable(),
-		embeddingProfile: z.string().min(1).max(64),
+		...larmFields,
+		llmProfile: larmFields.llmProfile.default("contextStill"),
 	})
 	.strict();
 
@@ -21,10 +30,16 @@ export type Settings = z.infer<typeof settingsSchema>;
 
 export const defaultSettings: Settings = {
 	revision: 0,
-	larm: { baseUrl: null, audience: null, embeddingProfile: "embeddingCanary" },
+	larm: {
+		baseUrl: null,
+		audience: null,
+		embeddingProfile: "embeddingCanary",
+		llmProfile: "contextStill",
+	},
 };
 
-export const larmPatchSchema = larmSettingsSchema.partial();
+// Built from the fields without the default: a missing key in a patch must stay missing.
+export const larmPatchSchema = z.object(larmFields).strict().partial();
 export type LarmPatch = z.infer<typeof larmPatchSchema>;
 
 /** PUT /api/settings/larm */

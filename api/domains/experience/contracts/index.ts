@@ -4,6 +4,9 @@ export type OutcomeKind = "success" | "failure" | "mixed" | "unknown";
 export type EpisodeStatus = "active" | "stale" | "retracted";
 export type TimePrecision = "exact" | "minute" | "day" | "month" | "unknown";
 
+/** Whether search may return the row. The upsert never writes it; `setEpisodeRetrieval` does. */
+export type Retrieval = "searchable" | "evidence_only";
+
 export interface EpisodeInput {
 	id: string;
 	title: string;
@@ -34,6 +37,7 @@ export interface EpisodeInput {
 export interface EpisodeRow extends Omit<EpisodeInput, "metadata"> {
 	handle: string;
 	revision: number;
+	retrieval: Retrieval;
 }
 
 export interface EpisodeSourceRef {

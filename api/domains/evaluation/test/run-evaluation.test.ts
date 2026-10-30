@@ -21,6 +21,8 @@ import {
 } from "../../legacy";
 import type { SearchHit, SearchRequest, SearchService } from "../../search";
 import { migrations as sourcesMigrations } from "../../sources";
+import { migrations as mapMigrations } from "../../map";
+import { migrations as distillMigrations } from "../../distill";
 import { type EvalReport, runEvaluation } from "../index";
 import { rankLegacy, loadCandidates } from "../service/legacy-lexical";
 
@@ -62,6 +64,8 @@ function knowledge(
 		metadata: {},
 		createdAt: T,
 		updatedAt: T,
+		// A canonical states a situation (5.3); one that no query matches.
+		...(over.layer === "canonical" ? { situation: "◇◇◇" } : {}),
 		...over,
 	};
 }
@@ -72,6 +76,8 @@ function setup() {
 		...experienceMigrations,
 		...knowledgeMigrations,
 		...legacyMigrations,
+		...mapMigrations,
+		...distillMigrations,
 	]);
 	const dir = mkdtempSync(join(tmpdir(), "context-still-eval-"));
 	cleanups.push(t.dispose, () => rmSync(dir, { recursive: true, force: true }));
@@ -176,6 +182,9 @@ function fakeSearch(
 					type: null,
 					polarity: null,
 					status: "active",
+					layer: null,
+					situation: "",
+					themes: [],
 					space: "coding" as Space,
 					confidence: 0.8,
 					score: 1,
@@ -258,6 +267,7 @@ test("runEvaluation: report shape, both systems, unresolved refs, written file",
 			lanes: ["fts", "short"],
 			k: 10,
 			outPath,
+			judge: false,
 		},
 	);
 
@@ -290,6 +300,8 @@ test("runEvaluation: report shape, both systems, unresolved refs, written file",
 		ndcgAtK: 1,
 		queries: 1,
 		zeroHit: 0,
+		dupRateAtK: 0,
+		conflictRateAtK: 0,
 	});
 	expect(report.systems["v2-hybrid"].queries).toBe(1);
 	expect(report.systems["v2-hybrid"].recallAtK).toBe(1);
@@ -337,6 +349,7 @@ test("runEvaluation: a single system leaves the other zeroed and wins empty", as
 			lanes: ["fts"],
 			k: 5,
 			outPath: join(dir, "r.json"),
+			judge: false,
 		},
 	);
 	expect(report.systems["v2-hybrid"]).toEqual({
@@ -345,6 +358,8 @@ test("runEvaluation: a single system leaves the other zeroed and wins empty", as
 		ndcgAtK: 0,
 		queries: 1,
 		zeroHit: 1,
+		dupRateAtK: 0,
+		conflictRateAtK: 0,
 	});
 	expect(report.systems["legacy-lexical"].queries).toBe(0);
 	expect(report.perQuery.map((p) => p.system)).toEqual(["v2-hybrid"]);
@@ -455,7 +470,13 @@ test("runEvaluation: unreachable refs are reported and left out of the relevant 
 				scope: "repo",
 				repoKey: "r",
 			}),
-			knowledge(4, { title: "alpha canon", body: "alpha", layer: "canonical" }),
+			knowledge(4, {
+				title: "alpha canon",
+				body: "alpha",
+				layer: "canonical",
+				situation: "alpha",
+				status: "retracted",
+			}),
 			knowledge(5, { title: "alpha general", body: "alpha", space: "general" }),
 			knowledge(6, { title: "beta rule", body: "beta" }),
 			knowledge(7, {
@@ -513,6 +534,7 @@ test("runEvaluation: unreachable refs are reported and left out of the relevant 
 			lanes: ["fts"],
 			k: 10,
 			outPath: join(dir, "r.json"),
+			judge: false,
 		},
 	);
 	expect(report.unreachableRefs).toEqual(
@@ -537,8 +559,10 @@ test("runEvaluation: unreachable refs are reported and left out of the relevant 
 		"keyword",
 		"paraphrase",
 		"question",
+		"scenario",
 	]);
 	expect(report.byStyle.paraphrase).toEqual({});
+	expect(report.byStyle.scenario).toEqual({});
 	expect(report.byStyle.keyword).toEqual({
 		"legacy-query-first": {
 			recallAtK: 1,
@@ -546,6 +570,8 @@ test("runEvaluation: unreachable refs are reported and left out of the relevant 
 			ndcgAtK: 1,
 			queries: 1,
 			zeroHit: 0,
+			dupRateAtK: 0,
+			conflictRateAtK: 0,
 		},
 		"v2-hybrid": {
 			recallAtK: 1,
@@ -553,6 +579,8 @@ test("runEvaluation: unreachable refs are reported and left out of the relevant 
 			ndcgAtK: 1,
 			queries: 1,
 			zeroHit: 0,
+			dupRateAtK: 0,
+			conflictRateAtK: 0,
 		},
 	});
 	expect(report.byStyle.question["v2-hybrid"]).toEqual({
@@ -561,6 +589,8 @@ test("runEvaluation: unreachable refs are reported and left out of the relevant 
 		ndcgAtK: 0,
 		queries: 1,
 		zeroHit: 1,
+		dupRateAtK: 0,
+		conflictRateAtK: 0,
 	});
 	expect(report.byStyle.question["legacy-query-first"]?.recallAtK).toBe(1);
 	expect(report.byStyle.keyword["legacy-lexical"]).toBeUndefined();
@@ -604,6 +634,7 @@ test("episodes are matched by their episodes row and scored on title, situation 
 			lanes: ["fts", "short"],
 			k: 10,
 			outPath: join(dir, "r.json"),
+			judge: false,
 		},
 	);
 	expect(report.perQuery).toEqual([

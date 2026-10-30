@@ -10,6 +10,12 @@ const SET = join(
 	"../../../../eval/sets/coding-known-item-v1.jsonl",
 );
 
+const SCENARIO_SET = join(
+	import.meta.dir,
+	"../../../../eval/sets/coding-scenario-v1.jsonl",
+);
+const LIVE_DB = join(import.meta.dir, "../../../../data/context-still.sqlite3");
+
 const SNAPSHOT =
 	"/Users/y.noguchi/Code/contextStill-db-backup-20261029/context-still-core.sqlite";
 
@@ -38,7 +44,7 @@ test("eval set v1: every line passes the schema and the plan's composition", () 
 	expect(cases).toHaveLength(60);
 	expect(new Set(cases.map((c) => c.id)).size).toBe(60);
 
-	const styles = { paraphrase: 0, question: 0, keyword: 0 };
+	const styles = { paraphrase: 0, question: 0, keyword: 0, scenario: 0 };
 	for (const c of cases) {
 		styles[c.style] += 1;
 		expect(c.labelSource).toBe("agent-draft");
@@ -52,7 +58,12 @@ test("eval set v1: every line passes the schema and the plan's composition", () 
 		expect(c.query).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
 		expect((c.note ?? "").length).toBeLessThan(120);
 	}
-	expect(styles).toEqual({ paraphrase: 30, question: 20, keyword: 10 });
+	expect(styles).toEqual({
+		paraphrase: 30,
+		question: 20,
+		keyword: 10,
+		scenario: 0,
+	});
 
 	// one grade:3 row per case, never reused by another case
 	const primaries = cases.map(
@@ -158,6 +169,81 @@ test.skipIf(!existsSync(SNAPSHOT))(
 						sharedRun(c.query, primary.body, 12),
 						`${c.id} shares a run with the body`,
 					).toBeNull();
+			}
+		} finally {
+			db.close();
+		}
+	},
+);
+
+const REPO_NAMES =
+	/nightworkers|contextstill|hono-standard|todolist|python-standard|nextjs-template|local-llm|vulnworkbench|regular-rag|nephroflow|eviforge/i;
+
+test("scenario set v1: 80 cases, every line passes the schema, nothing but queries and refs", () => {
+	const text = readFileSync(SCENARIO_SET, "utf8");
+	const cases = parseEvalSet(text);
+	expect(cases).toHaveLength(80);
+	expect(new Set(cases.map((c) => c.id)).size).toBe(80);
+	const strata = { episode: 0, useWhen: 0 };
+	for (const c of cases) {
+		expect(c.style).toBe("scenario");
+		expect(c.labelSource).toBe("agent-draft");
+		expect(c.spaces).toEqual(["coding"]);
+		expect(c.kinds).toEqual(["knowledge"]);
+		if (c.note === "stratum=use-when") strata.useWhen += 1;
+		else if (/^stratum=(success|mixed|failure)$/.test(c.note ?? ""))
+			strata.episode += 1;
+		const refs = c.relevant.map((r) => r.ref);
+		expect(new Set(refs).size).toBe(refs.length);
+		expect(c.relevant.some((r) => r.grade === 3)).toBe(true);
+		for (const r of c.relevant) expect([2, 3]).toContain(r.grade);
+		// a situation of one to three sentences, with no repo name, path, address or id
+		const sentences = c.query.split("。").filter(Boolean).length;
+		expect(sentences).toBeGreaterThanOrEqual(1);
+		expect(sentences).toBeLessThanOrEqual(3);
+		expect(c.query.length).toBeLessThanOrEqual(200);
+		// the note names the outcome stratum only, never a repo
+		expect(c.note ?? "").toMatch(/^stratum=(success|mixed|failure|use-when)$/);
+		expect(c.note ?? "").not.toMatch(REPO_NAMES);
+		expect(c.query).not.toMatch(/[\\/]/);
+		expect(c.query).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
+		expect(c.query).not.toMatch(/@|https?:|\.(ts|tsx|md|json|py)\b/);
+		expect(c.query).not.toMatch(REPO_NAMES);
+	}
+	expect(strata).toEqual({ episode: 60, useWhen: 20 });
+	// each line is exactly what the schema yields (no stray fields, so no knowledge text)
+	for (const line of text.split("\n").filter(Boolean))
+		expect(evalCaseSchema.safeParse(JSON.parse(line)).success).toBe(true);
+});
+
+test.skipIf(!existsSync(LIVE_DB))(
+	"scenario set v1 against the v2 database (read only): refs resolve to coding atoms, and a use-when query shares no run of 3 characters with the title",
+	() => {
+		const db = new Database(`file:${LIVE_DB}?mode=ro`, { readonly: true });
+		try {
+			const row = db.query<
+				{ layer: string; scope: string; space: string; title: string },
+				[string]
+			>(
+				`SELECT k.layer, k.scope, k.space, k.title FROM legacy_import_map m
+				 JOIN knowledge_items k ON k.id = m.target_id
+				 WHERE m.legacy_table = 'knowledge_items' AND m.legacy_id = ?`,
+			);
+			for (const c of parseEvalSet(readFileSync(SCENARIO_SET, "utf8"))) {
+				const titles: string[] = [];
+				for (const { ref, grade } of c.relevant) {
+					const found = row.get(ref.split(":")[2]!);
+					expect(found, `${c.id} ${ref}`).not.toBeNull();
+					expect(found!.layer, `${c.id} ${ref}`).toBe("atom");
+					expect(found!.scope, `${c.id} ${ref}`).toBe("global");
+					expect(found!.space, `${c.id} ${ref}`).toBe("coding");
+					if (grade === 3) titles.push(found!.title);
+				}
+				if (c.note === "stratum=use-when")
+					expect(
+						titles.some((title) => sharedRun(c.query, title, 3) === null),
+						`${c.id} shares a run with every grade 3 title`,
+					).toBe(true);
 			}
 		} finally {
 			db.close();

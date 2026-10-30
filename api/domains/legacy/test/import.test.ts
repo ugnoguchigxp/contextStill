@@ -13,6 +13,7 @@ import {
 	getKnowledgeById,
 	listKnowledgeEvidence,
 	migrations as knowledgeMigrations,
+	setKnowledgeDisposition,
 } from "../../knowledge";
 import { LARM_EMBEDDING_SPACE } from "../../larm";
 import {
@@ -936,4 +937,174 @@ test("a snapshot with a non-empty WAL file is refused", async () => {
 	await Bun.write(`${s.snapshotPath}-wal`, "pending frames");
 	await expect(s.run()).rejects.toThrow("snapshot_has_wal");
 	expect(s.count("legacy_import_map")).toBe(0);
+});
+
+// --- N2-L: a re-import keeps what the re-distillation decided ----------------------------
+
+const LATER = "2026-10-31T00:00:00.000Z";
+const setLegacy = (s: ReturnType<typeof setup>, id: string, set: string) =>
+	s.mutateLegacy((db) =>
+		db.query(`UPDATE knowledge_items SET ${set} WHERE id = '${id}'`).run(),
+	);
+/** What the distill domain leaves on an atom it superseded. */
+const redistilled = (s: ReturnType<typeof setup>, id: string) =>
+	s.store.write((db) => {
+		setKnowledgeDisposition(db, id, {
+			status: "superseded",
+			retrieval: "evidence_only",
+			updatedAt: LATER,
+		});
+		db.query(
+			`UPDATE knowledge_items SET metadata_json = json_set(metadata_json, '$.distill', json('{"supersededBy":"kc_1"}')) WHERE id = ?`,
+		).run(id);
+	});
+
+test("a superseded atom keeps its status and retrieval when the legacy row changes", async () => {
+	const s = setup();
+	await s.run();
+	await redistilled(s, "k3");
+	setLegacy(s, "k3", "importance = 77, dynamic_score = 9");
+	const report = await s.run();
+	expect(report.tables.knowledge_items.updated).toBe(1);
+	const row = s.store.read((db) => getKnowledgeById(db, "k3"))!;
+	expect(row.status).toBe("superseded");
+	expect(row.retrieval).toBe("evidence_only");
+	expect(row.importance).toBeCloseTo(0.77);
+	expect((row.metadata.legacy as any).dynamicScore).toBe(9);
+	// The title and body did not change: only what the legacy row says moved.
+	expect(row.metadata.distill).toEqual({ supersededBy: "kc_1" });
+});
+
+test("a changed body updates the superseded atom and marks it for reassessment", async () => {
+	const s = setup();
+	await s.run();
+	await redistilled(s, "k3");
+	setLegacy(s, "k3", "body = 'edited body'");
+	await s.run();
+	const row = s.store.read((db) => getKnowledgeById(db, "k3"))!;
+	expect(row.body).toBe("edited body");
+	expect(row.status).toBe("superseded");
+	expect(row.retrieval).toBe("evidence_only");
+	expect(row.metadata.distill).toEqual({
+		supersededBy: "kc_1",
+		needsReassess: true,
+	});
+	// The mark stays through a later import that changes something else.
+	setLegacy(s, "k3", "importance = 11");
+	await s.run();
+	expect(
+		s.store.read((db) => getKnowledgeById(db, "k3"))?.metadata.distill,
+	).toEqual({ supersededBy: "kc_1", needsReassess: true });
+});
+
+test("an evidence-only atom keeps its retrieval and gets the mark when its body changes", async () => {
+	const s = setup();
+	await s.run();
+	s.store.write((db) =>
+		setKnowledgeDisposition(db, "k4", {
+			retrieval: "evidence_only",
+			updatedAt: LATER,
+		}),
+	);
+	setLegacy(s, "k4", "title = 'renamed'");
+	await s.run();
+	const row = s.store.read((db) => getKnowledgeById(db, "k4"))!;
+	expect(row.title).toBe("renamed");
+	expect(row.status).toBe("active");
+	expect(row.retrieval).toBe("evidence_only");
+	expect(row.metadata.distill).toEqual({ needsReassess: true });
+});
+
+test("a deprecated legacy row still retracts a superseded atom", async () => {
+	const s = setup();
+	await s.run();
+	await redistilled(s, "k3");
+	setLegacy(s, "k3", "status = 'deprecated'");
+	await s.run();
+	const row = s.store.read((db) => getKnowledgeById(db, "k3"))!;
+	expect(row.status).toBe("retracted");
+	expect(row.retrieval).toBe("evidence_only");
+	expect(row.metadata.distill).toEqual({ supersededBy: "kc_1" });
+});
+
+test("an atom that was never re-distilled follows the legacy row as before", async () => {
+	const s = setup();
+	await s.run();
+	setLegacy(s, "k3", "body = 'edited body'");
+	await s.run();
+	const row = s.store.read((db) => getKnowledgeById(db, "k3"))!;
+	expect(row.body).toBe("edited body");
+	expect(row.retrieval).toBe("searchable");
+	expect(row.metadata.distill).toBeUndefined();
+	setLegacy(s, "k3", "status = 'deprecated'");
+	await s.run();
+	expect(s.store.read((db) => getKnowledgeById(db, "k3"))?.status).toBe(
+		"retracted",
+	);
+});
+
+test("after a protected update the next import changes nothing", async () => {
+	const s = setup();
+	await s.run();
+	await redistilled(s, "k3");
+	setLegacy(s, "k3", "body = 'edited body'");
+	await s.run();
+	const before = s.store.read((db) => getKnowledgeById(db, "k3"))!;
+	const report = await s.run();
+	for (const r of Object.values(report.tables)) {
+		expect(r.inserted).toBe(0);
+		expect(r.updated).toBe(0);
+	}
+	expect(s.store.read((db) => getKnowledgeById(db, "k3"))).toEqual(before);
+});
+
+test("re-importing an untouched snapshot never writes a superseded atom", async () => {
+	const s = setup();
+	await s.run();
+	await redistilled(s, "k3");
+	const before = s.store.read((db) => getKnowledgeById(db, "k3"))!;
+	const report = await s.run();
+	expect(report.tables.knowledge_items.updated).toBe(0);
+	expect(s.store.read((db) => getKnowledgeById(db, "k3"))).toEqual(before);
+});
+
+test("an atom the conflict resolution retracted stays retracted on re-import, with no metadata.distill needed", async () => {
+	const s = setup();
+	await s.run();
+	s.store.write((db) =>
+		setKnowledgeDisposition(db, "k3", {
+			status: "retracted",
+			retrieval: "evidence_only",
+			updatedAt: LATER,
+		}),
+	);
+	expect(
+		s.store.read((db) => getKnowledgeById(db, "k3"))?.metadata.distill,
+	).toBeUndefined();
+	setLegacy(s, "k3", "importance = 77");
+	await s.run();
+	let row = s.store.read((db) => getKnowledgeById(db, "k3"))!;
+	expect(row.status).toBe("retracted");
+	expect(row.retrieval).toBe("evidence_only");
+	expect(row.importance).toBeCloseTo(0.77);
+	// a legacy deprecated gives the same state
+	setLegacy(s, "k3", "status = 'deprecated'");
+	await s.run();
+	row = s.store.read((db) => getKnowledgeById(db, "k3"))!;
+	expect(row.status).toBe("retracted");
+});
+
+test("a row retracted only by a legacy deprecated follows the legacy row back to active", async () => {
+	const s = setup();
+	await s.run();
+	setLegacy(s, "k3", "status = 'deprecated'");
+	await s.run();
+	expect(s.store.read((db) => getKnowledgeById(db, "k3"))?.status).toBe(
+		"retracted",
+	);
+	setLegacy(s, "k3", "status = 'active'");
+	await s.run();
+	expect(s.store.read((db) => getKnowledgeById(db, "k3"))?.status).toBe(
+		"active",
+	);
 });

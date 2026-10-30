@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 
-export type HandleKind = "knowledge" | "episode";
-export const HANDLE_PATTERN = /^(kn|ep)_[a-z2-7]{26}$/;
+export type HandleKind = "knowledge" | "episode" | "theme";
+export const HANDLE_PATTERN = /^(kn|ep|th)_[a-z2-7]{26}$/;
+
+const PREFIX: Record<HandleKind, string> = {
+	knowledge: "kn_",
+	episode: "ep_",
+	theme: "th_",
+};
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 
@@ -29,10 +35,11 @@ export function makeHandle(kind: HandleKind, id: string): string {
 		.update(`contextstill:handle:v1:${kind}:${id}`)
 		.digest()
 		.subarray(0, 16);
-	return `${kind === "knowledge" ? "kn_" : "ep_"}${base32(digest)}`;
+	return `${PREFIX[kind]}${base32(digest)}`;
 }
 
 export function handleKind(handle: string): HandleKind | null {
 	if (!HANDLE_PATTERN.test(handle)) return null;
-	return handle.startsWith("kn_") ? "knowledge" : "episode";
+	if (handle.startsWith("kn_")) return "knowledge";
+	return handle.startsWith("th_") ? "theme" : "episode";
 }

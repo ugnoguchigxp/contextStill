@@ -22,7 +22,7 @@ export const evalCaseSchema = z
 			)
 			.min(1),
 		labelSource: z.enum(["agent-draft", "owner"]),
-		style: z.enum(["paraphrase", "keyword", "question"]),
+		style: z.enum(["paraphrase", "keyword", "question", "scenario"]),
 		note: z.string().max(500).optional(),
 	})
 	.strict();
@@ -31,9 +31,14 @@ export type EvalCase = z.infer<typeof evalCaseSchema>;
 /**
  * `legacy-lexical`: v1 `native_knowledge.rs` (score_text + round(dynamicScore)).
  * `legacy-query-first`: v1 `context_compile` path (only query_score > 0 rows, by query_score
- * then dynamicScore). `v2-hybrid`: the v2 search service.
+ * then dynamicScore). `v2-hybrid`: the v2 search service. `v2-atom-baseline`: the v2 search
+ * service over the atoms before distillation (`includeSuperseded`), the baseline of the N2 gate.
  */
-export type EvalSystem = "legacy-lexical" | "legacy-query-first" | "v2-hybrid";
+export type EvalSystem =
+	| "legacy-lexical"
+	| "legacy-query-first"
+	| "v2-hybrid"
+	| "v2-atom-baseline";
 export type EvalStyle = EvalCase["style"];
 
 export interface EvalArgs {
@@ -42,6 +47,8 @@ export interface EvalArgs {
 	lanes: SearchLane[];
 	k: number;
 	outPath: string;
+	/** true: pairs without a judgment are judged with `DistillService.judgePairs` */
+	judge: boolean;
 }
 
 export interface EvalDeps {
@@ -57,6 +64,10 @@ export interface SystemMetrics {
 	ndcgAtK: number;
 	queries: number;
 	zeroHit: number;
+	/** Duplicate rate among the top k; null when no pair was judged (no `--judge`). */
+	dupRateAtK: number | null;
+	/** Conflict rate among the top k; null when no pair was judged. */
+	conflictRateAtK: number | null;
 }
 
 export interface EvalReport {

@@ -14,6 +14,15 @@ test("handles are deterministic and match the pattern", () => {
 	expect(makeHandle("knowledge", `${id}x`)).not.toBe(k);
 });
 
+test("theme handles use the th_ prefix and are distinct from the other kinds", () => {
+	const t = makeHandle("theme", "a");
+	expect(t).toMatch(HANDLE_PATTERN);
+	expect(t.startsWith("th_")).toBe(true);
+	expect(handleKind(t)).toBe("theme");
+	expect(t.slice(3)).not.toBe(makeHandle("knowledge", "a").slice(3));
+	expect(makeHandle("theme", "a")).toBe(t);
+});
+
 test("handle values are pinned", () => {
 	expect(makeHandle("knowledge", "a")).toBe(PINNED.knowledgeA);
 	expect(makeHandle("episode", "a")).toBe(PINNED.episodeA);

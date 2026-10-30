@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { makeHandle } from "../../../infrastructure/handle";
 import type { KnowledgeLayer, KnowledgeType, Polarity } from "../../knowledge";
+import { edgesFrom, edgesTo, getCluster, listClusters } from "../../map";
 import { topK } from "../../vectors";
 import {
 	type DegradedReason,
@@ -36,10 +37,16 @@ const SPACES = new Set<string>(["coding", "general", "eumenes", "personal"]);
 const DEFAULT_TIMEOUT_MS = 2000;
 const LANE_LIMIT = 100;
 const SUMMARY_LENGTH = 280;
+const SITUATION_SUMMARY_LENGTH = 120;
+/** Atoms are the raw material of a canonical; at equal merit the canonical leads. */
+const ATOM_FACTOR = 0.8;
+const MAX_HIT_THEMES = 3;
+const DEFAULT_LAYERS: KnowledgeLayer[] = ["canonical", "atom"];
 const DEGRADED_ORDER: DegradedReason[] = [
 	"vector_unavailable",
 	"vector_unverified",
 	"no_lexical_terms",
+	"theme_unavailable",
 ];
 
 interface LaneEntry {
@@ -52,6 +59,8 @@ interface Doc {
 	id: string;
 	lanes: LaneEntry[];
 	score: number;
+	/** knowledge only, read when the doc is scored */
+	layer: KnowledgeLayer | null;
 }
 
 function validate(req: SearchRequest): void {
@@ -132,8 +141,51 @@ async function resolveQueryVector(
 }
 
 const squash = (text: string) => text.replace(/\s+/g, " ").trim();
-const cut = (text: string) =>
-	[...squash(text)].slice(0, SUMMARY_LENGTH).join("");
+const cutTo = (text: string, length: number) =>
+	[...squash(text)].slice(0, length).join("");
+const cut = (text: string) => cutTo(text, SUMMARY_LENGTH);
+
+/** The theme and every theme below it (`broader` edges and `parent_id`), cycle safe. */
+function themeSubtree(db: Database, themeId: string): string[] {
+	const seen = new Set<string>([themeId]);
+	const queue = [themeId];
+	for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+		const children = [
+			...edgesTo(db, "theme", next, "broader")
+				.filter((e) => e.status === "active" && e.src.kind === "theme")
+				.map((e) => e.src.id),
+			...listClusters(db, { kind: "theme", parentId: next }).map((c) => c.id),
+		];
+		for (const child of children)
+			if (!seen.has(child)) {
+				seen.add(child);
+				queue.push(child);
+			}
+	}
+	return [...seen];
+}
+
+/** Theme ids a knowledge row is about: level 2 when it has any, else level 1; at most 3. */
+function themesOf(db: Database, knowledgeId: string): string[] {
+	const byLevel = new Map<number, { id: string; confidence: number }[]>();
+	for (const edge of edgesFrom(db, "knowledge", knowledgeId, "about")) {
+		if (edge.status !== "active" || edge.dst.kind !== "theme") continue;
+		const cluster = getCluster(db, edge.dst.id);
+		if (!cluster || cluster.kind !== "theme" || cluster.state === "rejected")
+			continue;
+		const list = byLevel.get(cluster.level) ?? [];
+		list.push({ id: cluster.id, confidence: edge.confidence });
+		byLevel.set(cluster.level, list);
+	}
+	const chosen = byLevel.get(2) ?? byLevel.get(1) ?? [];
+	return chosen
+		.sort(
+			(a, b) =>
+				b.confidence - a.confidence || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+		)
+		.slice(0, MAX_HIT_THEMES)
+		.map((theme) => theme.id);
+}
 
 function hydrate(
 	db: Database,
@@ -142,12 +194,14 @@ function hydrate(
 	if (doc.kind === "knowledge") {
 		const row = db
 			.query(
-				"SELECT handle, title, body, type, polarity, status, space, confidence FROM knowledge_items WHERE id = ?",
+				"SELECT handle, title, body, situation, layer, type, polarity, status, space, confidence FROM knowledge_items WHERE id = ?",
 			)
 			.get(doc.id) as {
 			handle: string;
 			title: string;
 			body: string;
+			situation: string;
+			layer: KnowledgeLayer;
 			type: KnowledgeType;
 			polarity: Polarity;
 			status: string;
@@ -160,10 +214,18 @@ function hydrate(
 			id: doc.id,
 			handle: row.handle || makeHandle("knowledge", doc.id),
 			title: row.title,
-			summary: cut(row.body),
+			summary:
+				row.layer === "canonical" && squash(row.situation) !== ""
+					? cut(
+							`${cutTo(row.situation, SITUATION_SUMMARY_LENGTH)} — ${row.body}`,
+						)
+					: cut(row.body),
 			type: row.type,
 			polarity: row.polarity,
 			status: row.status,
+			layer: row.layer,
+			situation: row.layer === "canonical" ? row.situation : "",
+			themes: themesOf(db, doc.id),
 			space: row.space,
 			confidence: row.confidence,
 		};
@@ -195,6 +257,9 @@ function hydrate(
 		type: null,
 		polarity: null,
 		status: row.status,
+		layer: null,
+		situation: "",
+		themes: [],
 		space: row.space,
 		confidence: row.confidence,
 	};
@@ -213,9 +278,12 @@ export function createSearch(deps: SearchDeps): SearchService {
 				repoKey: req.repoKey ?? null,
 				types:
 					req.types && req.types.length > 0 ? [...new Set(req.types)] : null,
-				layers: (req.layers && req.layers.length > 0
-					? [...new Set(req.layers)]
-					: ["atom"]) as KnowledgeLayer[],
+				layers:
+					req.layers && req.layers.length > 0
+						? [...new Set(req.layers)]
+						: DEFAULT_LAYERS,
+				includeSuperseded: req.includeSuperseded === true,
+				themeIds: null,
 			};
 			const degraded = new Set<DegradedReason>();
 			const lanesUsed = new Set<SearchLane>();
@@ -252,7 +320,7 @@ export function createSearch(deps: SearchDeps): SearchService {
 					const key = `${kind}:${candidate.id}`;
 					let doc = docs.get(key);
 					if (!doc) {
-						doc = { kind, id: candidate.id, lanes: [], score: 0 };
+						doc = { kind, id: candidate.id, lanes: [], score: 0, layer: null };
 						docs.set(key, doc);
 					}
 					doc.lanes.push({ lane, rank: index + 1, raw: candidate.raw });
@@ -260,6 +328,12 @@ export function createSearch(deps: SearchDeps): SearchService {
 			};
 
 			const hydrated = deps.store.readSnapshot((db) => {
+				if (req.theme !== undefined) {
+					// An empty theme table cannot narrow anything; say so instead of returning nothing.
+					if (listClusters(db, { kind: "theme" }).length === 0)
+						degraded.add("theme_unavailable");
+					else filter.themeIds = themeSubtree(db, req.theme);
+				}
 				for (const kind of kinds) {
 					if (wantFts) {
 						lanesUsed.add("fts");
@@ -314,14 +388,25 @@ export function createSearch(deps: SearchDeps): SearchService {
 					}
 				}
 
+				const layerOf = db.query(
+					"SELECT layer FROM knowledge_items WHERE id = ?",
+				);
 				for (const doc of docs.values()) {
 					let score = 0;
 					for (const lane of LANE_ORDER) {
 						const entry = doc.lanes.find((l) => l.lane === lane);
 						if (entry) score += WEIGHT[lane] / (RRF_K + entry.rank);
 					}
+					if (doc.kind === "knowledge") {
+						doc.layer =
+							(layerOf.get(doc.id) as { layer: KnowledgeLayer } | null)
+								?.layer ?? null;
+						if (doc.layer === "atom") score *= ATOM_FACTOR;
+					}
 					doc.score = score;
 				}
+				const canonicalFirst = (doc: Doc) =>
+					doc.layer === "canonical" ? 0 : 1;
 				const bestRank = (doc: Doc) =>
 					Math.min(...doc.lanes.map((l) => l.rank));
 				// Scores that differ only by float noise are ties.
@@ -329,6 +414,7 @@ export function createSearch(deps: SearchDeps): SearchService {
 				const ordered = [...docs.values()].sort(
 					(a, b) =>
 						bucket(b) - bucket(a) ||
+						canonicalFirst(a) - canonicalFirst(b) ||
 						bestRank(a) - bestRank(b) ||
 						(a.kind === b.kind ? 0 : a.kind === "knowledge" ? -1 : 1) ||
 						(a.id < b.id ? -1 : a.id > b.id ? 1 : 0),

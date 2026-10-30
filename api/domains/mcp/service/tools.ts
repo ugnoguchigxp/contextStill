@@ -1,10 +1,22 @@
 import type { Database } from "bun:sqlite";
 import { handleKind } from "../../../infrastructure/handle";
 import type { SqliteStore } from "../../../infrastructure/sqlite";
-import { getEpisodeByHandle, type EpisodeRow } from "../../experience";
-import { getKnowledgeByHandle, type KnowledgeRow } from "../../knowledge";
-import { SearchError, type SearchHit, type SearchService } from "../../search";
 import {
+	getEpisodeByHandle,
+	getEpisodeById,
+	type EpisodeRow,
+} from "../../experience";
+import {
+	getKnowledgeByHandle,
+	getKnowledgeById,
+	listSupersededBy,
+	type KnowledgeRow,
+} from "../../knowledge";
+import { edgesTo } from "../../map";
+import { SearchError, type SearchHit, type SearchService } from "../../search";
+import { unresolvedConflictPairs } from "./conflicts";
+import {
+	countSupportingAtoms,
 	cutChars,
 	evidenceSummary,
 	publicEvidenceList,
@@ -14,6 +26,7 @@ import {
 	type ResolvedEvidence,
 } from "./evidence";
 import { getArgs, searchArgs } from "./schemas";
+import { resolveThemeInput, themeRefs } from "./themes";
 
 export const SEARCH_CONTRACT = "contextstill-search.v1";
 export const KNOWLEDGE_CONTRACT = "contextstill-knowledge.v1";
@@ -71,7 +84,7 @@ function searchResult(db: Database, hit: SearchHit): Record<string, unknown> {
 		status: hit.status,
 		space: hit.space,
 		confidence: hit.confidence,
-		themes: [],
+		themes: themeRefs(db, hit.themes),
 		evidenceSummary: evidenceSummary(evidence),
 		route: hit.lanes.map((l) => ({ via: "seed", lane: l.lane, rank: l.rank })),
 		score: Math.round(hit.score * 1e6) / 1e6,
@@ -87,6 +100,11 @@ async function searchKnowledge(
 	const parsed = searchArgs.safeParse(args ?? {});
 	if (!parsed.success) return failure("invalid_arguments");
 	const a = parsed.data;
+	// A theme that does not resolve does not narrow the search; it is reported as degraded.
+	const themeId =
+		a.theme === undefined
+			? null
+			: deps.store.read((db) => resolveThemeInput(db, a.theme!));
 	let response;
 	try {
 		response = await deps.search.search(
@@ -95,6 +113,7 @@ async function searchKnowledge(
 				kinds: a.kinds,
 				spaces: a.spaces,
 				...(a.types ? { types: a.types } : {}),
+				...(themeId !== null ? { theme: themeId } : {}),
 				limit: a.limit,
 			},
 			{ signal },
@@ -103,17 +122,37 @@ async function searchKnowledge(
 		if (error instanceof SearchError) return failure(error.code);
 		throw error;
 	}
-	const results = deps.store.readSnapshot((db) =>
-		response.hits.map((hit) => searchResult(db, hit)),
-	);
+	const { results, conflicts } = deps.store.readSnapshot((db) => {
+		const canonical = response.hits.filter(
+			(h) =>
+				h.kind === "knowledge" &&
+				h.layer === "canonical" &&
+				h.status === "active",
+		);
+		const handleOf = new Map(canonical.map((h) => [h.id, h.handle]));
+		return {
+			results: response.hits.map((hit) => searchResult(db, hit)),
+			conflicts: unresolvedConflictPairs(db, [...handleOf.keys()]).map(
+				([x, y]) => [handleOf.get(x)!, handleOf.get(y)!] as const,
+			),
+		};
+	});
 	const degraded: string[] = [...response.degraded];
 	if (a.depth > 0) degraded.push("expansion_unavailable");
-	if (a.theme !== undefined) degraded.push("theme_unavailable");
+	if (a.theme !== undefined && themeId === null)
+		degraded.push("theme_unavailable");
+	// A warning names a pair only while both sides are in the returned results.
+	const warningsFor = (count: number) => {
+		const shown = new Set(results.slice(0, count).map((r) => r.handle));
+		return conflicts
+			.filter(([x, y]) => shown.has(x) && shown.has(y))
+			.map(([x, y]) => ({ kind: "unresolved_conflict", handles: [x, y] }));
+	};
 	const build = (count: number) => ({
 		contractVersion: SEARCH_CONTRACT,
 		trust: TRUST,
 		results: results.slice(0, count),
-		warnings: [],
+		warnings: warningsFor(count),
 		degraded: [...new Set(degraded)],
 		truncated: count < results.length,
 	});
@@ -135,7 +174,31 @@ function getKnowledge(args: unknown, deps: ToolDeps, fits: Fits): ToolOutcome {
 			const row = getKnowledgeByHandle(db, handle);
 			if (!row || !visible(row)) return failure("not_found");
 			list = publicEvidenceList(db, resolveKnowledgeEvidence(db, row.id));
-			make = (scale, n) => knowledgeItem(row, list, scale, n);
+			const extra: KnowledgeExtra = {
+				supportCount: countSupportingAtoms(db, row.id),
+				supersededBy: supersededByHandle(db, row),
+				// An example is canonical text built from Episodes: one with no served Episode is
+				// not served either (defence in depth; the examples stage takes only global ones).
+				examples: row.examples.flatMap((ex) => {
+					const episodes = ex.episodeIds.flatMap((id) => {
+						const ep = getEpisodeById(db, id);
+						return ep && visible(ep) && ep.status === "active"
+							? [ep.handle]
+							: [];
+					});
+					return episodes.length === 0
+						? []
+						: [
+								{
+									situation: ex.situation,
+									action: ex.action,
+									outcome: ex.outcome,
+									episodes,
+								},
+							];
+				}),
+			};
+			make = (scale, n) => knowledgeItem(row, extra, list, scale, n);
 		} else {
 			const row = getEpisodeByHandle(db, handle);
 			if (!row || !visible(row)) return failure("not_found");
@@ -160,17 +223,59 @@ function getKnowledge(args: unknown, deps: ToolDeps, fits: Fits): ToolOutcome {
 	});
 }
 
-/** The MCP passes no repoKey and never serves the personal space, retracted rows or repo scope. */
+/**
+ * The MCP passes no repoKey and never serves the personal space, retracted rows, repo scope or
+ * evidence_only rows. A superseded row is served (with `supersededBy`) even though absorbing it
+ * set it to evidence_only.
+ */
 function visible(row: KnowledgeRow | EpisodeRow): boolean {
 	return (
 		row.status !== "retracted" &&
 		row.scope === "global" &&
-		row.space !== "personal"
+		row.space !== "personal" &&
+		(row.retrieval === "searchable" || row.status === "superseded")
 	);
+}
+
+/**
+ * The handle of the active canonical item that replaced a superseded item: the active `supersedes`
+ * edge first, else a canonical item the item is derived from. Null when none is served.
+ */
+function supersededByHandle(db: Database, row: KnowledgeRow): string | null {
+	if (row.status !== "superseded") return null;
+	const ids = [
+		...edgesTo(db, "knowledge", row.id, "supersedes")
+			.filter((e) => e.status === "active" && e.src.kind === "knowledge")
+			.map((e) => e.src.id),
+		...listSupersededBy(db, row.id),
+	];
+	for (const id of ids) {
+		const target = getKnowledgeById(db, id);
+		if (
+			target &&
+			target.layer === "canonical" &&
+			target.status === "active" &&
+			visible(target)
+		)
+			return target.handle;
+	}
+	return null;
+}
+
+interface KnowledgeExtra {
+	supportCount: number;
+	supersededBy: string | null;
+	examples: {
+		situation: string;
+		action: string;
+		outcome: string;
+		episodes: string[];
+	}[];
 }
 
 function knowledgeItem(
 	row: KnowledgeRow,
+	extra: KnowledgeExtra,
 	list: PublicEvidenceList,
 	scale: number,
 	evidenceCount: number,
@@ -183,7 +288,16 @@ function knowledgeItem(
 		type: row.type,
 		polarity: row.polarity,
 		title: cutChars(row.title, limit),
+		situation: cutChars(row.situation, limit),
 		body: cutChars(row.body, limit),
+		rationale: cutChars(row.rationale, limit),
+		exceptions: row.exceptions.map((s) => cutChars(s, limit)),
+		examples: extra.examples.map((ex) => ({
+			situation: cutChars(ex.situation, limit),
+			action: cutChars(ex.action, limit),
+			outcome: cutChars(ex.outcome, limit),
+			episodes: ex.episodes,
+		})),
 		appliesWhen: row.appliesWhen.map((s) => cutChars(s, limit)),
 		notAppliesWhen: row.notAppliesWhen.map((s) => cutChars(s, limit)),
 		steps: row.steps.map((s) => cutChars(s, limit)),
@@ -193,8 +307,8 @@ function knowledgeItem(
 		space: row.space,
 		createdAt: row.createdAt,
 		updatedAt: row.updatedAt,
-		// N1 stores no supersession link.
-		supersededBy: null,
+		supportCount: extra.supportCount,
+		supersededBy: extra.supersededBy,
 		evidence: list.evidence.slice(0, evidenceCount),
 		evidenceTruncated: list.truncated || evidenceCount < list.evidence.length,
 	};

@@ -74,6 +74,7 @@ test("/api/settings: 401 without or with a wrong token, 200 with the API token",
 			baseUrl: null,
 			audience: null,
 			embeddingProfile: "embeddingCanary",
+			llmProfile: "contextStill",
 		},
 	});
 	expect(body.diagnostics).toMatchObject({
@@ -171,4 +172,21 @@ test("errors answer { error: code } with the status of the table; unknown ones a
 		expect(res.status).toBe(status);
 		expect(await res.json()).toEqual({ error: code });
 	}
+});
+
+test("an /api body over 1 MiB is refused with 413 before any handler reads it", async () => {
+	const { call } = await setup();
+	const res = await call("/api/distill/calibration", {
+		method: "PUT",
+		body: JSON.stringify({ labels: "x".repeat(1024 * 1024) }),
+	});
+	expect(res.status).toBe(413);
+	expect(await res.json()).toEqual({ error: "payload_too_large" });
+});
+
+test("the distill API is mounted under the API token", async () => {
+	const { call } = await setup();
+	expect((await call("/api/distill/status", {}, null)).status).toBe(401);
+	const res = await call("/api/distill/runs/run_missing");
+	expect(res.status).toBe(404);
 });

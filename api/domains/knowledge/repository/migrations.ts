@@ -67,4 +67,37 @@ CREATE TRIGGER knowledge_fts_au AFTER UPDATE OF title, body ON knowledge_items B
 END;
 `,
 	},
+	{
+		id: "knowledge/0002-canonical",
+		after: ["knowledge/0001-init"],
+		sql: `
+ALTER TABLE knowledge_items ADD COLUMN situation TEXT NOT NULL DEFAULT '';
+ALTER TABLE knowledge_items ADD COLUMN rationale TEXT NOT NULL DEFAULT '';
+ALTER TABLE knowledge_items ADD COLUMN exceptions_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(exceptions_json));
+ALTER TABLE knowledge_items ADD COLUMN examples_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(examples_json));
+ALTER TABLE knowledge_items ADD COLUMN retrieval TEXT NOT NULL DEFAULT 'searchable'
+  CHECK (retrieval IN ('searchable','evidence_only'));
+CREATE INDEX knowledge_items_retrieval_idx ON knowledge_items(retrieval, status, layer, space);
+DROP TRIGGER knowledge_fts_ai;
+DROP TRIGGER knowledge_fts_ad;
+DROP TRIGGER knowledge_fts_au;
+DROP TABLE knowledge_fts;
+CREATE VIRTUAL TABLE knowledge_fts USING fts5(
+  title, situation, body, content='knowledge_items', content_rowid='seq', tokenize='trigram'
+);
+CREATE TRIGGER knowledge_fts_ai AFTER INSERT ON knowledge_items BEGIN
+  INSERT INTO knowledge_fts(rowid, title, situation, body) VALUES (new.seq, new.title, new.situation, new.body);
+END;
+CREATE TRIGGER knowledge_fts_ad AFTER DELETE ON knowledge_items BEGIN
+  INSERT INTO knowledge_fts(knowledge_fts, rowid, title, situation, body)
+  VALUES ('delete', old.seq, old.title, old.situation, old.body);
+END;
+CREATE TRIGGER knowledge_fts_au AFTER UPDATE OF title, situation, body ON knowledge_items BEGIN
+  INSERT INTO knowledge_fts(knowledge_fts, rowid, title, situation, body)
+  VALUES ('delete', old.seq, old.title, old.situation, old.body);
+  INSERT INTO knowledge_fts(rowid, title, situation, body) VALUES (new.seq, new.title, new.situation, new.body);
+END;
+INSERT INTO knowledge_fts(knowledge_fts) VALUES ('rebuild');
+`,
+	},
 ];

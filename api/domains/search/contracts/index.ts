@@ -22,8 +22,15 @@ export interface SearchRequest {
 	repoKey?: string | null;
 	/** knowledgeだけに効く */
 	types?: KnowledgeType[];
-	/** 既定 ["atom"]（N2で既定を見直すhook） */
+	/** 既定 ["canonical","atom"]（検索側は retrieval='searchable' かつ status='active' の行だけを返す） */
 	layers?: KnowledgeLayer[];
+	/** テーマのid。指定時はそのテーマと下位テーマに about で属する知識だけ */
+	theme?: string;
+	/**
+	 * 評価の基準線専用。true なら status IN ('active','superseded') かつ retrieval を見ない。
+	 * MCPは渡さない。
+	 */
+	includeSuperseded?: boolean;
 	/** 1..50 */
 	limit: number;
 	/** 既定は3つすべて */
@@ -41,6 +48,12 @@ export interface SearchHit {
 	type: KnowledgeType | null;
 	polarity: Polarity | null;
 	status: string;
+	/** knowledge の層。episode は null */
+	layer: KnowledgeLayer | null;
+	/** 正本の状況。atom・episode は '' */
+	situation: string;
+	/** 属するテーマのid（about の辺。最大3件程度） */
+	themes: string[];
 	space: Space;
 	confidence: number;
 	score: number;

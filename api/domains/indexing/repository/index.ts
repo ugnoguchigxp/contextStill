@@ -11,6 +11,7 @@ export interface LegacySampleRow {
 	id: string;
 	title: string;
 	body: string;
+	situation: string;
 	vector: Uint8Array;
 }
 
@@ -44,7 +45,8 @@ export function getLegacySampleRows(
 	if (ids.length === 0) return [];
 	return db
 		.query(
-			`SELECT k.id AS id, k.title AS title, k.body AS body, v.vector AS vector
+			`SELECT k.id AS id, k.title AS title, k.body AS body, k.situation AS situation,
+			        v.vector AS vector
 			 FROM vectors v JOIN knowledge_items k ON k.id = v.owner_id
 			 WHERE v.owner_kind = 'knowledge' AND v.space_key = ?
 			   AND v.origin = 'legacy_import' AND v.verification = 'unverified'
@@ -66,7 +68,11 @@ export interface EmbedSourceRow {
 	storedVerification: VectorVerification | null;
 }
 
-/** Active rows of the owner table with the state of their vector in the space, oldest first. */
+/**
+ * Active, searchable rows of the owner table with the state of their vector in the space, oldest
+ * first. Evidence-only rows (repo-specific, unusable, absorbed) are never searched or clustered,
+ * so they are not embedded.
+ */
 export function listActiveForEmbedding(
 	db: Database,
 	owner: VectorOwnerKind,
@@ -74,7 +80,7 @@ export function listActiveForEmbedding(
 ): EmbedSourceRow[] {
 	const columns =
 		owner === "knowledge"
-			? "o.title AS title, o.body AS body"
+			? "o.title AS title, o.body AS body, o.situation AS situation"
 			: "o.title AS title, o.situation AS situation, o.action AS action, o.outcome AS outcome, o.lesson AS lesson";
 	const table = owner === "knowledge" ? "knowledge_items" : "episodes";
 	return db
@@ -84,7 +90,7 @@ export function listActiveForEmbedding(
 			 FROM ${table} o
 			 LEFT JOIN vectors v
 			   ON v.owner_kind = ? AND v.owner_id = o.id AND v.space_key = ?
-			 WHERE o.status = 'active'
+			 WHERE o.status = 'active' AND o.retrieval = 'searchable'
 			 ORDER BY o.seq`,
 		)
 		.all(owner, spaceKey) as EmbedSourceRow[];

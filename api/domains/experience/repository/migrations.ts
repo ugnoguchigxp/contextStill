@@ -65,4 +65,13 @@ CREATE TRIGGER episodes_fts_au AFTER UPDATE OF title, situation, action, outcome
 END;
 `,
 	},
+	{
+		id: "experience/0002-retrieval",
+		after: ["experience/0001-init"],
+		sql: `
+ALTER TABLE episodes ADD COLUMN retrieval TEXT NOT NULL DEFAULT 'searchable'
+  CHECK (retrieval IN ('searchable','evidence_only'));
+CREATE INDEX episodes_retrieval_idx ON episodes(retrieval, status, space, scope);
+`,
+	},
 ];
