@@ -76,6 +76,7 @@ function searchResult(db: Database, hit: SearchHit): Record<string, unknown> {
 			: resolveEpisodeEvidence(db, hit.id);
 	return {
 		handle: hit.handle,
+		revision: hit.revision,
 		kind: hit.kind,
 		type: hit.type,
 		polarity: hit.polarity,
@@ -273,6 +274,20 @@ interface KnowledgeExtra {
 	}[];
 }
 
+function trackedText(limit: number) {
+	let truncated = false;
+	return {
+		cut(value: string) {
+			const result = cutChars(value, limit);
+			truncated ||= result.length < value.length;
+			return result;
+		},
+		get truncated() {
+			return truncated;
+		},
+	};
+}
+
 function knowledgeItem(
 	row: KnowledgeRow,
 	extra: KnowledgeExtra,
@@ -281,26 +296,28 @@ function knowledgeItem(
 	evidenceCount: number,
 ) {
 	const limit = Math.max(1, Math.floor(KNOWLEDGE_TEXT_CHARS * scale));
+	const text = trackedText(limit);
 	return {
 		handle: row.handle,
+		revision: row.revision,
 		kind: "knowledge",
 		layer: row.layer,
 		type: row.type,
 		polarity: row.polarity,
-		title: cutChars(row.title, limit),
-		situation: cutChars(row.situation, limit),
-		body: cutChars(row.body, limit),
-		rationale: cutChars(row.rationale, limit),
-		exceptions: row.exceptions.map((s) => cutChars(s, limit)),
+		title: text.cut(row.title),
+		situation: text.cut(row.situation),
+		body: text.cut(row.body),
+		rationale: text.cut(row.rationale),
+		exceptions: row.exceptions.map((s) => text.cut(s)),
 		examples: extra.examples.map((ex) => ({
-			situation: cutChars(ex.situation, limit),
-			action: cutChars(ex.action, limit),
-			outcome: cutChars(ex.outcome, limit),
+			situation: text.cut(ex.situation),
+			action: text.cut(ex.action),
+			outcome: text.cut(ex.outcome),
 			episodes: ex.episodes,
 		})),
-		appliesWhen: row.appliesWhen.map((s) => cutChars(s, limit)),
-		notAppliesWhen: row.notAppliesWhen.map((s) => cutChars(s, limit)),
-		steps: row.steps.map((s) => cutChars(s, limit)),
+		appliesWhen: row.appliesWhen.map((s) => text.cut(s)),
+		notAppliesWhen: row.notAppliesWhen.map((s) => text.cut(s)),
+		steps: row.steps.map((s) => text.cut(s)),
 		confidence: row.confidence,
 		importance: row.importance,
 		status: row.status,
@@ -311,6 +328,7 @@ function knowledgeItem(
 		supersededBy: extra.supersededBy,
 		evidence: list.evidence.slice(0, evidenceCount),
 		evidenceTruncated: list.truncated || evidenceCount < list.evidence.length,
+		contentTruncated: text.truncated,
 	};
 }
 
@@ -321,19 +339,20 @@ function episodeItem(
 	evidenceCount: number,
 ) {
 	const limit = Math.max(1, Math.floor(EPISODE_TEXT_CHARS * scale));
-	const text = (s: string) => cutChars(s, limit);
+	const text = trackedText(limit);
 	return {
 		handle: row.handle,
+		revision: row.revision,
 		kind: "episode",
-		title: text(row.title),
-		situation: text(row.situation),
-		intent: text(row.intent),
-		decision: text(row.decision),
-		observations: text(row.observations),
-		action: text(row.action),
-		outcome: text(row.outcome),
-		lesson: text(row.lesson),
-		openQuestions: row.openQuestions.map(text),
+		title: text.cut(row.title),
+		situation: text.cut(row.situation),
+		intent: text.cut(row.intent),
+		decision: text.cut(row.decision),
+		observations: text.cut(row.observations),
+		action: text.cut(row.action),
+		outcome: text.cut(row.outcome),
+		lesson: text.cut(row.lesson),
+		openQuestions: row.openQuestions.map(text.cut),
 		outcomeKind: row.outcomeKind,
 		eventStart: row.eventStart,
 		eventEnd: row.eventEnd,
@@ -346,5 +365,6 @@ function episodeItem(
 		updatedAt: row.updatedAt,
 		evidence: list.evidence.slice(0, evidenceCount),
 		evidenceTruncated: list.truncated || evidenceCount < list.evidence.length,
+		contentTruncated: text.truncated,
 	};
 }

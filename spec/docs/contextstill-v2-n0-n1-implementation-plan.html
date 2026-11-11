@@ -1159,7 +1159,7 @@ export function registerMcp(app: Hono, deps: McpDeps): void;</code></pre>
   "contractVersion": "contextstill-search.v1",
   "trust": { "trustClass": "untrusted_knowledge_evidence", "instructionAuthority": "none" },
   "results": [{
-    "handle": "kn_…", "kind": "knowledge", "type": "rule", "polarity": "positive",
+    "handle": "kn_…", "revision": 1, "kind": "knowledge", "type": "rule", "polarity": "positive",
     "title": "…", "summary": "…（280文字以下）", "status": "active", "space": "coding",
     "confidence": 0.8, "themes": [],
     "evidenceSummary": { "count": 2, "sourceKinds": ["agent_log"] },
@@ -1187,11 +1187,12 @@ export function registerMcp(app: Hono, deps: McpDeps): void;</code></pre>
   "contractVersion": "contextstill-knowledge.v1",
   "trust": { "trustClass": "untrusted_knowledge_evidence", "instructionAuthority": "none" },
   "item": {
-    "handle": "kn_…", "kind": "knowledge", "layer": "atom", "type": "procedure", "polarity": "positive",
+    "handle": "kn_…", "revision": 1, "kind": "knowledge", "layer": "atom", "type": "procedure", "polarity": "positive",
     "title": "…", "body": "…（8,000文字で切る）", "appliesWhen": [], "notAppliesWhen": [], "steps": [],
     "confidence": 0.8, "importance": 0.7, "status": "active", "space": "coding",
     "createdAt": "…Z", "updatedAt": "…Z", "supersededBy": null,
     "evidence": [{ "role": "derived_from", "sourceKind": "document", "title": "…", "url": null, "excerpt": "…（600文字以下）" }],
+    "contentTruncated": false,
     "evidenceTruncated": false
   }
 }
@@ -1201,6 +1202,16 @@ export function registerMcp(app: Hono, deps: McpDeps): void;</code></pre>
 // 見つからない・status='retracted'・repo scope → isError, {"error":"not_found"}</code></pre>
   <p>
     evidenceは最大10件。<code>sourceKind</code>が<code>document</code>／<code>web</code>／<code>research</code>のときだけ<code>title</code>と<code>excerpt</code>（断片があれば断片、なければ原記録の先頭）を入れ、<code>url</code>はsourceの<code>uri</code>が<code>http://</code>か<code>https://</code>で始まるときだけ入れる。<code>agent_log</code>と<code>external</code>は<code>role</code>と<code>sourceKind</code>（externalは<code>"external"</code>）だけを返す。
+  </p>
+
+  <p>
+    検索カードと取得結果の
+    <code>revision</code>
+    は、知識またはEpisode本体を読んだ時点の版を返す。候補の内容を取得するときはハンドルと版を照合する。
+    <code>contentTruncated</code>
+    は公開項目のテキストが文字数上限または応答全体の上限で切られたことを示す。
+    <code>evidenceTruncated</code>
+    は根拠の件数の省略を表し、本文のフラグとは独立する。関連する公開根拠の変更を検出する場合は、取得した公開内容も比較する。
   </p>
 
   <h3>5.7 取り込みの対応（legacy domain）</h3>

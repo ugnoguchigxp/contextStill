@@ -177,6 +177,7 @@ function fakeSearch(
 			return {
 				hits: responder(req).map((h) => ({
 					...h,
+					revision: 1,
 					title: "",
 					summary: "",
 					type: null,

@@ -194,10 +194,11 @@ function hydrate(
 	if (doc.kind === "knowledge") {
 		const row = db
 			.query(
-				"SELECT handle, title, body, situation, layer, type, polarity, status, space, confidence FROM knowledge_items WHERE id = ?",
+				"SELECT handle, revision, title, body, situation, layer, type, polarity, status, space, confidence FROM knowledge_items WHERE id = ?",
 			)
 			.get(doc.id) as {
 			handle: string;
+			revision: number;
 			title: string;
 			body: string;
 			situation: string;
@@ -213,6 +214,7 @@ function hydrate(
 			kind: "knowledge",
 			id: doc.id,
 			handle: row.handle || makeHandle("knowledge", doc.id),
+			revision: row.revision,
 			title: row.title,
 			summary:
 				row.layer === "canonical" && squash(row.situation) !== ""
@@ -232,10 +234,11 @@ function hydrate(
 	}
 	const row = db
 		.query(
-			"SELECT handle, title, situation, outcome, lesson, status, space, confidence FROM episodes WHERE id = ?",
+			"SELECT handle, revision, title, situation, outcome, lesson, status, space, confidence FROM episodes WHERE id = ?",
 		)
 		.get(doc.id) as {
 		handle: string;
+		revision: number;
 		title: string;
 		situation: string;
 		outcome: string;
@@ -252,6 +255,7 @@ function hydrate(
 		kind: "episode",
 		id: doc.id,
 		handle: row.handle || makeHandle("episode", doc.id),
+		revision: row.revision,
 		title: row.title,
 		summary: cut(source),
 		type: null,

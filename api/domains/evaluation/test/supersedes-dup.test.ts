@@ -197,6 +197,7 @@ function fakeSearch(store: Store, responder: (req: SearchRequest) => number[]) {
 					kind: "knowledge",
 					id: uuid(n),
 					handle: handleOf(store, n),
+					revision: 1,
 					title: "",
 					summary: "",
 					type: null,

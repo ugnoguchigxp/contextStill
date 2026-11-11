@@ -43,6 +43,7 @@ export interface SearchHit {
 	kind: SearchKind;
 	id: string;
 	handle: string;
+	revision: number;
 	title: string;
 	summary: string;
 	type: KnowledgeType | null;

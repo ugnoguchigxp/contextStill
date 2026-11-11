@@ -189,6 +189,7 @@ function hit(over: Partial<SearchHit> = {}): SearchHit {
 		kind: "knowledge",
 		id: "k-secret-id",
 		handle: makeHandle("knowledge", "k-secret-id"),
+		revision: 1,
 		title: "書き込み前に確認する",
 		summary: "データベースへの書き込みの前に必ずバックアップを取る",
 		type: "procedure",
@@ -634,6 +635,7 @@ test("search_knowledge: defaults, mapping, and degraded additions", async () => 
 			"handle",
 			"kind",
 			"polarity",
+			"revision",
 			"route",
 			"score",
 			"space",
@@ -645,6 +647,7 @@ test("search_knowledge: defaults, mapping, and degraded additions", async () => 
 		].sort(),
 	);
 	expect(result.handle).toBe(makeHandle("knowledge", "k-secret-id"));
+	expect(result.revision).toBe(1);
 	expect(result.themes).toEqual([]);
 	expect(result.route).toEqual([{ via: "seed", lane: "fts", rank: 1 }]);
 	// fragment + agent_log + web + repo document + external; the repo source still counts as a kind.
@@ -800,6 +803,8 @@ test("get_knowledge returns a knowledge item with safe evidence", async () => {
 		space: "coding",
 		supersededBy: null,
 		evidenceTruncated: false,
+		contentTruncated: false,
+		revision: 1,
 	});
 	expect(Object.keys(item)).not.toContain("id");
 	expect(item.evidence).toHaveLength(5);
@@ -917,6 +922,25 @@ test("get_knowledge answers not_found for missing, retracted, repo-scope and per
 			})
 		).payload.item.status,
 	).toBe("superseded");
+});
+
+test("text clipping is reported independently of evidence omission", async () => {
+	const { app, store } = await setup();
+	await store.write((db) => {
+		upsertKnowledgeItem(
+			db,
+			knowledge({ id: "clipped", body: "a".repeat(8001) }),
+		);
+	});
+	const r = await tool(app, "get_knowledge", {
+		handle: makeHandle("knowledge", "clipped"),
+	});
+	expect(r.payload.item).toMatchObject({
+		body: "a".repeat(8000),
+		contentTruncated: true,
+		evidenceTruncated: false,
+		revision: 1,
+	});
 });
 
 test("get_knowledge responses are cut to fit 32 KiB", async () => {
@@ -1482,6 +1506,7 @@ test("search results carry theme refs (handle and name, at most 3) and canonical
 			"handle",
 			"kind",
 			"polarity",
+			"revision",
 			"route",
 			"score",
 			"space",
